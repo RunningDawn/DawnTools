@@ -119,12 +119,60 @@ local function NameOf(guid)
 	return "Unknown"
 end
 
+-- Enemy players that have me as their target: [name] = when last seen so. Where the server tells nothing of
+-- who struck me, whoever had me targeted when I died is the best there is to go by.
+-- ponytail: looked at twice a second, on my target, focus, mouseover and every nameplate in view. Someone
+-- out of sight, or with another target while their damage ticks, is missed; a healer's target counts.
+local onMe = {}
+local function Watch()
+	local function Look(unit)
+		if type(unit) ~= "string" then return end
+		local ok, hit = pcall(function()
+			return UnitExists(unit) and UnitIsPlayer(unit) and UnitCanAttack(unit, "player") and UnitIsUnit(unit .. "target", "player")
+		end)
+		if ok and Plain(hit) == true then
+			See(unit)
+			local name = Plain(UnitName(unit))
+			if type(name) == "string" then onMe[name] = GetTime() end
+		end
+	end
+	Look("target")
+	Look("focus")
+	Look("mouseover")
+	if C_NamePlate and C_NamePlate.GetNamePlates then
+		local ok, plates = pcall(C_NamePlate.GetNamePlates)
+		for _, plate in ipairs(ok and type(plates) == "table" and plates or {}) do
+			Look(plate.namePlateUnitToken or (plate.UnitFrame and plate.UnitFrame.unit))
+		end
+	end
+end
+C.Watch = Watch
+
+-- What each of the last deaths was made of, for /dt deathtest: why one was kept or not.
+local recapSaid = "not asked"
+local lastRecap -- the time of the newest hit in the recap last used
+local function Note(text)
+	C.db.deathLog = C.db.deathLog or {}
+	local log = C.db.deathLog
+	log[#log + 1] = date("%d %b %H:%M:%S") .. "  " .. text
+	while #log > 10 do table.remove(log, 1) end
+end
+
+function C.DeathReport()
+	local log = C.db.deathLog or {}
+	DT:Print("deathtest: the combat log is %s to addons here. The last %d deaths:", C.open and "open" or "closed", #log)
+	for _, line in ipairs(log) do DT:Print("  " .. line) end
+	if not log[1] then DT:Print("  none since this was added. Die once (to anything), then type this again.") end
+end
+
 -- the game's own death recap, as hits I took (see OnLog for what a hit is); nothing where there is none
 local function FromRecap()
-	if not (C_DeathRecap and C_DeathRecap.GetRecapEvents) then return end
+	if not (C_DeathRecap and C_DeathRecap.GetRecapEvents) then recapSaid = "the game has no death recap here" return end
 	local ok, events = pcall(C_DeathRecap.GetRecapEvents)
-	events = ok and Plain(events)
-	if type(events) ~= "table" then return end
+	if not ok then recapSaid = "the death recap raised an error: " .. tostring(events) return end
+	events = Plain(events)
+	if type(events) ~= "table" then recapSaid = "the death recap gave " .. (events == nil and "nothing (or kept it secret)" or type(events)) return end
+	recapSaid = "the death recap gave " .. #events .. " events"
 	local now, newest, out = GetTime(), nil, {}
 	for _, e in ipairs(events) do
 		local at = type(e) == "table" and tonumber(Plain(e.timestamp))
@@ -136,23 +184,32 @@ local function FromRecap()
 				spell = tostring(Plain(e.environmentalType) or "Environment")
 				name = spell
 			end
+			-- (a hit names who dealt it by GUID too: a player's begins with "Player-", seen before or not)
+			local guid = Plain(e.sourceGUID)
+			if (type(name) ~= "string" or name == "") and type(guid) == "string" then name = NameOf(guid) end
 			name = type(name) == "string" and name ~= "" and name or "Unknown"
+			local byPlayer = IsPlayer(guid) or players[name] or false
+			if byPlayer and name ~= "Unknown" then players[name] = true end
 			local function N(v)
 				v = tonumber(Plain(v))
 				return v and v > 0 and v or nil
 			end
-			out[#out + 1] = { at = at, name = name, player = players[name] or false, spell = type(spell) == "string" and spell or "Spell",
+			out[#out + 1] = { at = at, name = name, player = byPlayer, spell = type(spell) == "string" and spell or "Spell",
 				amount = N(e.amount) or 0, o = N(e.overkill), a = N(e.absorbed), r = N(e.resisted), b = N(e.blocked),
 				crit = Plain(e.critical) and true or nil, i = spell ~= "Melee" and tonumber(Plain(e.spellId)) or nil }
 		end
 	end
-	if not out[1] then return end
+	if not out[1] then recapSaid = recapSaid .. ", none of them readable" return end
+	-- (asked too soon, the game still holds the recap of the death before: that one is not this death's)
+	if newest == lastRecap then recapSaid = recapSaid .. ", still those of the death before" return end
+	lastRecap = newest
 	table.sort(out, function(a, b) return a.at < b.at end)
 	for _, hit in ipairs(out) do
 		-- (the recap may reach further back than the window: such a hit still counts, at the window's edge)
 		hit.t, hit.at = now - math.min(newest - hit.at, WINDOW - 0.1), nil
 	end
 	taken = out
+	return true
 end
 
 -- PARTY_KILL as an event of its own (the closed combat log's stand-in for a kill)
@@ -218,12 +275,35 @@ local function Death()
 			end
 		end
 	end
+	-- what there was to go by, for /dt deathtest
+	local sources, watchers = {}, {}
+	for _, a in ipairs(order) do sources[#sources + 1] = a[1] .. (a[3] and " (player)" or "") end
+	for name, at in pairs(onMe) do
+		if now - at <= WINDOW then watchers[#watchers + 1] = { name, at } end
+	end
+	table.sort(watchers, function(a, b) return a[2] > b[2] end)
+	local names = {}
+	for i, w in ipairs(watchers) do names[i] = w[1] end
+	local function Said(kept)
+		Note(("%s; struck by: %s; enemy players with me targeted: %s; %s"):format(C.open and "combat log open" or recapSaid,
+			sources[1] and table.concat(sources, ", ") or "nobody known", names[1] and table.concat(names, ", ") or "none", kept))
+		recapSaid = "not asked"
+	end
 	-- (this is for PvP: a death no player had a hand in, to a mob or a fall, is not kept)
 	-- ponytail: players only where the log is closed (Forever, the only place this runs); the open-log path
 	-- still keeps mobs, as its tests expect. Filter there too if this ever runs on such a client.
 	if not pvp and not C.open then
 		taken = {}
-		return
+		if not watchers[1] then return Said("not kept: no player had a hand in it that I know of") end
+		-- Nobody known to be a player struck (or nothing was told of who struck), but enemy players had me
+		-- targeted: the death is theirs, as a guess (guess = true), the latest of them first.
+		local rec = Here({ killer = watchers[1][1], player = true, guess = true, level = UnitLevel and UnitLevel("player") or nil, assists = {},
+			hits = hits, hp = UnitHealthMax and UnitHealthMax("player") or nil })
+		for i = 2, #watchers do rec.assists[#rec.assists + 1] = { watchers[i][1], 0, true } end
+		Known(rec, rec.killer)
+		onMe = {}
+		Keep(C.db.deaths, rec)
+		return Said("kept, by who had me targeted")
 	end
 	local rec = Here({ killer = last and last.name or "Unknown", player = last and last.player or false, with = last and last.spell,
 		amount = last and last.amount, dmg = last and by[last.name][2], level = UnitLevel and UnitLevel("player") or nil, assists = {},
@@ -234,7 +314,9 @@ local function Death()
 	table.sort(rec.assists, function(a, b) return a[2] > b[2] end)
 	Known(rec, rec.killer)
 	taken = {}
+	onMe = {}
 	Keep(C.db.deaths, rec)
+	Said("kept")
 end
 
 local DAMAGE = { SPELL_DAMAGE = true, RANGE_DAMAGE = true, SPELL_PERIODIC_DAMAGE = true, DAMAGE_SHIELD = true }
@@ -338,13 +420,17 @@ end
 -- The tab
 ---------------------------------------------------------------------------
 
-local ROW_H, SIDE_W, TOP_H, SIDE_H = 18, 170, 28, 20
+-- The lists are tabs across the top (SIDE_W: nothing stands at the side any more), the search under them.
+local ROW_H, SIDE_W, TOP_H, SIDE_H, TAB_W = 18, 0, 54, 20, 160
 local VIEWS = {
 	deaths = { label = "Who killed me", { "When", 124 }, { "Killed by", 170 }, { "With", 170 }, { "Where", 200 }, { "Helped by", 0 } },
 	kills = { label = "Who did I kill", { "When", 124 }, { "Killed", 170 }, { "With", 170 }, { "Killing blow", 90 }, { "Where", 0 } },
+	-- everybody met, once each: how often I killed them and they me
+	players = { label = "Players", { "Player", 250 }, { "I killed", 70 }, { "Killed me", 80 }, { "Last met", 124 }, { "Where", 0 } },
 }
+local VIEW_ORDER = { "deaths", "kills", "players" }
 local view = "deaths"
-local sortBy = { deaths = { col = 1, desc = true }, kills = { col = 1, desc = true } }
+local sortBy = { deaths = { col = 1, desc = true }, kills = { col = 1, desc = true }, players = { col = 2, desc = true } }
 local panel, side, search, countText, playersOnly, bar
 local rows, heads, sideButtons, list, offset = {}, {}, {}, {}, 0
 local onlyPlayers = false
@@ -362,15 +448,46 @@ local function Where(rec)
 	return rec.sub ~= "" and rec.sub ~= rec.zone and (rec.sub .. ", " .. rec.zone) or rec.zone
 end
 
+-- Everybody I killed or was killed by, once each: { name, kills, deaths, t (the last meeting), rec (of it) }.
+function C.Players(only)
+	local by, all = {}, {}
+	local function Add(name, rec, kill)
+		if not name or (only and not rec.player) then return end
+		local p = by[name]
+		if not p then
+			p = { name = name, kills = 0, deaths = 0, t = 0 }
+			by[name], all[#all + 1] = p, p
+		end
+		if kill then p.kills = p.kills + 1 else p.deaths = p.deaths + 1 end
+		-- (the newest record of them is the one shown; one that knows their guild or class is kept beside it)
+		if (rec.t or 0) >= p.t then p.t, p.rec = rec.t or 0, rec end
+		if rec.guild or rec.class then p.known = (not p.known or (rec.t or 0) >= (p.known.t or 0)) and rec or p.known end
+	end
+	for _, rec in ipairs(C.db.kills) do Add(rec.name, rec, true) end
+	for _, rec in ipairs(C.db.deaths) do Add(rec.killer, rec, false) end
+	return all
+end
+
 local function Rebuild()
 	local q = (search:GetText() or ""):lower()
 	list = {}
-	for _, rec in ipairs(C.db[view]) do
+	if view == "players" then
+		for _, p in ipairs(C.Players(onlyPlayers)) do
+			local about, where = p.known or p.rec, Where(p.rec)
+			local won = p.kills > p.deaths and "|cff40ff40" or p.kills < p.deaths and "|cffff6060" or "|cffffffff"
+			if q == "" or (p.name .. " " .. (about.guild or "") .. " " .. where):lower():find(q, 1, true) then
+				list[#list + 1] = { rec = about, player = p, Tag(p.name, about), won .. p.kills .. "|r", won .. p.deaths .. "|r",
+					date("%a %d %b %H:%M", p.t), where, sort = { p.name, p.kills, p.deaths, p.t, where } }
+			end
+		end
+	end
+	for _, rec in ipairs(view ~= "players" and C.db[view] or {}) do
 		local name = view == "deaths" and rec.killer or rec.name
 		local when, where = date("%a %d %b %H:%M", rec.t), Where(rec)
-		local with = rec.with and (rec.with .. (rec.amount and rec.amount > 0 and (" (%d)"):format(rec.amount) or "")) or ""
+		local with = rec.with and (rec.with .. (rec.amount and rec.amount > 0 and (" (%d)"):format(rec.amount) or ""))
+			or (rec.guess and "|cff888888had me targeted|r") or ""
 		local helpers = {}
-		for _, a in ipairs(rec.assists or {}) do helpers[#helpers + 1] = ("%s %d"):format(Who(a[1], a[3]), a[2]) end
+		for _, a in ipairs(rec.assists or {}) do helpers[#helpers + 1] = Who(a[1], a[3]) .. (a[2] > 0 and (" " .. a[2]) or "") end
 		local row
 		if view == "deaths" then
 			row = { rec = rec, when, Tag(name, rec), with, where, helpers[1] and table.concat(helpers, ", ") or "|cff888888nobody|r",
@@ -390,6 +507,7 @@ local function Rebuild()
 			if by.desc then return x > y end
 			return x < y
 		end
+		if view == "players" then return a.sort[1] < b.sort[1] end -- (by name)
 		return a.sort[1] > b.sort[1]
 	end)
 end
@@ -454,6 +572,7 @@ function C.Recap(rec, death)
 	local function Line(text) rows[#rows + 1] = { text = text } end
 	Line(date("%A %d %B %Y, %H:%M", rec.t) .. "  " .. GREY .. Where(rec) .. "|r")
 	if C.About(rec) then Line(C.About(rec)) end
+	if rec.guess then Line("|cffff9944A guess: the server did not say who struck. This is who had me targeted when I died.|r") end
 	local hits = rec.hits
 	if not hits or not hits[1] then
 		-- (a kill where the combat log is closed: the game tells who died, never what I hit them with)
@@ -623,6 +742,12 @@ end
 
 -- "12 deaths, 5 of them to players. Most often: Gorak (4)."
 local function Summary()
+	if view == "players" then
+		local kills, deaths = 0, 0
+		for _, row in ipairs(list) do kills, deaths = kills + row.player.kills, deaths + row.player.deaths end
+		if #list == 0 then return "|cff888888Nobody met yet.|r" end
+		return ("%d players: I killed them %d times, they killed me %d times. Click one for the fights."):format(#list, kills, deaths)
+	end
 	local n, players, count, top = 0, 0, {}, nil
 	for _, row in ipairs(list) do
 		local name = view == "deaths" and row.rec.killer or row.rec.name
@@ -654,6 +779,15 @@ local function MakeRow(i)
 		if not d then return end
 		local rec = d.rec
 		GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+		if d.player then
+			local p = d.player
+			GameTooltip:AddLine(p.name)
+			if C.About(rec) then GameTooltip:AddLine((rec.guild and ("<" .. rec.guild .. "> ") or "") .. C.About(rec), 1, 0.82, 0) end
+			GameTooltip:AddLine(("I killed them %d times, they killed me %d times."):format(p.kills, p.deaths), 1, 1, 1)
+			GameTooltip:AddLine("Last met " .. date("%A %d %B %Y, %H:%M", p.t) .. ", " .. Where(p.rec), 0.8, 0.8, 0.8, true)
+			GameTooltip:AddLine("Click for the fights with them", 0.5, 0.8, 1)
+			return GameTooltip:Show()
+		end
 		GameTooltip:AddLine(date("%A %d %B %Y, %H:%M", rec.t))
 		GameTooltip:AddLine(Where(rec) .. (rec.x and (" (%.1f, %.1f)"):format(rec.x, rec.y) or ""), 1, 1, 1)
 		if C.About(rec) then GameTooltip:AddLine((rec.guild and ("<" .. rec.guild .. "> ") or "") .. C.About(rec), 1, 0.82, 0) end
@@ -665,7 +799,10 @@ local function MakeRow(i)
 			end
 			if rec.level then GameTooltip:AddLine("I was level " .. rec.level, 0.8, 0.8, 0.8) end
 			for _, a in ipairs(rec.assists) do
-				GameTooltip:AddLine(("Helped: %s%s, %d damage"):format(a[1], a[3] and " (a player)" or "", a[2]), 0.8, 0.8, 0.8)
+				GameTooltip:AddLine(("Helped: %s%s, %s"):format(a[1], a[3] and " (a player)" or "", a[2] > 0 and (a[2] .. " damage") or "had me targeted"), 0.8, 0.8, 0.8)
+			end
+			if rec.guess then
+				GameTooltip:AddLine("A guess: the server did not say who struck. These are the enemy players who had me targeted.", 1, 0.6, 0.3, true)
 			end
 		else
 			GameTooltip:AddLine(("%s%s%s"):format(rec.name, rec.player and " (a player)" or "",
@@ -677,7 +814,14 @@ local function MakeRow(i)
 	end)
 	row:SetScript("OnLeave", function() GameTooltip:Hide() end)
 	row:SetScript("OnMouseUp", function(self)
-		if self.data then C.ShowRecap(self.data.rec, view == "deaths") end
+		local d = self.data
+		if not d then return end
+		if d.player then -- (a player: over to the list of the fights with them)
+			view, offset = d.player.kills > 0 and "kills" or "deaths", 0
+			search:SetText(d.player.name)
+			return C.Refresh()
+		end
+		C.ShowRecap(d.rec, view == "deaths")
 	end)
 	rows[i] = row
 	return row
@@ -720,8 +864,8 @@ local function Refresh()
 		end
 	end
 	for key, b in pairs(sideButtons) do
-		local n = 0
-		for _, rec in ipairs(C.db[key]) do
+		local n = key == "players" and #C.Players(onlyPlayers) or 0
+		for _, rec in ipairs(key ~= "players" and C.db[key] or {}) do
 			if not onlyPlayers or rec.player then n = n + 1 end
 		end
 		b.label:SetText(("%s (%d)"):format(VIEWS[key].label, n))
@@ -733,18 +877,18 @@ C.Refresh = Refresh
 
 local function Build(parent)
 	panel = parent
+	-- the lists, as tabs across the top
 	side = CreateFrame("Frame", nil, panel)
 	side:SetPoint("TOPLEFT", 0, -2)
-	side:SetPoint("BOTTOMLEFT", 0, 0)
-	side:SetWidth(SIDE_W)
+	side:SetPoint("TOPRIGHT", 0, -2)
+	side:SetHeight(SIDE_H + 4)
 	local shade = side:CreateTexture(nil, "BACKGROUND")
 	shade:SetAllPoints()
 	shade:SetColorTexture(1, 1, 1, 0.04)
-	for i, key in ipairs({ "deaths", "kills" }) do
+	for i, key in ipairs(VIEW_ORDER) do
 		local b = CreateFrame("Button", nil, side)
-		b:SetHeight(SIDE_H)
-		b:SetPoint("TOPLEFT", 2, -2 - (i - 1) * SIDE_H)
-		b:SetPoint("RIGHT", -2, 0)
+		b:SetSize(TAB_W, SIDE_H)
+		b:SetPoint("TOPLEFT", 2 + (i - 1) * (TAB_W + 4), -2)
 		b.sel = b:CreateTexture(nil, "BACKGROUND")
 		b.sel:SetAllPoints()
 		b.sel:SetColorTexture(1, 0.82, 0, 0.18)
@@ -763,7 +907,7 @@ local function Build(parent)
 	-- leave out wolves and the like
 	playersOnly = CreateFrame("CheckButton", nil, side, "UICheckButtonTemplate")
 	playersOnly:SetSize(22, 22)
-	playersOnly:SetPoint("TOPLEFT", 4, -2 - 2 * SIDE_H - 8)
+	playersOnly:SetPoint("TOPLEFT", 2 + #VIEW_ORDER * (TAB_W + 4) + 8, -1)
 	local playersText = playersOnly:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
 	playersText:SetPoint("LEFT", playersOnly, "RIGHT", 2, 0)
 	playersText:SetText("Players only")
@@ -774,7 +918,7 @@ local function Build(parent)
 
 	search = CreateFrame("EditBox", nil, panel, "SearchBoxTemplate")
 	search:SetSize(200, 20)
-	search:SetPoint("TOPLEFT", SIDE_W + 16, -3)
+	search:SetPoint("TOPLEFT", 10, -SIDE_H - 9)
 	search:SetAutoFocus(false)
 	search:HookScript("OnTextChanged", function() -- (hooked: the template's own handler shows the "Search" hint)
 		offset, dirty = 0, true
@@ -881,10 +1025,28 @@ DT:RegisterModule("combat", {
 		DT:On("NAME_PLATE_UNIT_ADDED", function(unit)
 			if type(Plain(unit)) == "string" then See(unit) end
 		end)
+		-- The game's recap of a death is not ready the moment the death is told: it is asked for at once and,
+		-- while it has nothing new, again after 0.3, 1 and 2 seconds. Only then is the death written down.
+		local waiting = false
 		DT:On("PLAYER_DEAD", function()
-			if not C.open then pcall(FromRecap) end
-			Death()
+			pcall(Watch) -- (one last look at who is on me)
+			if C.open then return Death() end
+			if waiting then return end
+			local waits, tries = { 0.3, 0.7, 1 }, 0
+			local function Try()
+				local ok, fresh = pcall(FromRecap)
+				tries = tries + 1
+				if (ok and fresh) or tries > #waits or not (C_Timer and C_Timer.After) then
+					waiting = false
+					recapSaid = recapSaid .. (tries > 1 and (" (asked %d times)"):format(tries) or "")
+					return Death()
+				end
+				waiting = true
+				C_Timer.After(waits[tries], Try)
+			end
+			Try()
 		end)
+		if C_Timer and C_Timer.NewTicker then C_Timer.NewTicker(0.5, function() pcall(Watch) end) end
 	end,
 	selfTest = function(_, Try)
 		for _, v in ipairs({ "deaths", "kills" }) do

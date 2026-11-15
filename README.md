@@ -17,6 +17,7 @@ One window (`/dt`, or the minimap button) with a tab per tool. Most of it works 
 | **Tools → Range** | Estimated distance to target and focus. | No |
 | **Tools → MP5** | Five-second-rule indicator. | No |
 | **Tools → Tracker** | A button that targets a name and pings or marks it. | No |
+| **Tools → Enemies** | A list on screen of enemy players in sight: level, class, distance, and who has you targeted. | No |
 | **Tools → Silencer** | Tick boxes that switch off game noises (first: the "ability isn't ready" voice). | No |
 | **Settings** | Per-module switches, tab order, profiles with export / import. | No |
 
@@ -37,7 +38,7 @@ It does not buy, bid, post, cancel or undercut. It never scans the auction house
 
 Copy the `DawnTools` folder into `Interface/AddOns/` and restart the game. The folder must be named `DawnTools`.
 
-Optional addons it works with: QuestieDB (World tabs; Questie adds dungeon entrances), Auctionator (price import), TomTom (waypoints), GatherMate2 (herbs and ore per zone), AtlasLootClassic ("crafted" as an item source).
+Optional addons it works with: QuestieDB (World tabs; Questie adds dungeon entrances), OneForAll (which dungeon a quest is for), Auctionator (price import), TomTom (waypoints), GatherMate2 (herbs and ore per zone), AtlasLootClassic ("crafted" as an item source).
 
 ## Commands
 

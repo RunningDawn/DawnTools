@@ -35,8 +35,10 @@ local SORT_KIND = {
 	[-264] = "Profession", [-304] = "Profession", [-324] = "Profession",
 }
 -- Where the game gives no tag: the old world's dungeons and raids, by the zone a quest is filed under
--- ponytail: English names, the old world only; Forever's own instances are known by their tag or not at all
+-- ponytail: English names. The old world's, and Forever's own by name (a new one has to be added here).
 local INSTANCE = {}
+for _, name in ipairs({ "Alcaz Prison", "Barrow Deeps", "Blackmaw Hold", "City of Dalaran", "Excavation Site: Wetlands", "Hall of Thanes",
+	"The Hall of Thanes", "Krol'dok Stronghold", "Ruins of Lordaeron", "Shaper's Terrace", "The Drowned City" }) do INSTANCE[name] = "Dungeon" end
 for _, name in ipairs({ "Ragefire Chasm", "Wailing Caverns", "The Deadmines", "Shadowfang Keep", "Blackfathom Deeps", "The Stockade", "Gnomeregan",
 	"Razorfen Kraul", "Scarlet Monastery", "Razorfen Downs", "Uldaman", "Zul'Farrak", "Maraudon", "Sunken Temple", "The Temple of Atal'Hakkar",
 	"Blackrock Depths", "Blackrock Spire", "Dire Maul", "Stratholme", "Scholomance" }) do INSTANCE[name] = "Dungeon" end
@@ -98,14 +100,81 @@ local function Ids(list) -- a list of quest numbers (a "must be active" one is t
 	return out
 end
 
+-- An instance under the one name this list knows it by: a wing under its dungeon ("Dire Maul: East",
+-- "Upper Blackrock Spire"), with or without its "The". A name not known here stays as it is.
+local function Canon(name)
+	if INSTANCE["The " .. name] then return "The " .. name end
+	if INSTANCE[name] then return name end
+	local base = name:match("^(.-): ")
+	if base and INSTANCE[base] then return base end
+	for known in pairs(INSTANCE) do
+		if #known < #name and name:sub(-#known) == known then return known end
+	end
+	return name
+end
+Q.Canon = Canon
+
+-- Which instance a quest is for, as the OneForAll addon lists it (where that is installed): its dungeon pages
+-- name every quest of a dungeon, also those given and done outside it. Read from it when asked; not copied.
+local ofa -- [quest] = instance; nil until asked for (and again at each reading of the quests)
+local function FromOneForAll(id)
+	if not ofa then
+		ofa = {}
+		local all = type(OneForAll) == "table" and OneForAll.DUNGEONS
+		for _, d in ipairs(type(all) == "table" and all or {}) do
+			for _, quest in ipairs(type(d) == "table" and type(d.name) == "string" and type(d.quests) == "table" and d.quests or {}) do
+				if type(quest) == "table" and type(quest.id) == "number" then ofa[quest.id] = Canon(d.name) end
+			end
+		end
+	end
+	return ofa[id]
+end
+
+-- A quest QuestieDB files under no zone at all (most of Forever's new quests): where it belongs.
+--   texts: what the quest asks, in QuestieDB's words;  from: the area its giver stands in
+-- It is of the zone it is given in; and one that names an instance in what it asks ("... from Krol'dok
+-- Stronghold") is that instance's (e.instance) besides.
+-- ponytail: an instance quest that neither names its instance nor is in OneForAll's lists is not known for one.
+function Q.Place(e, texts, from)
+	local found
+	for _, text in ipairs(type(texts) == "table" and texts or {}) do
+		for name in pairs(INSTANCE) do
+			if type(text) == "string" and text:find(name, 1, true) and (not found or #name > #found) then found = name end
+		end
+	end
+	if found then e.instance = Canon(found) end
+	if type(from) == "number" and from > 0 then e.zone, e.zoneName = from, ZoneName(from) end
+end
+
+-- The area a quest's giver (or, failing that, whoever takes it back) stands in: an NPC's, else an object's.
+-- who: QuestieDB's startedBy / finishedBy = { { npcs }, { objects }, { items } }
+local function AreaOf(who)
+	local lib = LibQuestieDB
+	for at, db in ipairs({ "Npc", "Object" }) do
+		for _, id in ipairs(type(who) == "table" and type(who[at]) == "table" and who[at] or {}) do
+			local ok, area = pcall(function() return lib[db].Get(id, "zoneID") end)
+			if ok and type(area) == "number" and area > 0 then return area end
+		end
+	end
+end
+
 local function Entry(id, v)
 	local e = { id = id, name = v[1], nameL = v[1]:lower(), min = v[2] or 0, level = v[3] or 0, races = v[4] or 0, classes = v[5] or 0,
 		zone = v[6] or 0, preAll = Ids(v[7]), preAny = Ids(v[8]), next = v[9], excl = Ids(v[12]), skill = type(v[13]) == "table" and v[13] or nil,
 		starts = type(v[14]) == "table" and v[14] or {}, parent = v[15], rep = type(v[17]) == "table" and v[17] or nil, maxLevel = v[18], types = {} }
 	e.zoneName = ZoneName(e.zone)
+	if e.zone == 0 then
+		local lib = LibQuestieDB
+		local okText, texts = pcall(function() return lib.Quest.Get(id, "objectivesText") end)
+		local okEnd, ends = pcall(function() return lib.Quest.Get(id, "finishedBy") end)
+		Q.Place(e, okText and texts or nil, AreaOf(e.starts) or AreaOf(okEnd and ends or nil))
+	end
 	local t = e.types
-	local tag = Tag(id) or INSTANCE[e.zoneName]
+	-- which instance it is for: OneForAll's lists, else what it names (above), else the zone it is filed under
+	e.instance = FromOneForAll(id) or e.instance or (INSTANCE[e.zoneName] and e.zoneName) or nil
+	local tag = Tag(id)
 	if tag then t[tag] = true end
+	if e.instance then t[INSTANCE[e.instance] or "Dungeon"] = true end
 	local kind = SORT_KIND[e.zone]
 	if kind then t[kind] = true end
 	if e.classes ~= 0 then t.Class = true end
@@ -162,18 +231,24 @@ local function Link()
 			if not listed then names[#names + 1] = type end
 		end
 		e.typeText = table.concat(names, ", ")
-		e.hay = (e.name .. " " .. e.zoneName .. " " .. e.typeText):lower()
+		e.hay = (e.name .. " " .. e.zoneName .. " " .. (e.instance or "") .. " " .. e.typeText):lower()
 	end
 end
 
 local function ReadAll(lib)
+	ofa = nil -- (OneForAll's lists are asked for anew: it may not have been loaded the last time)
 	local ids = lib.Quest.GetAllIds()
+	local dropped, firstError = 0, nil
 	local stop = debugprofilestop and debugprofilestop() + (Q.budget or 8)
 	for i, id in ipairs(ids) do
 		local ok, v = pcall(lib.Quest.GetAll, id, FIELDS)
 		if ok and v and type(v[1]) == "string" and v[1] ~= "" then
 			local made, e = pcall(Entry, id, v) -- (one odd record is left out, not the end of the reading)
-			if made then index[#index + 1], byId[id] = e, e end
+			if made then
+				index[#index + 1], byId[id] = e, e
+			else
+				dropped, firstError = dropped + 1, firstError or (id .. ": " .. tostring(e))
+			end
 		end
 		Q.progress = i / #ids
 		if (stop and debugprofilestop() > stop) or (not stop and i % Q.BATCH == 0) then
@@ -183,6 +258,9 @@ local function ReadAll(lib)
 	end
 	Link()
 	ready = true
+	-- (left out quests are a fault of this addon, not something to pass over in silence)
+	Q.dropped = dropped
+	if dropped > 0 then DT:Print("Quests: %d could not be read and are missing from the list (first: %s). Please report this.", dropped, firstError) end
 end
 
 ---------------------------------------------------------------------------
@@ -276,11 +354,11 @@ function Q.Find(text, f)
 	local here = f.zoneOnly and GetRealZoneText and GetRealZoneText() or nil
 	local pool, state = {}, {}
 	for _, e in ipairs(index) do
-		local ok = (not f.min or e.level >= f.min) and (not f.max or (e.level <= f.max and e.level > 0)) and (not here or e.zoneName == here)
-			and (not f.zone or e.zoneName == f.zone)
+		local ok = (not f.min or e.level >= f.min) and (not f.max or (e.level <= f.max and e.level > 0)) and (not here or e.zoneName == here or e.instance == here)
+			and (not f.zone or e.zoneName == f.zone or e.instance == f.zone)
 		for type in pairs(f.types or {}) do ok = ok and e.types[type] end
 		for type, name in pairs(f.sub or {}) do
-			if f.types and f.types[type] then ok = ok and e.zoneName == name end
+			if f.types and f.types[type] then ok = ok and (e.instance or e.zoneName) == name end
 		end
 		if ok then
 			local status, why = Q.Status(e)
@@ -426,6 +504,21 @@ function Q.Rewards(e)
 	return r
 end
 
+-- What a quest asks, in a sentence: QuestieDB's own wording of it ("Collect 15 Cultist Ears from ..."). "" where
+-- it has none. Read when asked, kept for the session; nothing of it is saved.
+local asks = {}
+function Q.Asks(e)
+	if asks[e.id] == nil then
+		local ok, texts = pcall(function() return LibQuestieDB.Quest.Get(e.id, "objectivesText") end)
+		local parts = {}
+		for _, text in ipairs(ok and type(texts) == "table" and texts or {}) do
+			if type(text) == "string" and text ~= "" then parts[#parts + 1] = text end
+		end
+		asks[e.id] = table.concat(parts, " ")
+	end
+	return asks[e.id]
+end
+
 -- the same, as lines of text for the chain window
 local MAX_ITEMS = 8
 function Q.RewardLines(e)
@@ -471,13 +564,19 @@ local function DrawChain()
 	chain.more:SetText(#chainLines > CROWS and ("|cff888888mouse wheel: %d above, %d below|r"):format(chainOffset, math.max(0, #chainLines - CROWS - chainOffset)) or "")
 end
 
--- the rewards of one quest, under the chain's rows; the window grows to hold them
+-- What one quest asks and gives, under the chain's rows; the window grows to hold it. The text is as wide as
+-- the window and no wider: a long line goes on to the next, it does not run out over the edge.
 function Q.ShowRewards(e)
 	local lines, n = Q.RewardLines(e), math.min(#chainLines, CROWS)
+	local asked = Q.Asks(e)
+	table.insert(lines, 1, "|cffffd100To do:|r  " .. (asked ~= "" and asked or "|cff888888not known|r"))
 	chain.rewards:ClearAllPoints()
 	chain.rewards:SetPoint("TOPLEFT", 10, -46 - n * CH - 6)
+	chain.rewards:SetWidth(CW - 20)
 	chain.rewards:SetText(table.concat(lines, "\n"))
-	chain:SetSize(CW, 46 + n * CH + 24 + 8 + #lines * 13)
+	local height = chain.rewards.GetStringHeight and chain.rewards:GetStringHeight() or 0
+	if not height or height <= 0 then height = #lines * 13 end -- (a client that will not say: one line each)
+	chain:SetSize(CW, 46 + n * CH + 24 + 8 + height)
 end
 
 function Q.ShowChain(e)
@@ -486,7 +585,10 @@ function Q.ShowChain(e)
 		chain:SetBackdrop({ bgFile = "Interface\\Buttons\\WHITE8x8", edgeFile = "Interface\\Buttons\\WHITE8x8", edgeSize = 1 })
 		chain:SetBackdropColor(0.06, 0.06, 0.07, 0.97)
 		chain:SetBackdropBorderColor(0.78, 0.68, 0.37, 1)
-		chain:SetFrameStrata("DIALOG")
+		-- (under the game's own popups, so the link to copy is not hidden behind this window; a click brings it
+		-- in front of the other windows of its layer)
+		chain:SetFrameStrata("HIGH")
+		if chain.SetToplevel then chain:SetToplevel(true) end
 		chain:SetClampedToScreen(true)
 		chain:SetMovable(true)
 		chain:EnableMouse(true)
@@ -498,15 +600,24 @@ function Q.ShowChain(e)
 		local shut = CreateFrame("Button", nil, chain, "UIPanelCloseButton")
 		shut:SetPoint("TOPRIGHT", 2, 2)
 		shut:SetScript("OnClick", function() chain:Hide() end) -- (the template's own closing goes through the game's panel code, which is barred to addons in combat: a plain Hide is not)
+		-- (title and legend: one line each, cut off at the window's edge rather than written over it)
 		chain.title = chain:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
 		chain.title:SetPoint("TOPLEFT", 10, -8)
+		chain.title:SetPoint("RIGHT", -28, 0)
+		chain.title:SetJustifyH("LEFT")
+		chain.title:SetWordWrap(false)
 		chain.note = chain:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
 		chain.note:SetPoint("TOPLEFT", 10, -28)
-		chain.note:SetText("|cff40a040done|r  |cffffd100in your log|r  |cffffffffopen to you|r  |cff999999not yet|r  |cff905050not for you|r      |cff888888Click a quest: waypoint, and its rewards.|r")
+		chain.note:SetPoint("RIGHT", -10, 0)
+		chain.note:SetJustifyH("LEFT")
+		chain.note:SetWordWrap(false)
+		chain.note:SetText("|cff40a040done|r  |cffffd100in your log|r  |cffffffffopen to you|r  |cff999999not yet|r  |cff905050not for you|r    |cff888888Click: waypoint, what to do, rewards. Shift-click: link.|r")
 		chain.more = chain:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
 		chain.more:SetPoint("BOTTOMLEFT", 10, 6)
 		chain.rewards = chain:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
 		chain.rewards:SetJustifyH("LEFT")
+		if chain.rewards.SetJustifyV then chain.rewards:SetJustifyV("TOP") end
+		if chain.rewards.SetWordWrap then chain.rewards:SetWordWrap(true) end
 		chain.rows = {}
 		for i = 1, CROWS do
 			local row = CreateFrame("Button", nil, chain)
@@ -525,10 +636,12 @@ function Q.ShowChain(e)
 			row.text:SetJustifyH("LEFT")
 			row.text:SetWordWrap(false)
 			row:SetScript("OnClick", function(self)
-				if self.data then
-					Q.Waypoint(self.data.e)
-					Q.ShowRewards(self.data.e) -- (and what that step gives)
+				if not self.data then return end
+				if IsShiftKeyDown and IsShiftKeyDown() then -- (as in the list: the page to read up on it)
+					return DT:ShowLink(self.data.e.name, Q.Link(self.data.e))
 				end
+				Q.Waypoint(self.data.e)
+				Q.ShowRewards(self.data.e) -- (and what that step gives)
 			end)
 			row:SetScript("OnEnter", function(self)
 				if self.data then Q.Tooltip(self, self.data.e) end
@@ -558,6 +671,11 @@ function Q.ShowChain(e)
 	return chainLines
 end
 
+-- where to read up on a quest
+function Q.Link(e)
+	return "https://www.wowhead.com/forever/quest=" .. e.id
+end
+
 function Q.Waypoint(e)
 	local name, id = Starter(e)
 	if not id then
@@ -571,7 +689,10 @@ function Q.Tooltip(owner, e)
 	GameTooltip:SetOwner(owner, "ANCHOR_RIGHT")
 	GameTooltip:AddLine(e.name)
 	GameTooltip:AddLine(("Level %d%s"):format(e.level, e.min > 0 and (", from level " .. e.min) or ""), 1, 1, 1)
-	if e.zoneName ~= "" then GameTooltip:AddLine(e.zoneName, 0.6, 0.8, 1) end
+	if e.instance then GameTooltip:AddLine(e.instance .. (e.zoneName ~= "" and e.zoneName ~= e.instance and ("  (given in " .. e.zoneName .. ")") or ""), 0.6, 0.8, 1)
+	elseif e.zoneName ~= "" then GameTooltip:AddLine(e.zoneName, 0.6, 0.8, 1) end
+	local asked = Q.Asks(e)
+	if asked ~= "" then GameTooltip:AddLine(asked, 1, 1, 1, true) end -- (what it asks, wrapped)
 	if e.typeText ~= "" then GameTooltip:AddLine(e.typeText, 1, 0.82, 0, true) end
 	GameTooltip:AddLine(STATUS_COLOR[status] .. why:sub(1, 1):upper() .. why:sub(2) .. "|r")
 	local giver = Starter(e)
@@ -590,7 +711,7 @@ end
 -- The tab
 ---------------------------------------------------------------------------
 
-local ROW_H, SIDE_W, TOP_H, SIDE_H = 18, 150, 50, 17
+local ROW_H, SIDE_W, TOP_H, SIDE_H = 18, 210, 50, 17 -- (the side: wide enough for "The Temple of Atal'Hakkar 3/12")
 local COLS = { { "Name", 240 }, { "Level", 44 }, { "Types", 200 }, { "Zone", 140 }, { "For you", 0 } }
 local STATUS_RANK = { log = 1, open = 2, later = 3, never = 4, done = 5 }
 local panel, side, search, countText, bar, minBox, maxBox, zoneButton
@@ -681,8 +802,8 @@ local function Rebuild()
 	for i, r in ipairs(found) do
 		local e = r.e
 		list[i] = { e = e, score = r.score, depth = 0, name = STATUS_COLOR[r.status] .. e.name .. "|r",
-			"", LevelText(e.level, mine), e.typeText, e.zoneName, STATUS_COLOR[r.status] .. r.why .. "|r",
-			sort = { e.nameL, e.level, e.typeText, e.zoneName, STATUS_RANK[r.status] } }
+			"", LevelText(e.level, mine), e.typeText, e.instance or e.zoneName, STATUS_COLOR[r.status] .. r.why .. "|r",
+			sort = { e.nameL, e.level, e.typeText, e.instance or e.zoneName, STATUS_RANK[r.status] } }
 		rowsOf[e] = list[i]
 	end
 	-- (a click on a column header sorts the list flat; a new search or Clear nests it again)
@@ -698,13 +819,14 @@ local SUBS = { Dungeon = true, Raid = true }
 local function Instances(type)
 	local by, names = {}, {}
 	for _, e in ipairs(index) do
-		if e.types[type] and e.zoneName ~= "" then
+		local inst = e.instance or e.zoneName -- (a tagged quest of no known instance goes by the zone it is filed under)
+		if e.types[type] and inst ~= "" then
 			local status = Q.Status(e)
 			if status ~= "never" then
-				local d = by[e.zoneName]
+				local d = by[inst]
 				if not d then
-					d = { name = e.zoneName, of = type, done = 0, total = 0 }
-					by[e.zoneName], names[#names + 1] = d, d
+					d = { name = inst, of = type, done = 0, total = 0 }
+					by[inst], names[#names + 1] = d, d
 				end
 				d.total = d.total + 1
 				if status == "done" then d.done = d.done + 1 end
@@ -754,7 +876,9 @@ local function SideList(fit)
 			highlight:SetColorTexture(1, 1, 1, 0.08)
 			b.label = b:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
 			b.label:SetPoint("LEFT", 6, 0)
+			b.label:SetPoint("RIGHT", -2, 0) -- (a name too long for the side is cut off, not written over the list)
 			b.label:SetJustifyH("LEFT")
+			if b.label.SetWordWrap then b.label:SetWordWrap(false) end
 			b:SetScript("OnClick", function(self)
 				if self.sub then
 					local d = self.sub
@@ -810,7 +934,7 @@ local function MakeRow(i)
 		local d = self.data
 		if not d then return end
 		if IsShiftKeyDown and IsShiftKeyDown() then
-			DT:ShowLink(d.e.name, "https://www.wowhead.com/forever/quest=" .. d.e.id)
+			DT:ShowLink(d.e.name, Q.Link(d.e))
 		else
 			Q.ShowChain(d.e)
 		end
@@ -881,16 +1005,19 @@ end
 -- A zone is green when every quest in it that this character can ever do is done (as the instances on the left).
 local function ZoneEntries()
 	local count, names, left, can = {}, {}, {}, {}
-	for _, e in ipairs(index) do
-		if e.zoneName ~= "" then
-			if not count[e.zoneName] then names[#names + 1] = e.zoneName end
-			count[e.zoneName] = (count[e.zoneName] or 0) + 1
-			local status = Q.Status(e)
-			if status ~= "never" then
-				can[e.zoneName] = true
-				if status ~= "done" then left[e.zoneName] = true end
-			end
+	local function Count(e, name, status)
+		if not count[name] then names[#names + 1] = name end
+		count[name] = (count[name] or 0) + 1
+		if status ~= "never" then
+			can[name] = true
+			if status ~= "done" then left[name] = true end
 		end
+	end
+	for _, e in ipairs(index) do
+		-- (under the zone it is given in, and under the instance it is for: both are in the list)
+		local status = (e.zoneName ~= "" or e.instance) and Q.Status(e) or nil
+		if e.zoneName ~= "" then Count(e, e.zoneName, status) end
+		if e.instance and e.instance ~= e.zoneName then Count(e, e.instance, status) end
 	end
 	table.sort(names)
 	local function Green(name) return can[name] and not left[name] and "|cff40a040" or nil end

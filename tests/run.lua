@@ -140,7 +140,7 @@ local LibDeflate = {
 		return (text:gsub("..", function(h) return string.char(tonumber(h, 16)) end))
 	end,
 }
-local FILES = { "Core/Logic.lua", "Core/Core.lua", "Core/Comms.lua", "Core/UI.lua", "Core/Profiles.lua", "Market/Capture.lua", "Market/Sync.lua", "Market/UI.lua", "Data/QuestRewards.lua", "Modules/Inventory.lua", "Modules/Fish.lua", "Modules/Food.lua", "Modules/Npc.lua", "Modules/Quest.lua", "Modules/Item.lua", "Modules/Zone.lua", "Modules/Combat.lua", "Tools/Tools.lua", "Tools/Range.lua", "Tools/Mp5.lua", "Tools/Tracker.lua", "Tools/Silencer.lua", "Core/Changelog.lua", "Core/Home.lua" }
+local FILES = { "Core/Logic.lua", "Core/Core.lua", "Core/Comms.lua", "Core/UI.lua", "Core/Profiles.lua", "Market/Capture.lua", "Market/Sync.lua", "Market/UI.lua", "Data/QuestRewards.lua", "Modules/Inventory.lua", "Modules/Fish.lua", "Modules/Food.lua", "Modules/Npc.lua", "Modules/Quest.lua", "Modules/Item.lua", "Modules/Zone.lua", "Modules/Combat.lua", "Tools/Tools.lua", "Tools/Range.lua", "Tools/Mp5.lua", "Tools/Tracker.lua", "Tools/Silencer.lua", "Tools/Enemies.lua", "Core/Changelog.lua", "Core/Home.lua" }
 
 local function after(delay, fn, owner) timers[#timers + 1] = { at = now + delay, fn = fn, owner = owner } end
 local function Now() return BASE + math.floor(now) end
@@ -2142,6 +2142,73 @@ do
 	eq(strip(q("Deadmines Run")[5]), "needs level 15", "one I am too low for"); eq(strip(q("Side Catch")[5]), "after: Fish for Gorak", "one that needs two others")
 	eq(q("Fish for Gorak")[3], "Open world, Chain start", "labels: where a chain starts"); eq(q("More Fish")[3], "Open world, In chain", "and what is part of one")
 	eq(q("Deadmines Run")[3], "Dungeon", "the game's own tag: a dungeon quest, and so not open world"); eq(q("Daily Bread")[3], "Open world, Daily", "a daily")
+	;(function() -- what a quest asks: QuestieDB's sentence, in the window and on the tooltip
+		local e
+		for _, r in ipairs(Quest.Find("", {})) do if r.e.name == "Daily Bread" then e = r.e end end
+		local lib = B2.env.LibQuestieDB
+		local was = lib.Quest.Get
+		lib.Quest.Get = function(id, key)
+			if key == "objectivesText" and id == e.id then return { "Bring 5 loaves to the baker.", "" } end
+			return was and was(id, key)
+		end
+		eq(Quest.Asks(e), "Bring 5 loaves to the baker.", "what a quest asks, in a sentence")
+		Quest.ShowChain(e)
+		local text = Quest.chain.rewards.text
+		check(text:find("To do:|r  Bring 5 loaves to the baker.", 1, true), "the window says what to do")
+		check(text:find("To do:", 1, true) < text:find("Rewards of", 1, true), "above what it gives")
+		Quest.Tooltip(Quest.chain, e)
+		local tip = table.concat(B2.env.GameTooltip.lines or {}, "|")
+		check(tip:find("Bring 5 loaves to the baker.", 1, true), "and so does the tooltip: " .. tip)
+		Quest.chain:Hide()
+		lib.Quest.Get = was
+	end)()
+	;(function() -- shift-click in the quest window: the link to read up on that quest
+		local e, shown
+		for _, r in ipairs(Quest.Find("", {})) do if r.e.name == "Daily Bread" then e = r.e end end
+		Quest.ShowChain(e)
+		local env = B2.env
+		local wasShift, wasPopup = env.IsShiftKeyDown, env.StaticPopup_Show
+		env.IsShiftKeyDown = function() return true end
+		env.StaticPopup_Show = function(which, title, _, url) shown = { which, title, url } end
+		click(Quest.chain.rows[1])
+		check(shown and shown[1] == "DAWNTOOLS_LINK" and shown[3] == "https://www.wowhead.com/forever/quest=" .. Quest.chain.rows[1].data.e.id,
+			"a shift-click on a quest of the chain shows its link")
+		env.IsShiftKeyDown, env.StaticPopup_Show = wasShift, wasPopup
+		Quest.chain:Hide()
+	end)()
+	;(function() -- an instance quest given outside: found under its instance as under its zone
+		local e
+		for _, r in ipairs(Quest.Find("", {})) do if r.e.name == "Daily Bread" then e = r.e end end
+		e.instance = "Krol'dok Stronghold" -- (as OneForAll's lists, or the quest's own words, would have it)
+		local got = {}
+		for _, r in ipairs(Quest.Find("", { zone = "Krol'dok Stronghold" })) do got[#got + 1] = r.e.name end
+		eq(table.concat(got, ","), "Daily Bread", "a zone picked finds the quests of the instance of that name")
+		got = {}
+		for _, r in ipairs(Quest.Find("", { zone = "Orgrimmar" })) do got[r.e.name] = true end
+		eq(got["Daily Bread"], true, "and it stays under the zone it is given in")
+		click(Quest.zoneButton)
+		local listed
+		for _, b in ipairs(Quest.zoneButton.menu.rows) do if b.shown and b.entry and b.entry.value == "Krol'dok Stronghold" then listed = b end end
+		check(listed, "the zone list names the instance too")
+		click(Quest.zoneButton)
+		e.instance = nil
+	end)()
+	;(function() -- a quest filed under no zone (Forever's new ones): placed by what it asks, else by where it is given
+		local e = { zone = 0, zoneName = "", types = {} }
+		Quest.Place(e, { "Recover the Tome of Twilight from Krol'dok Stronghold." }, 1637)
+		eq(e.instance, "Krol'dok Stronghold", "one that names an instance is that instance's"); eq(e.zone, 1637, "and of the zone it is given in besides"); eq(e.zoneName, "Orgrimmar", "by its name")
+		e = { zone = 0, zoneName = "", types = {} }
+		Quest.Place(e, { "Bring 4 Thick Leather and 12 Iron Bar to Kreza Darkthorn." }, 1637)
+		eq(e.zone, 1637, "one that names none is of the zone it is given in"); eq(e.zoneName, "Orgrimmar", "by its name"); eq(e.instance, nil, "and of no instance")
+		e = { zone = 0, zoneName = "", types = {} }
+		Quest.Place(e, { "Kill the boss in The Hall of Thanes." }, nil)
+		eq(e.instance, "The Hall of Thanes", "the longest name that fits is taken")
+		eq(Quest.Canon("Hall of Thanes"), "The Hall of Thanes", "an instance goes by one name, with its The"); eq(Quest.Canon("Dire Maul: East"), "Dire Maul", "a wing under its dungeon")
+		eq(Quest.Canon("Upper Blackrock Spire"), "Blackrock Spire", "an upper half too"); eq(Quest.Canon("Some New Hold"), "Some New Hold", "an unknown name stays")
+		e = { zone = 0, zoneName = "", types = {} }
+		Quest.Place(e, nil, nil)
+		eq(e.zoneName, "", "nothing known: it stays without a zone")
+	end)()
 	eq(q("Fish for Gorak")[4], "Orgrimmar", "the zone by name")
 	-- filters
 	Quest.ticks.mine.checked = false
@@ -2835,6 +2902,132 @@ do
 	A.combat = false
 	eq(A.DT.modules.tracker.hello, nil, "the module has nothing to say to the guild"); eq(A.env.SLASH_DAWNTOOLS_TRACKER1, "/dttracker", "its short command")
 	Tracker.Set("on", false)
+	;(function() -- Enemies: the enemy players in sight, who is on me first
+		local En, e = A.DT.Enemies, A.env
+		local was = { e.UnitExists, e.UnitIsPlayer, e.UnitCanAttack, e.UnitIsUnit, e.UnitName, e.UnitClass, e.UnitLevel, e.C_NamePlate, e.PlaySound }
+		-- unit = { name, class, file, level, enemy player, on me }
+		local units = { nameplate1 = { "Gank Alot", "Rogue", "ROGUE", 60, true, true }, nameplate2 = { "Zed Foe", "Mage", "MAGE", -1, true, false },
+			nameplate3 = { "Friend Lee", "Priest", "PRIEST", 40, false, false }, target = { "Zed Foe", "Mage", "MAGE", -1, true, false } }
+		e.UnitExists = function(u) return units[u] ~= nil end
+		e.UnitIsPlayer = function(u) return units[u] ~= nil end
+		e.UnitCanAttack = function(_, u) return units[u] and units[u][5] or false end
+		e.UnitIsUnit = function(a, b) local u = a:match("^(.*)target$") return b == "player" and units[u] and units[u][6] or false end
+		e.UnitName = function(u) return units[u] and units[u][1] end
+		e.UnitClass = function(u) if units[u] then return units[u][2], units[u][3] end end
+		e.UnitLevel = function(u) return units[u] and units[u][4] end
+		e.C_NamePlate = { GetNamePlates = function() return { { namePlateUnitToken = "nameplate1" }, { namePlateUnitToken = "nameplate2" }, { namePlateUnitToken = "nameplate3" } } end }
+		local sounds = 0
+		e.PlaySound = function() sounds = sounds + 1 end
+		local lib = En.lib
+		En.lib = { GetRange = function(_, u) if u == "nameplate1" then return 8, 10 end if u == "target" or u == "nameplate2" then return 30, 35 end end }
+
+		En.Scan()
+		local list = En.List()
+		eq(#list, 2, "the enemy players in sight, each once (a friend is not one)")
+		eq(list[1].name, "Gank Alot", "who has me targeted first"); eq(list[1].onMe, true, "marked")
+		check(En.LineText(list[1], 0):find("Gank Alot|r  60 Rogue  |cffcccccc8-10 yd|r  |cffff3030ON YOU|r", 1, true), "name, level, class, how far, and ON YOU: " .. En.LineText(list[1], 0))
+		check(En.LineText(list[2], 0):find("Zed Foe|r  ?? Mage  |cffcccccc30-35 yd|r", 1, true) and not En.LineText(list[2], 0):find("ON YOU", 1, true),
+			"one too far above me to be told shows ??, and is not on me")
+		eq(En.alert, "onMe", "somebody on me is worth the louder sound")
+		;(function() -- the game will not say whose target they have (as it may in combat): said, not passed off as "not on me"
+			local wasUnit, wasSecret = e.UnitIsUnit, e.issecretvalue
+			e.UnitIsUnit = function() return "hidden" end
+			e.issecretvalue = function(v) return v == "hidden" end
+			En.Scan()
+			local l = En.List()
+			eq(l[1].blind, true, "a target the game hides is not known"); eq(l[1].onMe, false, "and not counted as on me")
+			check(En.LineText(l[1], 0):find("target hidden", 1, true), "the line says so: " .. En.LineText(l[1], 0))
+			e.UnitIsUnit = function() error("not allowed") end
+			En.Scan()
+			eq(En.List()[1].blind, true, "nor is one the game refuses outright")
+			e.UnitIsUnit, e.issecretvalue = wasUnit, wasSecret
+			En.Scan()
+			eq(En.List()[1].blind, false, "told again: known again")
+			En.alert = "onMe"
+		end)()
+		-- the nearest first among those not on me
+		units.nameplate1[6] = false
+		units.nameplate4 = { "Far Away", "Hunter", "HUNTER", 50, true, false }
+		e.C_NamePlate.GetNamePlates = function() return { { namePlateUnitToken = "nameplate1" }, { namePlateUnitToken = "nameplate2" }, { namePlateUnitToken = "nameplate4" } } end
+		En.Scan()
+		list = En.List()
+		eq(list[1].name, "Gank Alot", "nobody on me: the nearest first"); eq(list[3].name, "Far Away", "one whose distance is not known last")
+		-- on screen, with its sound
+		En.Set("on", true)
+		En.alert = "onMe"
+		En.Tick()
+		eq(En.frame.shown, true, "switched on: the list shows"); eq(sounds, 1, "with a sound for the news")
+		-- moved as the Tracker is: only with Shift held
+		local f, moved = En.frame, 0
+		local wasShift, wasMove = e.IsShiftKeyDown, f.StartMoving
+		f.StartMoving = function() moved = moved + 1 end
+		e.IsShiftKeyDown = function() return false end
+		f.scripts.OnDragStart(f)
+		eq(moved, 0, "a plain drag does not move it")
+		f.scripts.OnEnter(f)
+		check(table.concat(e.GameTooltip.lines or {}, "|"):find("Hold Shift and drag to move", 1, true), "its tooltip says how to move it")
+		En.Set("tips", false)
+		e.GameTooltip.lines = {}
+		f.scripts.OnEnter(f)
+		eq(#(e.GameTooltip.lines or {}), 0, "the tooltip can be switched off")
+		En.Set("tips", true)
+		-- (clicks are taken only while Shift is held: otherwise they go through to the world)
+		local clicks
+		f.SetMouseClickEnabled = function(_, on) clicks = on end
+		e.IsShiftKeyDown = function() return true end
+		A.fire("MODIFIER_STATE_CHANGED", "LSHIFT", 1)
+		eq(clicks, true, "Shift pressed: the list takes clicks, to be dragged")
+		A.fire("MODIFIER_STATE_CHANGED", "LCTRL", 1)
+		eq(clicks, true, "another key changes nothing")
+		f.scripts.OnDragStart(f)
+		eq(moved, 1, "with Shift held it does")
+		local wasCenter = f.GetCenter
+		f.GetCenter = function() return 500, 400 end
+		f.scripts.OnDragStop(f)
+		check(En.db.pos and En.db.pos[1] == "CENTER" and En.db.pos[3] == 500, "and where it was put is kept")
+		-- Shift let go in mid-drag: put down where it is, and click-through again
+		f.scripts.OnDragStart(f)
+		f.GetCenter = function() return 640, 300 end
+		e.IsShiftKeyDown = function() return false end
+		A.fire("MODIFIER_STATE_CHANGED", "LSHIFT", 0)
+		eq(En.db.pos[3], 640, "Shift let go in mid-drag: it is put down where it is"); eq(clicks, false, "and clicks go through it again")
+		-- locked: Shift or no Shift, it stays
+		eq(En.db.settings.locked, false, "it is not locked to begin with")
+		En.Set("locked", true)
+		e.IsShiftKeyDown = function() return true end
+		A.fire("MODIFIER_STATE_CHANGED", "LSHIFT", 1)
+		eq(clicks, false, "locked: Shift does not make it take clicks")
+		f.scripts.OnDragStart(f)
+		eq(moved, 2, "and a Shift-drag does not move it")
+		e.IsShiftKeyDown = function() return false end -- (with Shift held the tooltip keeps out of the way)
+		e.GameTooltip.lines = {}
+		f.scripts.OnEnter(f)
+		check(table.concat(e.GameTooltip.lines or {}, "|"):find("Locked in place", 1, true), "its tooltip says it is locked")
+		e.IsShiftKeyDown = function() return true end
+		En.Set("locked", false)
+		eq(clicks, true, "unlocked with Shift held: it takes clicks again")
+		check(En.boxes.locked, "a tick box for the lock")
+		f.SetMouseClickEnabled = nil
+		e.IsShiftKeyDown, f.StartMoving, f.GetCenter = wasShift, wasMove, wasCenter
+		check(En.frame.title.text:find("Enemies: 3", 1, true), "its title counts them"); check(En.frame.lines[1].text:find("Gank Alot", 1, true), "a line each")
+		-- out of sight: listed a while as lost, then forgotten
+		e.C_NamePlate.GetNamePlates = function() return {} end
+		units.target = nil
+		step(4)
+		En.Scan()
+		list = En.List()
+		eq(#list, 3, "out of sight they stay listed for a while"); check(En.LineText(list[1], e.GetTime()):find("lost %d+s ago"), "as lost, with how long ago")
+		eq(list[1].onMe, false, "who they are on is not known any more")
+		step(8)
+		En.Scan()
+		eq(#En.List(), 0, "and are forgotten after ten seconds")
+		En.Tick()
+		check(En.frame.title.text:find("none in sight", 1, true), "the list says there is nobody")
+		En.Set("on", false)
+		eq(En.frame.shown, false, "switched off: gone")
+		En.lib = lib
+		e.UnitExists, e.UnitIsPlayer, e.UnitCanAttack, e.UnitIsUnit, e.UnitName, e.UnitClass, e.UnitLevel, e.C_NamePlate, e.PlaySound = was[1], was[2], was[3], was[4], was[5], was[6], was[7], was[8], was[9]
+	end)()
 	;(function() -- Silencer: a box per noise, each the game's own setting
 		local Sil, e, cvars = A.DT.Silencer, A.env, { Sound_EnableErrorSpeech = "1" }
 		local tab
@@ -3036,23 +3229,71 @@ eq(death.hits[2][5], nil, "a plain swing is not")
 	A.fire("CHAT_MSG_COMBAT_HONOR_GAIN", "You have been awarded 5 honor points.")
 	eq(#Combat.db.kills, kills + 2, "other honour lines are not kills")
 	table.remove(Combat.db.kills)
+	local recapAt = 0 -- (each death's recap has its own times: one with the times of the last is that last one's)
 	A.env.C_DeathRecap = { GetRecapEvents = function() return {
-		{ timestamp = 105, event = "SPELL_DAMAGE", sourceName = "Zed", spellName = "Pyroblast", spellId = 11366, amount = 500, overkill = 20 },
-		{ timestamp = 100, event = "SWING_DAMAGE", sourceName = "Tiger", amount = 40, overkill = -1 },
+		{ timestamp = recapAt + 105, event = "SPELL_DAMAGE", sourceName = "Zed", spellName = "Pyroblast", spellId = 11366, amount = 500, overkill = 20 },
+		{ timestamp = recapAt + 100, event = "SWING_DAMAGE", sourceName = "Tiger", amount = 40, overkill = -1 },
 	} end }
 	step(5)
 	A.fire("PLAYER_DEAD")
 	eq(#Combat.db.deaths, deaths, "a death no player I know of had a hand in is not kept")
+	check(Combat.db.deathLog[#Combat.db.deathLog]:find("the death recap gave 2 events; struck by: Tiger, Zed; enemy players with me targeted: none; not kept", 1, true),
+		"and what it was made of is noted: " .. Combat.db.deathLog[#Combat.db.deathLog])
+	;(function() -- nobody known struck, but an enemy player had me targeted: the death is theirs, as a guess
+		local e = A.env
+		local was = { e.UnitExists, e.UnitIsPlayer, e.UnitCanAttack, e.UnitIsUnit, e.UnitGUID, e.UnitName }
+		e.UnitExists = function(u) return u == "target" end
+		e.UnitIsPlayer = function() return true end
+		e.UnitCanAttack = function() return true end
+		e.UnitIsUnit = function(a, b) return a == "targettarget" and b == "player" end
+		e.UnitGUID = function(u) if u == "target" then return "Player-Gank" end return oldGUID(u) end
+		e.UnitName = function(u) if u == "target" then return "Gank Stabber" end return oldName and oldName(u) end
+		Combat.Watch()
+		e.UnitExists, e.UnitIsPlayer, e.UnitCanAttack, e.UnitIsUnit, e.UnitGUID, e.UnitName = was[1], was[2], was[3], was[4], was[5], was[6]
+		step(5)
+		Combat.Watch = Combat.Watch -- (the recap is still that of the death before: it is asked again, then given up)
+		local e2 = A.env
+		local w = { e2.UnitExists, e2.UnitIsPlayer, e2.UnitCanAttack, e2.UnitIsUnit, e2.UnitGUID, e2.UnitName }
+		A.fire("PLAYER_DEAD")
+		eq(#Combat.db.deaths, deaths, "a recap that is still the last death's: the death waits for a new one")
+		step(3)
+		eq(#Combat.db.deaths, deaths + 1, "a death with an enemy player on me is kept, though nobody is known to have struck")
+		check(Combat.db.deathLog[#Combat.db.deathLog]:find("still those of the death before (asked 4 times)", 1, true), "having asked the game four times: " .. Combat.db.deathLog[#Combat.db.deathLog])
+		local g = Combat.db.deaths[#Combat.db.deaths]
+		eq(g.killer, "Gank Stabber", "to whoever had me targeted"); eq(g.guess, true, "marked as a guess"); eq(g.player, true, "a player")
+		check(Combat.Recap(g, true)[2].text:find("A guess", 1, true) or Combat.Recap(g, true)[3].text:find("A guess", 1, true), "and its window says so")
+		check(Combat.db.deathLog[#Combat.db.deathLog]:find("enemy players with me targeted: Gank Stabber; kept, by who had me targeted", 1, true), "and the note")
+		table.remove(Combat.db.deaths)
+		local n = #A.printed
+		A.slash("deathtest")
+		check(#A.printed > n + 1 and A.printed[n + 1]:find("deathtest: the combat log is closed", 1, true), "/dt deathtest prints the notes")
+	end)()
 	A.env.UnitGUID = function(u) if u == "target" then return "Player-Zed" end return oldGUID(u) end
 	A.env.UnitName = function(u) if u == "target" then return "Zed" end return oldName and oldName(u) end
 	A.fire("PLAYER_TARGET_CHANGED")
 	step(5)
+	recapAt = 50
 	A.fire("PLAYER_DEAD")
 	eq(#Combat.db.deaths, deaths + 1, "a death by a player is recorded from the game's own recap")
 	local d = Combat.db.deaths[#Combat.db.deaths]
 	eq(d.killer, "Zed", "the last hit in it is the killer"); eq(d.with, "Pyroblast", "with what"); eq(d.amount, 500, "for how much")
 	eq(d.assists[1] and d.assists[1][1], "Tiger", "the others in it helped"); eq(#d.hits, 2, "its hits are the recap"); eq(d.hits[1][3], "Melee", "a swing is melee")
-	table.remove(Combat.db.kills); table.remove(Combat.db.deaths)
+	table.remove(Combat.db.deaths)
+	;(function() -- a player I never saw: the hit's own GUID says it is one
+		recapAt = 100
+		local wasRecap = A.env.C_DeathRecap
+		A.env.C_DeathRecap = { GetRecapEvents = function() return {
+			{ timestamp = 300, event = "SWING_DAMAGE", sourceName = "Ghost Stalker", sourceGUID = "Player-9-ABCDEF", amount = 90 },
+		} end }
+		step(5)
+		A.fire("PLAYER_DEAD")
+		eq(#Combat.db.deaths, deaths + 1, "a death to a player never seen before is kept: the hit says who dealt it")
+		local g = Combat.db.deaths[#Combat.db.deaths]
+		eq(g.killer, "Ghost Stalker", "by name"); eq(g.player, true, "a player"); eq(g.guess, nil, "and no guess")
+		table.remove(Combat.db.deaths)
+		A.env.C_DeathRecap = wasRecap
+	end)()
+	table.remove(Combat.db.kills)
 	A.env.UnitGUID, A.env.UnitName, A.env.C_DeathRecap, Combat.open = oldGUID, oldName, nil, wasOpen
 	step(5)
 end)()
@@ -3146,7 +3387,33 @@ end
 click(sideB("Who killed me"))
 Combat.search:SetText("")
 Combat.Refresh()
-check(sideB("Who killed me (2)") and sideB("Who did I kill (2)"), "both lists are offered on the left, with their counts")
+check(sideB("Who killed me (2)") and sideB("Who did I kill (2)"), "both lists are offered as tabs, with their counts")
+;(function() -- the third tab: everybody met, once each, with how often I killed them and they me
+	local Combat = A.DT.Combat
+	local kills, deaths = Combat.db.kills, Combat.db.deaths
+	local now = os.time()
+	kills[#kills + 1] = { t = now - 300, name = "Zed Foe", player = true, zone = "Ashenvale", sub = "", guild = "Bad Lot", blow = true }
+	kills[#kills + 1] = { t = now - 200, name = "Zed Foe", player = true, zone = "Ashenvale", sub = "" }
+	deaths[#deaths + 1] = { t = now - 100, killer = "Zed Foe", player = true, zone = "The Barrens", sub = "", assists = {} }
+	local zed
+	for _, p in ipairs(Combat.Players()) do if p.name == "Zed Foe" then zed = p end end
+	eq(zed.kills, 2, "a player: how often I killed them"); eq(zed.deaths, 1, "and they me"); eq(zed.t, now - 100, "and when we last met")
+	eq(zed.known.guild, "Bad Lot", "what was seen of them once is kept beside the last meeting")
+	check(sideB("Players ("), "a third tab lists the players")
+	click(sideB("Players ("))
+	local row
+	for _, w in ipairs(A.widgets) do
+		if w.shown and w.data and w.data.player and w.data.player.name == "Zed Foe" then row = w end
+	end
+	check(row, "one row per player")
+	check(row.data[1]:find("Zed Foe", 1, true) and row.data[1]:find("<Bad Lot>", 1, true), "with the guild"); eq(row.data[2], "|cff40ff402|r", "kills, green when ahead"); eq(row.data[3], "|cff40ff401|r", "deaths")
+	check(row.data[5] == "The Barrens", "and where we last met")
+	row.scripts.OnMouseUp(row)
+	check(sideB("Who did I kill"), "a click goes to the fights"); eq(Combat.search:GetText(), "Zed Foe", "of that player")
+	Combat.search:SetText("")
+	table.remove(kills); table.remove(kills); table.remove(deaths)
+	click(sideB("Who killed me"))
+end)()
 local shownDeaths = combatRows()
 eq(#shownDeaths, 2, "my deaths are listed")
 local zedRow

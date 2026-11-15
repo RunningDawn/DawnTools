@@ -6,6 +6,50 @@
 local _, DT = ...
 
 DT.CHANGELOG = {
+	{ "0.18.5", "2026-11-15", {
+		"Enemies: says \"target hidden\" when the game will not tell who an enemy is targeting, instead of showing nothing.",
+	} },
+	{ "0.18.4", "2026-11-15", {
+		"Enemies: a Locked box, so that not even Shift-drag moves the list.",
+	} },
+	{ "0.18.3", "2026-11-15", {
+		"Enemies: Shift-drag moves the list now; without Shift, clicks go through it.",
+	} },
+	{ "0.18.2", "2026-11-15", {
+		"Enemies: moved like the Tracker, with Shift held; its hover tooltip can be switched off.",
+	} },
+	{ "0.18.0", "2026-11-15", {
+		"Tools: Enemies. A list on screen of the enemy players in sight, with level, class, distance, and ON YOU when one targets you.",
+	} },
+	{ "0.17.2", "2026-11-15", {
+		"Combat: who killed you is read from the game's death recap a moment after the death, when it is ready.",
+	} },
+	{ "0.17.1", "2026-11-15", {
+		"Combat: a death is now also recorded when the server does not say who struck: by the enemy players who had you targeted.",
+		"/dt deathtest shows what the last deaths were made of.",
+	} },
+	{ "0.17.0", "2026-11-15", {
+		"Combat: the lists are tabs across the top, and a new one, Players: everyone you fought, with kills against deaths.",
+	} },
+	{ "0.16.1", "2026-11-15", {
+		"Quests: shift-click shows the link again (it opened behind the quest window), also inside the quest window.",
+	} },
+	{ "0.16.0", "2026-11-15", {
+		"Quests: what a quest asks you to do is shown when you click it, and on its tooltip.",
+		"Quests: text in the quest window stays inside the window.",
+	} },
+	{ "0.15.6", "2026-11-15", {
+		"Quests: the list on the left is wider, and long dungeon names no longer run over the quest list.",
+	} },
+	{ "0.15.5", "2026-11-15", {
+		"Quests: dungeons are in the zone list again, and a dungeon quest shows its dungeon in the Zone column.",
+	} },
+	{ "0.15.4", "2026-11-15", {
+		"Quests: with the OneForAll addon installed, every dungeon quest is listed under its dungeon, also those given outside it.",
+	} },
+	{ "0.15.3", "2026-11-15", {
+		"Quests: Forever's new quests (Krol'dok Stronghold and other new dungeons) now have a zone and show under Dungeon.",
+	} },
 	{ "0.15.2", "2026-11-14", {
 		"A click on the window brings it in front of other addon windows.",
 	} },

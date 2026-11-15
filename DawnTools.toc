@@ -1,9 +1,9 @@
 ## Interface: 16001
 ## Title: |cffc6ad5eDawnTools|r
 ## Notes: Running Dawn guild tools. Market: shared auction prices, viewable anywhere. Inventory: bags and bank of all your characters. Fish: what a cast is worth where. Food: who can cook what. Combat: who killed me, and who I killed.
-## Version: 0.15.2
+## Version: 0.18.5
 ## X-License: GPL-3.0-or-later
-## OptionalDeps: Auctionator, QuestieDB, Questie, TomTom, GatherMate2, AtlasLootClassic
+## OptionalDeps: Auctionator, QuestieDB, Questie, TomTom, GatherMate2, AtlasLootClassic, OneForAll
 ## SavedVariables: DawnToolsDB
 ## IconTexture: Interface\AddOns\DawnTools\logo
 ## AddonCompartmentFunc: DawnTools_OnAddonCompartmentClick
@@ -37,5 +37,6 @@ Tools\Range.lua
 Tools\Mp5.lua
 Tools\Tracker.lua
 Tools\Silencer.lua
+Tools\Enemies.lua
 Core\Changelog.lua
 Core\Home.lua

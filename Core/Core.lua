@@ -4,7 +4,7 @@
 local ADDON, DT = ...
 _G.DawnTools = DT
 
-DT.VERSION = "0.15.2" -- keep in step with the .toc
+DT.VERSION = "0.18.5" -- keep in step with the .toc
 DT.LOGO = "Interface\\AddOns\\DawnTools\\logo"
 
 local DEFAULTS = {
@@ -292,6 +292,8 @@ local function Slash(input)
 		Probe()
 	elseif cmd == "sync" then
 		DT.Comms:Diagnose()
+	elseif cmd == "deathtest" then
+		if DT.Combat and DT.Combat.DeathReport then DT.Combat.DeathReport() else DT:Print("deathtest: the Combat module is switched off.") end
 	elseif cmd == "logtest" then
 		-- An experiment: can the lines the game printed in the Combat Log chat tab be read? Reads, changes nothing.
 		local frame = COMBATLOG
