@@ -1,0 +1,11 @@
+package-as: DawnTools
+
+# kept out of the addon zip (development only)
+ignore:
+  - tests
+  - docs
+  - tools
+  - AGENTS.md
+  - .gitattributes
+  - .gitignore
+  - .github
