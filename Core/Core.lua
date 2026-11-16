@@ -4,7 +4,7 @@
 local ADDON, DT = ...
 _G.DawnTools = DT
 
-DT.VERSION = "0.18.5" -- keep in step with the .toc
+DT.VERSION = "0.32.0" -- keep in step with the .toc
 DT.LOGO = "Interface\\AddOns\\DawnTools\\logo"
 
 local DEFAULTS = {
@@ -61,6 +61,18 @@ local COIN = {
 	"|TInterface\\MoneyFrame\\UI-SilverIcon:0:0:2:0|t",
 	"|TInterface\\MoneyFrame\\UI-CopperIcon:0:0:2:0|t",
 }
+-- The skill band of the recipe that makes an item (Data/CraftSkill.lua), as the Professions window colours it:
+-- learned at (orange), yellow, green, grey. Returns the band as text and the profession's name; nothing for an
+-- item no profession makes. "?" where the skill it is learned at is not known.
+local PROFESSION = { [129] = "First Aid", [164] = "Blacksmithing", [165] = "Leatherworking", [171] = "Alchemy", [182] = "Herbalism",
+	[185] = "Cooking", [186] = "Mining", [197] = "Tailoring", [202] = "Engineering", [333] = "Enchanting", [356] = "Fishing", [393] = "Skinning" }
+function DT.CraftBand(item)
+	local b = DT.CraftSkill and DT.CraftSkill[item]
+	if not b then return nil end
+	return ("|cffff8040%s|r |cffffff00%d|r |cff40c040%d|r |cff808080%d|r"):format(b[2] > 0 and b[2] or "?", b[3], b[4], b[5]),
+		PROFESSION[b[1]] or "Profession"
+end
+
 function DT.Money(copper)
 	if not (DT.db and DT.db.settings.coins) then return DT.Logic.Money(copper) end
 	local c = math.floor(math.abs(copper) + 0.5)
@@ -361,6 +373,49 @@ end
 
 function DT:ShowLink(title, url)
 	StaticPopup_Show("DAWNTOOLS_LINK", title, nil, url)
+end
+
+-- A click on a row with Shift held, as on anything in the game: the left button puts its link into the chat
+-- line being written (a line is opened if none is); the right button shows its web page, to copy.
+-- Returns true when Shift was held (the click is dealt with).
+function DT:LinkClick(button, link, title, url)
+	if not (IsShiftKeyDown and IsShiftKeyDown()) then return false end
+	if button == "RightButton" then
+		self:ShowLink(title, url)
+	elseif link then
+		local insert = (ChatFrameUtil and ChatFrameUtil.InsertLink) or ChatEdit_InsertLink
+		local open = (ChatFrameUtil and ChatFrameUtil.OpenChat) or ChatFrame_OpenChat
+		if not (insert and insert(link)) and open then open(link) end
+	end
+	return true
+end
+
+-- Shift held over one of our item rows: the game's own comparison with what I wear, beside the tooltip, as over
+-- an item in the bags (also where the game is set to compare always). DT:CompareTip(owner) after the row's
+-- tooltip is shown; pressing or letting go of Shift while it is up shows or hides the comparison.
+local compared
+local function Compare()
+	if not (compared and GameTooltip and GameTooltip.IsOwned and GameTooltip:IsOwned(compared)) then return end
+	local always = GetCVarBool and GetCVarBool("alwaysCompareItems")
+	if (IsShiftKeyDown and IsShiftKeyDown()) or always then
+		if GameTooltip_ShowCompareItem then pcall(GameTooltip_ShowCompareItem, GameTooltip) end
+	elseif GameTooltip_HideShoppingTooltips then
+		pcall(GameTooltip_HideShoppingTooltips, GameTooltip)
+	end
+end
+function DT:CompareTip(owner)
+	compared = owner
+	Compare()
+end
+DT:On("MODIFIER_STATE_CHANGED", function(key)
+	if key == "LSHIFT" or key == "RSHIFT" then Compare() end
+end)
+
+-- the game's own link of an item (as the game writes it once it knows the item; else a plain one)
+function DT:GameItemLink(id, name)
+	local get = (C_Item and C_Item.GetItemInfo) or GetItemInfo
+	local ok, _, link = pcall(function() return get(id) end)
+	return ok and link or ("|cffffffff|Hitem:%d::::::::::::|h[%s]|h|r"):format(id, name or ("item " .. id))
 end
 
 -- where to read up on an item

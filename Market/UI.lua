@@ -1006,6 +1006,35 @@ function V.TooltipText(id, n)
 	return ("%s%s (%s)%s"):format(DT.Money(item.p * n), n > 1 and (" x" .. n) or "", L.Ago(now - item.t), median and (" · 7d median " .. DT.Money(median * n)) or "")
 end
 
+-- Who sells an item, by QuestieDB where that is installed: the first vendor's name and how many there are;
+-- nothing for an item no vendor sells. Looked up once an item a session.
+local soldBy = {}
+local function SoldBy(id)
+	if soldBy[id] == nil then
+		soldBy[id] = false
+		local Q = LibQuestieDB
+		local ok, vendors = pcall(function() return Q.Item.Get(id, "vendors") end)
+		if ok and type(vendors) == "table" and vendors[1] then
+			local okName, name = pcall(function() return Q.Npc.Get(vendors[1], "name") end)
+			soldBy[id] = { okName and type(name) == "string" and name or "a vendor", #vendors }
+		end
+	end
+	local s = soldBy[id]
+	if s then return s[1], s[2] end
+end
+
+-- The tooltip's word on a vendor for an item I never saw at one: the price where the shipped list has it, who
+-- sells it where QuestieDB knows. Nothing when neither does.
+-- ponytail: the game tells no price outside a vendor's window, and the shipped list is reagents only: for the
+-- rest the price is "not seen yet" until the player opens a vendor that sells it (it is recorded then).
+function V.VendorText(id, n)
+	local price, who, count = DT.VendorPrice and DT.VendorPrice[id], SoldBy(id)
+	if not (price or who) then return nil end
+	local at = who and (who .. (count > 1 and (" +%d more"):format(count - 1) or "")) or nil
+	if price then return DT.Money(price * n) .. (n > 1 and (" x" .. n) or "") .. (at and (" at " .. at) or "") end
+	return at .. " |cff888888(price not seen yet)|r"
+end
+
 local function OnTooltipItem(tip, data)
 	if not M.db.settings.tooltip or (tip ~= GameTooltip and tip ~= ItemRefTooltip) then return end
 	local id = data and data.id
@@ -1024,6 +1053,10 @@ local function OnTooltipItem(tip, data)
 	local text = id and V.TooltipText(id, n)
 	if text then tip:AddDoubleLine("Guild AH", text, 0.78, 0.68, 0.37, 1, 1, 1) end
 	local sold = id and M.db.vendors[id]
+	local band, profession = DT.CraftBand(id)
+	if band then tip:AddDoubleLine(profession, band, 0.78, 0.68, 0.37, 1, 1, 1) end
+	local unseen = id and not sold and V.VendorText(id, n)
+	if unseen then tip:AddDoubleLine("Vendor", unseen, 0.78, 0.68, 0.37, 1, 1, 1) end
 	if sold then tip:AddDoubleLine("Vendor", ("%s%s at %s, %s%s"):format(DT.Money(sold.p * n), n > 1 and (" x" .. n) or "", sold.v, sold.z, sold.l and " (limited)" or ""), 0.78, 0.68, 0.37, 1, 1, 1) end
 end
 
@@ -1047,10 +1080,10 @@ DT:RegisterModule("market", {
 		tooltip = true,
 	},
 	settings = {
-		{ key = "share", label = "Share prices with the guild (and receive theirs)" },
+		{ key = "share", label = "Share auction and vendor prices with the guild (and receive theirs)" },
 		{ key = "name", label = "Show my name as the observer" },
 		{ key = "auctionator", label = "Use Auctionator's price history (for me only)" },
-		{ key = "tooltip", label = "Price line on item tooltips" },
+		{ key = "tooltip", label = "Price, vendor and crafting-skill lines on item tooltips" },
 	},
 	slash = "/dtmarket",
 	tab = {
@@ -1072,6 +1105,46 @@ DT:RegisterModule("market", {
 	onHello = function(_, sender, summary) M.Sync:OnHello(sender, summary) end,
 	onMessage = function(_, kind, payload, sender) M.Sync:OnMessage(kind, payload, sender) end,
 	status = function() return M.Sync:Status() end,
+	progress = function()
+		local now, items, fresh = DT.Now(), 0, 0
+		for _, house in pairs(M.db.houses) do
+			for _, item in pairs(house) do
+				items = items + 1
+				if item.t and now - item.t < 86400 then fresh = fresh + 1 end
+			end
+		end
+		-- Auction prices: every item ever priced, against every item there is (QuestieDB's list, once the Items tab
+		-- has read it), quest items and keys left out. Under it, a thin second bar: those seen in the last day.
+		-- ponytail: the list cannot tell an item that binds when picked up, which is never auctioned: the bar
+		-- cannot fill. Count only what the game says may be traded if the game ever tells that without asking
+		-- the server for each item.
+		local rows = { { "Auction prices", items, nil, "open World, Items once: it counts the items there are", sub = fresh, subNote = "seen in the last day" } }
+		-- vendor prices: against everything QuestieDB says a vendor sells
+		local I = DT.Item
+		if I and I.Ready and I.Ready() then
+			local have, total, all = 0, 0, 0
+			for _, e in ipairs(I.All()) do
+				if e.c ~= 12 and e.c ~= 13 then all = all + 1 end
+				if e.src and e.src.Vendor then
+					total = total + 1
+					if M.db.vendors[e.id] or (DT.VendorPrice and DT.VendorPrice[e.id]) then have = have + 1 end
+				end
+			end
+			rows[1][3], rows[1][4] = math.max(all, items), "of all items (those that bind when picked up too: it never fills)"
+			rows[2] = { "Vendor prices", have, total, "of what vendors sell (some of it not for money)" }
+		else
+			rows[2] = { "Vendor prices", (M.Sync:VendorCounts()), nil, "open World, Items once: it counts what vendors sell" }
+		end
+		return rows
+	end,
+	held = function()
+		local items = 0
+		for _, house in pairs(M.db.houses) do
+			for _ in pairs(house) do items = items + 1 end
+		end
+		local vendors, guild = M.Sync:VendorCounts()
+		return ("%d auction prices; %d vendor prices, %d of them from the guild"):format(items, vendors, guild)
+	end,
 	selfTest = function(_, Try)
 		local id = next(M.items)
 		Try("market list", function() V:Refresh() end)

@@ -18,15 +18,18 @@ One window (`/dt`, or the minimap button) with a tab per tool. Most of it works 
 | **Tools → MP5** | Five-second-rule indicator. | No |
 | **Tools → Tracker** | A button that targets a name and pings or marks it. | No |
 | **Tools → Enemies** | A list on screen of enemy players in sight: level, class, distance, and who has you targeted. | No |
-| **Tools → Silencer** | Tick boxes that switch off game noises (first: the "ability isn't ready" voice). | No |
+| **Tools → Carrot** | Carrot on a Stick on when you mount, your trinket back when you dismount. | No |
+| **Settings → Built-ins** | The game's own switches that are hard to find, in one place (auto loot, cooldown numbers, action bars, error speech, raid frames, combat text…). | No |
+| **Settings → Data Sync** | How complete each kind of data is, what went to and came from the guild, and which optional addons are installed. | No |
 | **Settings** | Per-module switches, tab order, profiles with export / import. | No |
 
 ## What is sent to the guild
 
-Nothing, until you say yes. Two things can be shared, each asked about once:
+Nothing, until you say yes. Three things can be shared, each asked about once:
 
-- **Market:** item prices, quantities and times, plus the name of the character that saw them (can be made anonymous).
+- **Market:** item prices, quantities and times, plus the name of the character that saw them (can be made anonymous). Also what vendors ask for their goods: the item, the price, the vendor's name and the place.
 - **Food:** your character's name and which foods it can cook.
+- **Quests:** what a quest gives, as a quest giver showed it to you: money, experience, items, and the level you were. No names.
 
 Both travel as addon messages on the guild channel and reach only guild members running DawnTools. With sharing off, nothing is sent and nothing is taken in. Everything else stays on your machine. No messages are sent in combat, nor in instances unless you switch that on.
 
@@ -70,6 +73,8 @@ The tests run the addon's Lua against a fake game client. `docs/SPEC-DawnTools.m
 ## Bundled libraries
 
 In `Libs/`, unchanged: LibStub, CallbackHandler-1.0, ChatThrottleLib, AceComm-3.0, LibDeflate, LibRangeCheck-3.0. Each stays under its own licence.
+
+`Data/CraftSkill.lua` (the skill band of every profession recipe) is generated from the SkillUp Forever addon (GPL-3.0-or-later): see `THIRD_PARTY_LICENSES.txt`.
 
 ## Licence
 

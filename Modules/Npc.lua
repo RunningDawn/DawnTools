@@ -741,6 +741,8 @@ local function Build(parent)
 	end)
 	panel:SetScript("OnSizeChanged", function() N.Refresh(true) end) -- (the same NPCs, laid out anew)
 	panel:SetScript("OnUpdate", function()
+		-- (in a fight the game cuts off a script that takes long: reading and searching the list wait for its end)
+		if InCombatLockdown and InCombatLockdown() then return end
 		-- the reading goes on a little every frame, and says how far it is
 		if reading then
 			N.Step(8)

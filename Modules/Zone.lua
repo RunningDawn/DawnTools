@@ -165,6 +165,12 @@ function Z.Get(name)
 	return byName[name]
 end
 
+-- For other tabs: the zones are worked out if they can be (the NPC and quest lists read). True when they are.
+function Z.Ensure()
+	if not built and DT.Npc.Ready() and DT.Quest.Ready() then Z.Build() end
+	return built
+end
+
 local function Levels(z)
 	if not z.lo then return "" end
 	return z.lo == z.hi and tostring(z.lo) or ("%d-%d"):format(z.lo, z.hi)
@@ -173,7 +179,9 @@ Z.Levels = Levels
 
 -- a zone's levels in a colour for my own level: grey = long outgrown, green = easy, yellow = about right,
 -- orange = hard at its top, red = too high
-local function LevelColor(z, mine)
+local LevelColor
+function Z.LevelColor(z, mine) return LevelColor(z, mine) end
+function LevelColor(z, mine)
 	if not z.lo then return "|cff888888" end
 	if mine < z.lo - 3 then return "|cffff4040" end
 	if mine < z.lo then return "|cffff8040" end
@@ -810,6 +818,8 @@ local function Build(parent)
 		DrawRight()
 	end)
 	panel:SetScript("OnUpdate", function()
+		-- (in a fight the game cuts off a script that takes long: reading and searching the list wait for its end)
+		if InCombatLockdown and InCombatLockdown() then return end
 		-- the lists this tab is worked out from are read if they have not been
 		if Waiting() then
 			DT.Npc.Step(6)

@@ -638,18 +638,17 @@ local function MakeRow(i)
 		if not self.data then return end
 		GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
 		GameTooltip:SetHyperlink("item:" .. self.data.e.id)
-		GameTooltip:AddLine("Click: where it comes from. Shift-click: its page.", 0.5, 0.8, 1)
+		GameTooltip:AddLine("Click: where it comes from. Shift-click: link in chat. Shift-right-click: its web page.", 0.5, 0.8, 1)
+		GameTooltip:AddLine("Hold Shift: compare with what you wear.", 0.5, 0.8, 1)
 		GameTooltip:Show()
+		DT:CompareTip(self)
 	end)
 	row:SetScript("OnLeave", function() GameTooltip:Hide() end)
-	row:SetScript("OnMouseUp", function(self)
+	row:SetScript("OnMouseUp", function(self, button)
 		local d = self.data
 		if not d then return end
-		if IsShiftKeyDown and IsShiftKeyDown() then
-			DT:ShowLink(d.e.name, DT:ItemLink(d.e.id))
-		else
-			I.ShowInfo(d.e)
-		end
+		if DT:LinkClick(button, DT:GameItemLink(d.e.id, d.e.name), d.e.name, DT:ItemLink(d.e.id)) or button == "RightButton" then return end
+		I.ShowInfo(d.e)
 	end)
 	rows[i] = row
 	return row
@@ -961,6 +960,8 @@ local function Build(parent)
 	end)
 	panel:SetScript("OnSizeChanged", function() I.Refresh(true) end) -- (the same items, laid out anew)
 	panel:SetScript("OnUpdate", function()
+		-- (in a fight the game cuts off a script that takes long: reading and searching the list wait for its end)
+		if InCombatLockdown and InCombatLockdown() then return end
 		if reading then
 			I.Step(8)
 			I.Refresh()

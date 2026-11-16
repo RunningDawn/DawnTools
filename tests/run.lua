@@ -140,7 +140,7 @@ local LibDeflate = {
 		return (text:gsub("..", function(h) return string.char(tonumber(h, 16)) end))
 	end,
 }
-local FILES = { "Core/Logic.lua", "Core/Core.lua", "Core/Comms.lua", "Core/UI.lua", "Core/Profiles.lua", "Market/Capture.lua", "Market/Sync.lua", "Market/UI.lua", "Data/QuestRewards.lua", "Modules/Inventory.lua", "Modules/Fish.lua", "Modules/Food.lua", "Modules/Npc.lua", "Modules/Quest.lua", "Modules/Item.lua", "Modules/Zone.lua", "Modules/Combat.lua", "Tools/Tools.lua", "Tools/Range.lua", "Tools/Mp5.lua", "Tools/Tracker.lua", "Tools/Silencer.lua", "Tools/Enemies.lua", "Core/Changelog.lua", "Core/Home.lua" }
+local FILES = { "Core/Logic.lua", "Core/Core.lua", "Core/Comms.lua", "Core/UI.lua", "Core/Builtins.lua", "Core/Profiles.lua", "Market/Capture.lua", "Market/Sync.lua", "Market/UI.lua", "Data/QuestRewards.lua", "Data/CraftSkill.lua", "Modules/Inventory.lua", "Modules/Fish.lua", "Modules/Food.lua", "Modules/Npc.lua", "Modules/Quest.lua", "Modules/Item.lua", "Modules/Zone.lua", "Modules/Combat.lua", "Tools/Tools.lua", "Tools/Range.lua", "Tools/Mp5.lua", "Tools/Tracker.lua", "Tools/Enemies.lua", "Tools/Carrot.lua", "Core/Changelog.lua", "Core/Home.lua" }
 
 local function after(delay, fn, owner) timers[#timers + 1] = { at = now + delay, fn = fn, owner = owner } end
 local function Now() return BASE + math.floor(now) end
@@ -1514,6 +1514,198 @@ A.fire("MERCHANT_SHOW")
 eq(GetVendor(100), 30, "a seller's own price is brought up to date")
 A.npcName = nil
 click(section("All items"))
+;(function() -- vendor prices go to the guild like the auction prices: under the same switch, what I saw myself only
+	local V1, V2 = NewClient("Vera"), NewClient("Walt")
+	local function open(c, npc, goods)
+		c.env.GetMerchantNumItems = function() return #goods end
+		c.env.GetMerchantItemID = function(i) return goods[i][1] end
+		c.env.C_MerchantFrame = { GetItemInfo = function(i) return { price = goods[i][2], stackCount = 1, numAvailable = goods[i][3] or -1, hasExtendedCost = false } end }
+		c.env.GetRealZoneText = function() return "Durotar" end
+		c.env.GetSubZoneText = function() return "Razor Hill" end
+		c.npcName = npc
+		c.fire("MERCHANT_SHOW")
+		c.npcName = nil
+	end
+	local function vend(who) return count("HAVE", who) end
+	open(V1, "Grimtak", { { 7001, 40 }, { 7002, 500, 1 } })
+	step(100)
+	eq(vend("Vera"), 0, "sharing not agreed to: a vendor's prices stay here"); eq((V1.DT.Comms:Totals().mods.vendors or { o = 0 }).o, 0, "and nothing is counted as sent")
+	V1.env.StaticPopupDialogs.DAWNTOOLS_MARKET_SHARE.OnAccept()
+	V2.env.StaticPopupDialogs.DAWNTOOLS_MARKET_SHARE.OnAccept()
+	check(V1.env.StaticPopupDialogs.DAWNTOOLS_MARKET_SHARE.text:find("what vendors", 1, true), "the question says vendor prices are part of it")
+	V1.DT.Comms:Hello(); V2.DT.Comms:Hello()
+	step(100)
+	-- Walt had nothing: he asks Vera for what she saw, and gets it
+	check(count("WANT") >= 1, "a member who saw something at vendors is asked for it"); eq(vend("Vera"), 1, "and answers once, however many asked")
+	local got = V2.M.db.vendors[7001]
+	eq(got and got.p, 40, "the price arrives"); eq(got.v, "Grimtak", "with the vendor"); eq(got.z, "Razor Hill, Durotar", "and the place"); check(got.r, "marked as the guild's")
+	eq(V2.M.db.vendors[7002].l, true, "limited stock too")
+	eq(select(1, V2.env.DawnMarket.API.GetVendor(7001)), 40, "and it is used like one seen here")
+	eq(V2.M.db.vpeers["Vera"] ~= nil, true, "what I have of a member is remembered")
+	-- a new sighting goes out by itself; one only seen again does not
+	local n = vend("Vera")
+	open(V1, "Grimtak", { { 7001, 40 }, { 7003, 9 } })
+	step(100)
+	eq(vend("Vera"), n + 1, "something new at a vendor is told once"); eq(V2.M.db.vendors[7003].p, 9, "and taken in")
+	open(V1, "Grimtak", { { 7001, 40 }, { 7003, 9 } })
+	step(100)
+	eq(vend("Vera"), n + 1, "the same prices seen again: nothing sent")
+	-- what came from the guild is not passed on, and is not my own sighting
+	eq(V2.M.Sync:VendorHello(), "0,0", "what came from the guild does not count as seen by me")
+	local nW = vend("Walt")
+	V1.DT.Comms:Hello(); V2.DT.Comms:Hello()
+	step(700)
+	eq(vend("Walt"), nW, "so it is never sent on")
+	-- my own sighting stands against another's; a cheaper seller wins
+	open(V2, "Grimtak", { { 7001, 38 } }) -- (Walt's own price there: a discount, say)
+	step(100)
+	eq(V1.M.db.vendors[7001].p, 40, "what I saw myself at a vendor is not replaced by another member's price there")
+	open(V2, "Cheap Chad", { { 7003, 5 } })
+	step(100)
+	eq(V1.M.db.vendors[7003].p, 5, "a cheaper seller is taken"); eq(V1.M.db.vendors[7003].v, "Cheap Chad", "with its name")
+	-- nonsense is left out
+	local before = V1.M.db.vendors[7001]
+	local bad = packed("HAVE", "7001;0;0;5;X;Y\n-3;5;0;5;X;Y\n7009;7;0;5;;Y\n7010;7;2;5;X;Y\nrubbish\n7011;7;0;5;Good Name;Pla;ce\n7012;7;0;5;Hon|cffff0000est Hal;Here", nil):gsub("^market", "vendors")
+	inject(V1, "Walt-Forever", bad)
+	step(1)
+	eq(V1.M.db.vendors[7012] and V1.M.db.vendors[7012].p, 7, "(the message is read: its one good line is taken)")
+	eq(V1.M.db.vendors[7012].v, "Honcffff0000est Hal", "a name's colour code is taken apart"); eq(V1.M.db.vendors[7011], nil, "a line with a field too many is not taken")
+	eq(V1.M.db.vendors[7001], before, "a price of nothing is not taken"); eq(V1.M.db.vendors[7009], nil, "nor a line without a vendor"); eq(V1.M.db.vendors[7010], nil, "nor a malformed one")
+	-- the counts, kept for the Data Sync page
+	local totals = V1.DT.Comms:Totals()
+	check(totals.mods.vendors.o >= 2 and totals.mods.vendors.ob > 0, "messages sent are counted by module, with their size"); check(totals.mods.vendors.i >= 1, "and those received")
+	check(totals.mods.core.i >= 1, "the hellos too")
+	V1.slash("settings")
+	V1.DT.UI:ShowSection("sync")
+	local text = V1.DT.UI.syncText.text
+	check(text:find("Vendor price sharing|r  sent %d+ messages"), "the Data Sync page lists them by module: " .. text)
+	check(text:find("Total|r  sent", 1, true) and text:find("Who has the addon", 1, true), "with the hellos and a total")
+	check(text:find("vendor prices, %d+ of them from the guild"), "and what is held")
+	-- how complete each kind of data is, as bars
+	local bars, by = V1.DT.UI.syncBars, {}
+	for _, b in ipairs(bars) do if b.shown then by[b.label.text] = b end end
+	check(by["Auction prices"] and by["Vendor prices"] and by["Cooking recipes heard of"] and by["Quest rewards seen at a quest giver"], "a bar for each kind of data")
+	check(by["Vendor prices"].count.text:find("of ?", 1, true), "what cannot be counted yet says so: " .. by["Vendor prices"].count.text); eq(by["Vendor prices"].fill.shown, false, "and has no bar")
+	check(by["Vendor prices"].note.text:find("Items", 1, true), "with a word on what would count it")
+	local wasItem = V1.DT.Item.Ready, V1.DT.Item.All
+	local wasAll = V1.DT.Item.All
+	V1.DT.Item.Ready = function() return true end
+	V1.DT.Item.All = function() return { { id = 7001, src = { Vendor = true } }, { id = 7002, src = { Vendor = true } }, { id = 8888, src = { Vendor = true } }, { id = 8889, src = { Vendor = true } }, { id = 9000, src = {} },
+		{ id = 9001, c = 12, src = {} }, { id = 9002, c = 13, src = {} }, { id = 9003, src = {} }, { id = 9004, src = {} }, { id = 9005, src = {} } } end
+	check(by["Auction prices"].count.text:find("of ?", 1, true), "auction prices cannot be set against anything before the items are read")
+	local now = V1.DT.Now()
+	V1.M.db.houses.H = { [7001] = { p = 5, q = 1, t = now - 100, d = {} }, [9003] = { p = 5, q = 1, t = now - 3 * 86400, d = {} } }
+	V1.DT.UI:Refresh()
+	eq(by["Auction prices"].count.text, "2 / 8  (25%)", "every item ever priced, against the items there are (quest items and keys left out)")
+	eq(by["Auction prices"].subShare, 1 / 8, "a thin second bar for those seen in the last day"); eq(by["Auction prices"].sub.shown, true, "shown")
+	check(by["Auction prices"].note.text:find("1 seen in the last day", 1, true), "and said in words: " .. by["Auction prices"].note.text)
+	eq(by["Vendor prices"].sub.shown, false, "a bar without such a part has no second bar")
+	eq(by["Vendor prices"].count.text, "2 / 4  (50%)", "counted against what vendors sell, once the items are read"); eq(by["Vendor prices"].share, 0.5, "the bar half full")
+	V1.DT.Item.Ready, V1.DT.Item.All = wasItem, wasAll
+	local sync, food
+	for _, b in ipairs(V1.DT.UI.sectionButtons) do
+		if b.id == "sync" then sync = b elseif b.id == "module:food" then food = b end
+	end
+	check(sync.gap > 0 and food.gap == 0 and V1.DT.UI.sectionLine, "a line and some room part Data Sync from the settings above it")
+	-- the other addons it reads, and whether they are there
+	V1.env.IsAddOnLoaded = function(name) return name == "QuestieDB" end
+	V1.env.GetAddOnInfo = function(name) if name == "TomTom" then return name, name, "", false, "DISABLED" end return name, nil, nil, false, "MISSING" end
+	eq(V1.DT.UI:AddonState("QuestieDB"), "loaded", "an addon that is loaded"); eq(V1.DT.UI:AddonState("TomTom"), "off", "one installed but switched off"); eq(V1.DT.UI:AddonState("Auctionator"), "missing", "one not there")
+	V1.DT.UI:Refresh()
+	local deps = V1.DT.UI.syncText.text
+	check(deps:find("QuestieDB|r  |cff40ff40installed|r", 1, true) and deps:find("TomTom|r  |cffffd100installed, switched off|r", 1, true) and deps:find("Auctionator|r  |cff888888not installed|r", 1, true), "the page lists them with what they are for")
+	V1.env.IsAddOnLoaded, V1.env.GetAddOnInfo = nil, nil
+	-- Built-ins: the game's own switches
+	;(function()
+		local Bi, e, cvars = V1.DT.Builtins, V1.env, { autoLootDefault = "0", statusText = "0", statusTextDisplay = "NONE", Sound_EnableErrorSpeech = "1", enableMultiActionBars = "1" }
+		V1.DT.UI:ShowSection("builtins")
+		eq(Bi.boxes.autoLoot.enabled, false, "a client without the setting: its box cannot be ticked")
+		check(Bi.boxes.autoLoot.label.text:find("not a setting of this client", 1, true), "and says why"); eq(Bi.boxes.raidParty, nil, "raid-style party frames are not offered: no setting to switch")
+		e.GetCVar = function(name) return cvars[name] end
+		e.SetCVar = function(name, value) cvars[name] = tostring(value) end
+		V1.DT.UI:Refresh()
+		eq(Bi.boxes.autoLoot.enabled, true, "with the setting: it can"); eq(Bi.boxes.autoLoot.checked, false, "and shows what the game is set to"); eq(Bi.boxes.errorSpeech.checked, false, "error speech still on: its box (silence it) is not ticked")
+		Bi.boxes.autoLoot.checked = true
+		click(Bi.boxes.autoLoot)
+		eq(cvars.autoLootDefault, "1", "a tick sets the game's own setting")
+		Bi.boxes.statusText.checked = true
+		click(Bi.boxes.statusText)
+		eq(cvars.statusText, "1", "status text on"); eq(cvars.statusTextDisplay, "BOTH", "as both number and percent"); eq(Bi.boxes.statusText.checked, true, "the box ticked")
+		cvars.statusTextDisplay = "PERCENT"
+		V1.DT.UI:Refresh()
+		eq(Bi.boxes.statusText.checked, false, "changed in the game's menu to percent alone: the box is not ticked")
+		local updated = 0
+		e.MultiActionBar_Update = function() updated = updated + 1 end
+		Bi.boxes.actionBars.checked = true
+		click(Bi.boxes.actionBars)
+		eq(cvars.enableMultiActionBars, "127", "all action bars: every bar's bit"); eq(updated, 1, "and the bars are told to look again")
+		V1.combat = true
+		Bi.boxes.errorSpeech.checked = true
+		click(Bi.boxes.errorSpeech)
+		eq(cvars.Sound_EnableErrorSpeech, "1", "in combat nothing is changed"); eq(Bi.boxes.errorSpeech.checked, false, "and the box goes back")
+		V1.combat = false
+		Bi.boxes.errorSpeech.checked = true
+		click(Bi.boxes.errorSpeech)
+		eq(cvars.Sound_EnableErrorSpeech, "0", "after it: ticked, error speech is off"); eq(Bi.boxes.errorSpeech.checked, true, "and the box stays ticked")
+		Bi.boxes.errorSpeech.checked = false
+		click(Bi.boxes.errorSpeech)
+		eq(cvars.Sound_EnableErrorSpeech, "1", "unticked: the voice is back")
+		for _, entry in ipairs(Bi.LIST) do check(Bi.boxes[entry.id], "a box for " .. entry.id) end
+		e.GetCVar, e.SetCVar, e.MultiActionBar_Update = nil, nil, nil
+		V1.DT.UI:ShowSection("sync")
+	end)()
+	click(V1.DT.UI.syncReset)
+	eq(next(V1.DT.Comms:Totals().mods), nil, "the counting can be started anew"); check(V1.DT.UI.syncText.text:find("Nothing sent or received yet", 1, true), "and the page says so")
+	leave(V1); leave(V2)
+end)()
+;(function() -- what quests give goes to the guild too, where agreed to: with the level it was seen at
+	local Q1, Q2 = NewClient("Quinn"), NewClient("Rosa")
+	local function see(c, id, money, xp, level, given, choice)
+		local e = c.env
+		e.GetQuestID = function() return id end
+		e.GetRewardMoney = function() return money end
+		e.GetRewardXP = function() return xp end
+		e.UnitLevel = function() return level end
+		e.GetNumQuestRewards = function() return #given end
+		e.GetNumQuestChoices = function() return #choice end
+		e.GetQuestItemInfo = function(kind, i)
+			local it = (kind == "reward" and given or choice)[i]
+			return "x", nil, it[2], nil, nil, it[1]
+		end
+		c.fire("QUEST_DETAIL")
+	end
+	local function have(who) return count("HAVE", who) end
+	see(Q1, 501, 250, 900, 12, { { 6001, 1 } }, { { 6002, 1 }, { 6003, 5 } })
+	step(100)
+	eq(have("Quinn"), 0, "not agreed to: what a quest gives stays here")
+	check(Q1.env.StaticPopupDialogs.DAWNTOOLS_QUEST_SHARE.text:find("the level you were", 1, true), "the question says what is sent, the level too")
+	Q1.env.StaticPopupDialogs.DAWNTOOLS_QUEST_SHARE.OnAccept()
+	Q2.env.StaticPopupDialogs.DAWNTOOLS_QUEST_SHARE.OnAccept()
+	Q1.DT.Comms:Hello(); Q2.DT.Comms:Hello()
+	step(100)
+	local got = Q2.DT.Quest.db.seen[501]
+	check(got, "a member who saw a quest's rewards is asked, and what they saw arrives")
+	eq(got.m, 250, "its money"); eq(got.x, 900, "its experience"); eq(got.l, 12, "the level it was seen at"); check(got.g, "marked as the guild's")
+	eq(#got.r, 1, "what is given"); eq(got.r[1][1], 6001, "by item"); eq(#got.c, 2, "what there is to choose from"); eq(got.c[2][1], 6003, "by item"); eq(got.c[2][2], 5, "and how many")
+	-- a new sighting goes out by itself, one only seen again does not
+	local n = have("Quinn")
+	see(Q1, 502, 0, 40, 12, {}, {})
+	step(100)
+	eq(have("Quinn"), n + 1, "a quest seen for the first time is told once"); eq(Q2.DT.Quest.db.seen[502].x, 40, "and taken in")
+	see(Q1, 502, 0, 40, 12, {}, {})
+	step(100)
+	eq(have("Quinn"), n + 1, "looked at again, nothing changed: nothing sent")
+	-- what I see myself stands against the guild's, and replaces it
+	see(Q2, 501, 250, 700, 30, { { 6001, 1 } }, { { 6002, 1 }, { 6003, 5 } }) -- (Rosa is level 30: less experience)
+	step(100)
+	eq(Q2.DT.Quest.db.seen[501].x, 700, "my own look at the quest giver replaces what the guild said"); eq(Q2.DT.Quest.db.seen[501].g, nil, "and is mine")
+	eq(Q1.DT.Quest.db.seen[501].x, 900, "what I saw myself is not replaced by another member's")
+	check(Q2.DT.Quest.Gossip:Hello():find("^1,%d+$"), "what came from the guild does not count as seen by me: " .. Q2.DT.Quest.Gossip:Hello())
+	inject(Q2, "Quinn-Forever", (packed("HAVE", "777;5;5;200;5;;\n778;5;5;5;5;1:1,2:2;\nrubbish;;", nil):gsub("^market", "quest")))
+	step(1)
+	eq(Q2.DT.Quest.db.seen[777], nil, "a level that cannot be is not taken"); eq(Q2.DT.Quest.db.seen[778] and #Q2.DT.Quest.db.seen[778].r, 2, "(a good line of the same message is)")
+	leave(Q1); leave(Q2)
+end)()
 V.vendorOnly = true
 V:Refresh()
 local sellers = {}
@@ -1713,34 +1905,52 @@ end
 click(find("Button", "Spots"))
 sortDesc("Per cast")
 local rowsNow = fishRows()
-check(rowsNow[1].sort[4] >= rowsNow[2].sort[4], "spots start with the best per cast"); check(head("Per cast").text.text:find(" v", 1, true), "and the header says so")
+check(rowsNow[1].sort[5] >= rowsNow[2].sort[5], "spots start with the best per cast"); check(head("Per cast").text.text:find(" v", 1, true), "and the header says so")
 click(head("Per cast"))
 rowsNow = fishRows()
-check(rowsNow[1].sort[4] <= rowsNow[2].sort[4], "a click on the header turns it round")
+check(rowsNow[1].sort[5] <= rowsNow[2].sort[5], "a click on the header turns it round")
 click(head("Spot"))
 rowsNow = fishRows()
 check(rowsNow[1].sort[1] < rowsNow[2].sort[1], "another header sorts by that column, names from A")
 click(head("Skill"))
-check(fishRows()[1].sort[2] >= fishRows()[2].sort[2], "numbers from the biggest")
+check(fishRows()[1].sort[3] >= fishRows()[2].sort[3], "numbers from the biggest")
 local fishSearch = Fish.search
 fishSearch:SetText("testwater")
 step(1)
 rowsNow = fishRows()
 check(#rowsNow == 1 and rowsNow[1][1] == "Testwater, Pier", "the search box finds a spot by name")
-eq(rowsNow[1].sort[5] * 170, rowsNow[1].sort[4] * 170, "per hour goes by per cast"); check(rowsNow[1][5]:find(A.DT.Money(math.floor(rowsNow[1].sort[4] * 170 + 0.5)), 1, true), "170 casts of it")
-check(rowsNow[1].sort[6] > 0 and rowsNow[1][6]:find("|cff40ff40", 1, true), "and the dearest single catch of the spot is named with its price: " .. rowsNow[1][6])
+eq(rowsNow[1].sort[6] * 170, rowsNow[1].sort[5] * 170, "per hour goes by per cast"); check(rowsNow[1][6]:find(A.DT.Money(math.floor(rowsNow[1].sort[5] * 170 + 0.5)), 1, true), "170 casts of it")
+check(rowsNow[1].sort[7] > 0 and rowsNow[1][7]:find("|cff40ff40", 1, true), "and the dearest single catch of the spot is named with its price: " .. rowsNow[1][7])
+;(function() -- the hover of a spot: lines of what | value, with shares
+	local tips, bites, own = rowsNow[1].tips, nil, nil
+	for _, tip in ipairs(tips) do
+		if type(tip) == "table" and tip[1]:sub(1, 2) == "  " and tip[2]:find("%%|r") then bites = tip end
+		if type(tip) == "string" and tip:find("From your own", 1, true) then own = tip end
+	end
+	check(bites, "what bites: a line a fish, with its share of the casts and its price"); check(own, "and where the numbers are from")
+	eq(tips[1][1], "Per cast", "a spot whose zone has no skill and no levels known begins with what a cast pays")
+	local row
+	for _, w in ipairs(A.widgets) do if w.cols and w.shown and w.data == rowsNow[1] then row = w end end
+	local tip = A.env.GameTooltip
+	local was = tip.lines
+	tip.lines = {}
+	row.scripts.OnEnter(row)
+	check(#tip.lines > 4 and table.concat(tip.lines, "\n"):find("Per hour", 1, true), "hovering the row writes them into the tooltip")
+	tip.lines = was
+end)()
 fishSearch:SetText("firefin")
 step(1)
-check(#fishRows() >= 1 and fishRows()[1].sort[7]:find("Firefin", 1, true), "or by what bites there")
+check(#fishRows() >= 1 and fishRows()[1].sort[8]:find("Firefin", 1, true), "or by what bites there")
 fishSearch:SetText("")
 step(1)
 -- the skill column against my own skill (140 here)
+local foundRow
 local function skillOf(name)
 	fishSearch:SetText(name) -- (it may be scrolled out of sight: look it up)
 	Fish.Refresh()
 	local found
 	for _, d in ipairs(fishRows()) do
-		if d[1] == name then found = d[2] end
+		if d[1] == name then found, foundRow = d[3], d end
 	end
 	fishSearch:SetText("")
 	return found
@@ -1749,6 +1959,27 @@ eq(skillOf("Elwynn Forest"), "|cff40ff4025|r", "green: nothing gets away"); eq(s
 A.env.GetProfessionInfo = function() return "Fishing", nil, 140, 300, 0, 0, 356, 100 end
 eq(skillOf("Stranglethorn Vale"), "|cff40ff40225|r", "a lure and gear count")
 eq(skillOf("Eastern Plaguelands"), "|cffff4040425|r", "red: out of reach")
+;(function() -- how many casts land, and the zone's levels
+	eq(Fish.Chance(225, 225), 100, "at the zone's skill every cast lands"); eq(Fish.Chance(225, 130), 5, "at the least skill to cast: 5 in a hundred")
+	eq(Fish.Chance(225, 129), 0, "below it: none"); eq(Fish.Chance(225, 180), 55, "between: a point a point"); eq(Fish.Chance(nil, 100), nil, "no skill known: nothing said")
+	local function said(what)
+		for _, tip in ipairs(foundRow.tips) do if type(tip) == "table" and tip[1]:find(what, 1, true) then return tip[2] end end
+	end
+	check(said("At your 240"):find("cannot cast here yet", 1, true), "the hover says I cannot cast there: " .. tostring(said("At your 240")))
+	check(said("Fishing skill"):find("(cast from 330)", 1, true), "and from which skill I could")
+	eq(foundRow[2], "", "no zone levels known: the column is blank"); eq(said("Zone levels"), nil, "and the hover leaves the line out")
+	skillOf("Stranglethorn Vale")
+	check(said("At your 240"):find("nothing gets away", 1, true), "where my skill is enough it says so")
+	local Zone = A.DT.Zone
+	local ensure, get = Zone.Ensure, Zone.Get
+	Zone.Ensure = function() return true end
+	Zone.Get = function(name) return name == "Stranglethorn Vale" and { lo = 30, hi = 45 } or nil end
+	skillOf("Stranglethorn Vale")
+	eq(foundRow[2], "|cffff404030-45|r", "the zone's levels, left of the skill, in a colour for my level (10: far too high)"); eq(foundRow.sort[2], 30, "sorted by the lowest")
+	eq(said("Zone levels"), "|cffff404030-45|r", "and in the hover")
+	Zone.Ensure, Zone.Get = ensure, get
+	Fish.Refresh()
+end)()
 -- the gear table, and the link an item row gives
 click(find("Button", "Gear"))
 sortDesc("Fishing")
@@ -1805,8 +2036,8 @@ end
 eq(#foodRows(Fay), 3, "all the food is listed"); eq(foodRows(Fay)[1].id, 5003, "lowest level first")
 check(foodText(Fay, "3 foods, 2 of them known to this character"), "with a count")
 check(foodText(Fay, "Stamina (1)") and foodText(Fay, "Spirit (1)") and foodText(Fay, "Health only (1)"), "grouped by what it gives, the first thing named")
-eq(foodRows(Fay)[1][4], "|cff40ff40known|r", "a recipe I have"); eq(foodRows(Fay)[3][4], "|cffff4040missing|r", "one I lack")
-eq(foodRows(Fay)[1][5], "|cff40ff40You|r", "I can cook it"); eq(foodRows(Fay)[3][5], "|cff888888nobody known|r", "nobody can cook the other")
+eq(foodRows(Fay)[1][5], "|cff40ff40known|r", "a recipe I have"); eq(foodRows(Fay)[3][5], "|cffff4040missing|r", "one I lack")
+eq(foodRows(Fay)[1][6], "|cff40ff40You|r", "I can cook it"); eq(foodRows(Fay)[3][6], "|cff888888nobody known|r", "nobody can cook the other")
 for _, w in ipairs(Fay.widgets) do
 	if w.kind == "Button" and w.text == "Hide missing" then w.scripts.OnClick(w) end
 end
@@ -1848,9 +2079,112 @@ eq(foodRows(Fay)[1].name, "Plain Bread", "a click on a header sorts by it: names
 foodHead("Food").scripts.OnClick(foodHead("Food"))
 eq(foodRows(Fay)[1].name, "Stamina Stew", "again: the other way round")
 foodHead("This character").scripts.OnClick(foodHead("This character"))
-eq(foodRows(Fay)[3][4], "|cffff4040missing|r", "by what I know: the missing ones last")
+eq(foodRows(Fay)[3][5], "|cffff4040missing|r", "by what I know: the missing ones last")
 foodHead("Level").scripts.OnClick(foodHead("Level"))
 eq(foodRows(Fay)[1].id, 5003, "and back by level")
+;(function() -- the skill band of a recipe
+	local CS, Band = Fay.DT.CraftSkill, Fay.DT.CraftBand
+	eq(CS[2679][2], 1, "the shipped list: Charred Wolf Meat from the start"); eq(CS[2679][1], 185, "of Cooking")
+	eq(CS[20452][2], 0, "one whose learning skill the source does not know: 0, not 1")
+	local band, profession = Band(7938)
+	eq(band, "|cffff8040200|r |cffffff00220|r |cff40c040230|r |cff808080240|r", "the band in the colours of the Professions window"); eq(profession, "Blacksmithing", "and its profession")
+	check(Band(20452):find("|cffff8040?|r |cffffff00325|r", 1, true), "not known: a question mark"); eq(Band(5002), nil, "nothing for what no profession makes")
+	CS[5001], CS[5003] = { 185, 175, 200, 210, 220 }, { 185, 0, 50, 60, 70 }
+	foodHead("Cooking skill").scripts.OnClick(foodHead("Cooking skill"))
+	local rows = foodRows(Fay)
+	eq(rows[1].id, 5002, "sorted by Cooking skill: none known first"); eq(rows[1][3], "", "and blank")
+	eq(rows[2].id, 5003, "then the least (one not known where learned: by its yellow)"); eq(rows[3].id, 5001, "the most last")
+	check(rows[3][3]:find("|cffff8040175|r |cffffff00200|r |cff40c040210|r |cff808080220|r", 1, true), "with its band: " .. rows[3][3])
+	;(function() -- "Where to get it": a vendor of my side with the price, else a mob, else a quest; a click is a waypoint
+		local e, FoodM = Fay.env, Fay.DT.Food
+		eq(rows[3][8], "|cff888888Cooking trainer|r", "a recipe without an item: a trainer"); eq(rows[1][8], "", "nothing known of the recipe: blank")
+		local wasLib, wasMap, wasWay = e.LibQuestieDB, e.C_Map, Fay.DT.Npc.Waypoint
+		local NPCS = { [21] = { name = "Ally Al", zoneID = 12, friendlyToFaction = "A" }, [22] = { name = "Kira Cook", zoneID = 33, friendlyToFaction = "H" },
+			[31] = { name = "Murloc Cook", zoneID = 40, minLevel = 20, maxLevel = 21 } }
+		e.LibQuestieDB = {
+			Item = { GetAllIds = function() return {} end, GetAll = function() end,
+				Get = function(id, key) return (id == 7701 and key == "vendors" and { 21, 22 }) or (id == 7702 and key == "npcDrops" and { 31 }) or nil end },
+			Npc = { Get = function(id, key) return NPCS[id] and NPCS[id][key] end },
+		}
+		e.C_Map = { GetAreaInfo = function(area) return ({ [12] = "Elwynn Forest", [33] = "Booty Bay", [40] = "Westfall" })[area] end }
+		local buy = FoodM.Source(7701)
+		eq(buy.kind, "buy", "a recipe vendors sell: to buy"); eq(buy.npc, 22, "from the vendor of my side, not the first listed"); eq(buy.more, 1, "and how many others sell it")
+		local drop = FoodM.Source(7702)
+		eq(drop.kind, "drop", "one that only drops: from a mob"); eq(drop.npc, 31, "which one")
+		eq(FoodM.Source(7703), nil, "one with no source known: nothing")
+		CS[5001][6], CS[5003][6] = 7701, 7702
+		FoodM.Refresh()
+		local by = {}
+		for _, w in ipairs(Fay.widgets) do if w.fcols and w.shown and w.data then by[w.data.id] = w end end
+		local cell = by[5001].data[8]
+		check(cell:find("Buy|r |cff888888price ?|r  Kira Cook", 1, true) and cell:find("Booty Bay", 1, true) and cell:find("(+1)", 1, true), "the cell: buy, from whom, where; the price not seen yet: " .. cell)
+		check(by[5003].data[8]:find("Drop|r  Murloc Cook", 1, true) and by[5003].data[8]:find("Westfall", 1, true), "a drop: the mob and its zone: " .. by[5003].data[8])
+		eq(by[5001].where.shown, true, "the cell can be clicked"); eq(by[5002].where.shown, false, "one with nothing to go to cannot")
+		Fay.M.db.vendors[7701] = { p = 40, v = "Kira Cook", z = "Booty Bay", t = 1 }
+		FoodM.Refresh()
+		check(by[5001].data[8]:find("Buy|r " .. Fay.DT.Money(40), 1, true), "with the price once it is known: " .. by[5001].data[8])
+		local went
+		Fay.DT.Npc.Waypoint = function(to) went = to end
+		by[5001].where.scripts.OnMouseUp(by[5001].where)
+		eq(went and went.id, 22, "a click: a waypoint to the vendor"); eq(went.name, "Kira Cook", "by name")
+		by[5001].where.scripts.OnEnter(by[5001].where)
+		local tip = table.concat(e.GameTooltip.lines or {}, "|")
+		check(tip:find("Sold by (2)", 1, true) and tip:find("Ally Al", 1, true), "hovering lists every source: " .. tip)
+		foodHead("Where to get it").scripts.OnClick(foodHead("Where to get it"))
+		eq(foodRows(Fay)[1].id, 5001, "sorted by where: what is bought first")
+		Fay.M.db.vendors[7701] = nil
+		CS[5001][6], CS[5003][6] = nil, nil
+		e.LibQuestieDB, e.C_Map, Fay.DT.Npc.Waypoint = wasLib, wasMap, wasWay
+		foodHead("Cooking skill").scripts.OnClick(foodHead("Cooking skill"))
+		FoodM.Refresh()
+		rows = foodRows(Fay)
+	end)()
+	-- the Recipe column: the item that teaches it, with a hover and a link of its own
+	check(CS[3220][6] == 3679 and CS[2679][6] == 0, "the shipped list says which scroll teaches a recipe (0: a trainer)")
+	eq(rows[3][7], "|cff888888trainer|r", "no recipe item: a trainer teaches it"); eq(rows[1][7], "", "nothing known: blank")
+	CS[5001][6] = 5002 -- (any item the fake client knows stands in for the scroll)
+	Fay.DT.Food.Refresh()
+	rows = foodRows(Fay)
+	local row
+	for _, w in ipairs(Fay.widgets) do if w.fcols and w.shown and w.data and w.data.id == 5001 then row = w end end
+	check(row.data[7]:find("Spirit Soup", 1, true), "a recipe item is named: " .. row.data[7]); eq(row.over.shown, true, "and its cell has a hover of its own")
+	local tip, popups = Fay.env.GameTooltip, #Fay.popups
+	local linked
+	local was = tip.SetHyperlink
+	tip.SetHyperlink = function(_, link) linked = link end
+	row.over.scripts.OnEnter(row.over)
+	eq(linked, "item:5002", "which shows the recipe, not the food")
+	tip.SetHyperlink = was
+	row.over.scripts.OnMouseUp(row.over)
+	eq(#Fay.popups, popups + 1, "a click on it gives the recipe's link")
+	for _, w in ipairs(Fay.widgets) do if w.fcols and w.shown and w.data and w.data.id == 5002 then eq(w.over.shown, false, "a row without a recipe item has none") end end
+	foodHead("Recipe").scripts.OnClick(foodHead("Recipe"))
+	eq(foodRows(Fay)[1].id, 5001, "sorted by recipe: the named ones first")
+	-- any item's tooltip says it
+	local tip = A.env.GameTooltip
+	local lines = tip.lines
+	tip.lines = {}
+	A.tooltipHook(tip, { id = 7938 })
+	check(tostring(tip.lines[1]):find("Blacksmithing", 1, true) and tostring(tip.lines[1]):find("|cffffff00220|r", 1, true), "an item a profession makes: its tooltip names the profession and the band: " .. tostring(tip.lines[1]))
+	-- what a vendor asks, for an item never seen at one
+	local VT = A.M.View.VendorText
+	eq(A.DT.VendorPrice[2678], 2, "the shipped list: Mild Spices, 2c each")
+	local wasQ = A.env.LibQuestieDB
+	A.env.LibQuestieDB = nil
+	eq(VT(2678, 1), A.DT.Money(2), "a reagent on the shipped list: its price, QuestieDB or not"); eq(VT(2678, 5), A.DT.Money(10) .. " x5", "of a stack: all of it")
+	eq(VT(7938, 1), nil, "an item neither knows of: nothing")
+	A.env.LibQuestieDB = { Item = { Get = function(id, key) return key == "vendors" and (id == 4599 and { 11, 12, 13 } or id == 2692 and { 11 }) or nil end },
+		Npc = { Get = function(id, key) return key == "name" and id == 11 and "Kira Cook" or nil end } }
+	eq(VT(4599, 1), "Kira Cook +2 more |cff888888(price not seen yet)|r", "one QuestieDB says vendors sell: who, and that the price is not seen yet")
+	eq(VT(2692, 1), A.DT.Money(40) .. " at Kira Cook", "both known: the price and who")
+	tip.lines = {}
+	A.tooltipHook(tip, { id = 4599 })
+	check(tostring(tip.lines[1]):find("Vendor Kira Cook +2 more", 1, true), "and the tooltip says it: " .. tostring(tip.lines[1]))
+	A.env.LibQuestieDB = wasQ
+	tip.lines = lines
+	CS[5001], CS[5003] = nil, nil
+	foodHead("Level").scripts.OnClick(foodHead("Level"))
+end)()
 -- the guild
 FF.db.settings.share, GF.db.settings.share = true, true
 kitchen(Fay, { [1] = true, [2] = true, [3] = true })
@@ -1862,8 +2196,8 @@ Gus.slash("food")
 kitchen(Gus, { [3] = true })
 step(2)
 local gusRows = foodRows(Gus)
-eq(gusRows[1][5], "|cff40ff40You|r, Fay Smith", "who can cook it: me, then the guild"); eq(gusRows[2][5], "Fay Smith", "the guild alone")
-eq(gusRows[2][4], "|cffff4040missing|r", "and that I lack it")
+eq(gusRows[1][6], "|cff40ff40You|r, Fay Smith", "who can cook it: me, then the guild"); eq(gusRows[2][6], "Fay Smith", "the guild alone")
+eq(gusRows[2][5], "|cffff4040missing|r", "and that I lack it")
 check(FF.db.guild["Gus Smith"] and FF.db.guild["Gus Smith"].ids[5003] and not FF.db.guild["Gus Smith"].ids[5001], "it goes both ways")
 -- someone who comes later asks for the lists
 local Hal = NewClient("Hal")
@@ -2162,7 +2496,7 @@ do
 		Quest.chain:Hide()
 		lib.Quest.Get = was
 	end)()
-	;(function() -- shift-click in the quest window: the link to read up on that quest
+	;(function() -- Shift-click: the link into the chat; Shift-right-click: the page to read up on it
 		local e, shown
 		for _, r in ipairs(Quest.Find("", {})) do if r.e.name == "Daily Bread" then e = r.e end end
 		Quest.ShowChain(e)
@@ -2170,11 +2504,72 @@ do
 		local wasShift, wasPopup = env.IsShiftKeyDown, env.StaticPopup_Show
 		env.IsShiftKeyDown = function() return true end
 		env.StaticPopup_Show = function(which, title, _, url) shown = { which, title, url } end
+		local wasInsert, wasOpen = env.ChatEdit_InsertLink, env.ChatFrame_OpenChat
+		local inserted, opened
+		env.ChatEdit_InsertLink = function(link) inserted = link return true end
+		env.ChatFrame_OpenChat = function(link) opened = link end
+		local id = Quest.chain.rows[1].data.e.id
 		click(Quest.chain.rows[1])
-		check(shown and shown[1] == "DAWNTOOLS_LINK" and shown[3] == "https://www.wowhead.com/forever/quest=" .. Quest.chain.rows[1].data.e.id,
-			"a shift-click on a quest of the chain shows its link")
+		eq(inserted, ("|cffffff00|Hquest:%d:%d|h[Daily Bread]|h|r"):format(id, e.level), "a Shift-click on a quest of the chain puts its link in the chat line"); eq(shown, nil, "not its page")
+		eq(opened, nil, "(no new line where one is being written)")
+		click(Quest.chain.rows[1], "RightButton")
+		check(shown and shown[1] == "DAWNTOOLS_LINK" and shown[3] == "https://www.wowhead.com/forever/quest=" .. id, "a Shift-right-click shows its page")
+		-- no chat line being written: one is opened with the link in it
+		env.ChatEdit_InsertLink = function() return false end
+		click(Quest.chain.rows[1])
+		check(opened and opened:find("Hquest:" .. id, 1, true), "with no chat line open, one is opened with the link")
+		-- the rows of the Quests and Items lists do the same
+		inserted, shown = nil, nil
+		env.ChatEdit_InsertLink = function(link) inserted = link return true end
+		local qrow, irow
+		for _, w in ipairs(B2.widgets) do
+			if w.scripts and w.scripts.OnMouseUp and w.data and type(w.data) == "table" and w.data.e then
+				if w.data.e.questLevel ~= nil or w.data.e.preAny then qrow = qrow or w elseif w.data.e.srcText then irow = irow or w end
+			end
+		end
+		check(qrow, "(a quest row to click)")
+		qrow.scripts.OnMouseUp(qrow, "LeftButton")
+		check(inserted and inserted:find("Hquest:" .. qrow.data.e.id .. ":", 1, true), "a Shift-click on a row of the Quests list: its link in chat"); eq(shown, nil, "and no page")
+		qrow.scripts.OnMouseUp(qrow, "RightButton")
+		check(shown and shown[3]:find("quest=" .. qrow.data.e.id, 1, true), "a Shift-right-click: its page")
+		eq(B2.DT:GameItemLink(4242, "Odd Thing"), "|cffffffff|Hitem:4242::::::::::::|h[Odd Thing]|h|r", "an item the game does not know yet gets a plain link")
+		env.IsShiftKeyDown = wasShift
+		eq(B2.DT:LinkClick("LeftButton", "x", "t", "u"), false, "without Shift a click is not a link click")
+		env.ChatEdit_InsertLink, env.ChatFrame_OpenChat = wasInsert, wasOpen
 		env.IsShiftKeyDown, env.StaticPopup_Show = wasShift, wasPopup
 		Quest.chain:Hide()
+	end)()
+	;(function() -- an instance picked: a quest of it brings along the steps that lead up to it
+		local by = {}
+		for _, r in ipairs(Quest.Find("", {})) do by[r.e.name] = r.e end
+		local step = by["More Fish"] -- (Fish for Gorak > More Fish > The Big One, and Side Catch beside)
+		step.instance, step.types.Dungeon = "Krol'dok Stronghold", true -- (as the reading tags a quest of an instance)
+		local function names(text, f)
+			local got = {}
+			for _, r in ipairs(Quest.Find(text, f)) do got[#got + 1] = r.e.name end
+			table.sort(got)
+			return table.concat(got, ", ")
+		end
+		eq(names("", { zone = "Krol'dok Stronghold" }), "Fish for Gorak, More Fish", "the step before it, given out in the world, is listed with it; what comes after it is not")
+		eq(names("", { zone = "Krol'dok Stronghold", min = 99 }), "", "(the instance's own quest still has to pass the filters to bring anything)")
+		eq(names("", { zone = "Krol'dok Stronghold", types = { Dungeon = true } }), "Fish for Gorak, More Fish", "the steps brought along need not be of the kind ticked")
+		eq(names("", { types = { Dungeon = true }, sub = { Dungeon = "Krol'dok Stronghold" } }), "Fish for Gorak, More Fish", "the same for an instance picked on the left")
+		eq(names("gorak", { zone = "Krol'dok Stronghold" }), "Fish for Gorak", "the search box narrows them like any other")
+		-- a later step of the chain that is the instance's too: the steps between are steps up to it
+		local last = by["The Big One"]
+		step.instance, step.types.Dungeon = nil, nil
+		last.instance, last.types.Dungeon = "Krol'dok Stronghold", true
+		eq(names("", { zone = "Krol'dok Stronghold" }), "Fish for Gorak, More Fish, The Big One", "a quest of the instance further down the chain brings every step up to it, and still not the side step")
+		last.instance, last.types.Dungeon = nil, nil
+		step.instance, step.types.Dungeon = "Krol'dok Stronghold", true
+		local zone = by["Fish for Gorak"].zoneName
+		check(not names("", { zone = zone }):find("The Big One", 1, true) or by["The Big One"].zoneName == zone, "a plain zone brings nothing along")
+		local was = Quest.Status
+		Quest.Status = function(e) if e.name == "Fish for Gorak" then return "done", "done" end return was(e) end
+		eq(names("", { zone = "Krol'dok Stronghold", hideDone = true }), "More Fish", "a step that is done is hidden with the done ones")
+		Quest.Status = was
+		step.instance, step.types.Dungeon = nil, nil
+		eq(names("", { zone = "Krol'dok Stronghold" }), "", "(and back as it was)")
 	end)()
 	;(function() -- an instance quest given outside: found under its instance as under its zone
 		local e
@@ -2260,6 +2655,50 @@ do
 	check(not q("The Big One") and q("Side Catch"), "Not in log: what I already carry is left out")
 	Quest.ticks.notLog.checked = false
 	click(Quest.ticks.notLog)
+	;(function() -- In log only: the quests I carry, each with the rest of its chain
+		Quest.ticks.onlyLog.checked = true
+		click(Quest.ticks.onlyLog)
+		check(q("The Big One"), "In log only: a quest I carry is listed")
+		check(not q("Daily Bread") and not q("Deadmines Run"), "what is neither in my log nor of such a quest's chain is not")
+		check(q("More Fish") and q("Side Catch"), "the rest of its chain comes along: " .. qnames())
+		Quest.ticks.notLog.checked = true
+		click(Quest.ticks.notLog)
+		eq(Quest.db.onlyLog, false, "ticking Not in log unticks it: both cannot be"); eq(Quest.ticks.onlyLog.checked, false, "and its box shows that")
+		Quest.ticks.onlyLog.checked = true
+		click(Quest.ticks.onlyLog)
+		eq(Quest.db.notLog, false, "and the other way round")
+		local was = qon[102]
+		qon[102] = nil
+		B2.fire("QUEST_REMOVED")
+		step(1)
+		eq(qnames(), "", "nothing in my log: nothing listed")
+		qon[102] = was
+		B2.fire("QUEST_ACCEPTED")
+		step(1)
+		Quest.ticks.onlyLog.checked = false
+		click(Quest.ticks.onlyLog)
+		check(q("Daily Bread"), "unticked: everything again")
+	end)()
+	;(function() -- quests that shut each other out: one done is all of them done
+		local run
+		for _, r in ipairs(Quest.Find("", {})) do if r.e.name == "Deadmines Run" then run = r.e end end
+		local was = run.excl
+		run.excl = { 100 } -- (Fish for Gorak, which I have done)
+		local status, why = Quest.Status(run)
+		eq(status, "done", "a quest whose twin I have done counts as done"); eq(why, "done as: Fish for Gorak", "and says as which")
+		local listed = false
+		for _, r in ipairs(Quest.Find("", { hideDone = true })) do listed = listed or r.e == run end
+		eq(listed, false, "so it is hidden with the done ones")
+		run.excl = { 102 } -- (The Big One, which is in my log)
+		status, why = Quest.Status(run)
+		eq(status, "never", "one whose twin I carry cannot be taken"); eq(why, "shut while you have: The Big One", "and says why")
+		listed = false
+		for _, r in ipairs(Quest.Find("", { mine = true })) do listed = listed or r.e == run end
+		eq(listed, false, "\"mine only\" leaves it out: its twin is in the list")
+		for _, r in ipairs(Quest.Find("", {})) do listed = listed or r.e == run end
+		eq(listed, true, "without that switch it is listed")
+		run.excl = was
+	end)()
 	-- the level, coloured by how hard the quest is for me (level 10)
 	eq(q("The Big One")[2], "|cffffff0012|r", "about my level: yellow"); eq(q("Deadmines Run")[2], "|cffff202020|r", "far above: red")
 	eq(q("Daily Bread")[2], "|cff40c0405|r", "below: green")
@@ -2357,11 +2796,26 @@ do
 	local printed = #B2.printed
 	click(chain.rows[4])
 	check(B2.printed[#B2.printed]:find("Side Catch: started by no NPC", 1, true) and #B2.printed > printed, "one that nobody gives says so")
-	eq(B2.DT.modules.quest.hello, nil, "the module has nothing to say to the guild")
+	eq(B2.DT.modules.quest.hello(), nil, "the module has nothing to say to the guild while sharing was not agreed to")
 
 	-- Items: read from QuestieDB too; what only the game knows of an item is asked once and kept
 	do
 		local Item = B2.DT.Item
+		;(function() -- in a fight the long lists are left alone: the game cuts off a script that takes long there
+			local guarded = 0
+			for _, w in ipairs(B2.widgets) do
+				if w.scripts and w.scripts.OnUpdate and w.fcols == nil then
+					local finds, was = 0, Item.Find
+					Item.Find = function(...) finds = finds + 1 return was(...) end
+					B2.combat = true
+					local ok = pcall(w.scripts.OnUpdate, w, 0.1)
+					B2.combat = false
+					Item.Find = was
+					if ok and finds == 0 then guarded = guarded + 1 end
+				end
+			end
+			check(guarded > 0, "the tabs' per-frame work does nothing in combat")
+		end)()
 		local ITEMDB = {
 			[400] = { name = "Sword", requiredLevel = 20, itemLevel = 25, class = 2, subClass = 7, npcDrops = { 12 }, questRewards = { 102 } },
 			[500] = { name = "Bid Only Axe", requiredLevel = 1, itemLevel = 5, class = 2, subClass = 0, vendors = { 10 } },
@@ -2552,6 +3006,63 @@ do
 		eq(got.seen, true, "a quest that was seen"); eq(got.money, 250, "its money without being in the log"); eq(#got.items, 3, "its items")
 		eq(got.items[1].choose, false, "what is given first"); eq(got.items[1].count, 5, "with the count"); eq(got.items[2].choose, true, "then the choices")
 		check(table.concat(Quest.RewardLines({ id = 103, name = "Q103", level = 10 }), "|"):find("(choose one)", 1, true), "marked as a choice in the window")
+		-- in the window each item is a row of its own: icon, hover, link
+		e.GetItemIcon = function(id) return "icon" .. id end
+		Quest.ShowRewards({ id = 103, name = "Q103", level = 10 })
+		local items = Quest.chain.items
+		eq(#items, 3, "a row for each item"); eq(items[1].shown, true, "shown"); eq(items[1].item.id, got.items[1].id, "the first is what is given")
+		items[1].icon.SetTexture = function(self, texture) self.texture = texture end -- (the fake keeps no texture: kept here)
+		Quest.ShowRewards({ id = 103, name = "Q103", level = 10 })
+		eq(items[1].icon.texture, "icon" .. got.items[1].id, "with its icon")
+		check(items[1].text.text:find(" x5", 1, true), "its count: " .. items[1].text.text); check(items[2].text.text:find("(choose one)", 1, true), "a choice is marked")
+		check(not Quest.chain.rewards.text:find("(choose one)", 1, true), "the items are no longer lines of the text above")
+		local linked, wasLink = nil, e.GameTooltip.SetHyperlink
+		e.GameTooltip.SetHyperlink = function(_, link) linked = link end
+		items[2].scripts.OnEnter(items[2])
+		eq(linked, "item:" .. items[2].item.id, "hovering a row shows the item's own tooltip")
+		e.GameTooltip.SetHyperlink = wasLink
+		local wasShift, wasInsert, wasPopup = e.IsShiftKeyDown, e.ChatEdit_InsertLink, e.StaticPopup_Show
+		local inserted, page
+		e.IsShiftKeyDown = function() return true end
+		e.ChatEdit_InsertLink = function(link) inserted = link return true end
+		e.StaticPopup_Show = function(_, _, _, url) page = url end
+		click(items[2])
+		eq(inserted, B2.DT:GameItemLink(items[2].item.id, items[2].item.name), "a Shift-click puts the game's link of it in the chat line")
+		click(items[2], "RightButton")
+		eq(page, "https://www.wowhead.com/forever/item=" .. items[2].item.id, "a Shift-right-click shows its page")
+		e.IsShiftKeyDown, e.ChatEdit_InsertLink, e.StaticPopup_Show, e.GetItemIcon = wasShift, wasInsert, wasPopup, nil
+		-- Shift held over an item row: the game's comparison with what I wear
+		local compares, hides, owner = 0, 0, nil
+		local wasOwned, wasShift2 = e.GameTooltip.IsOwned, e.IsShiftKeyDown
+		e.GameTooltip.IsOwned = function(_, frame) return frame == owner end
+		e.GameTooltip_ShowCompareItem = function() compares = compares + 1 end
+		e.GameTooltip_HideShoppingTooltips = function() hides = hides + 1 end
+		e.IsShiftKeyDown = function() return false end
+		owner = items[2]
+		items[2].scripts.OnEnter(items[2])
+		eq(compares, 0, "hovering an item without Shift: no comparison")
+		e.IsShiftKeyDown = function() return true end
+		B2.fire("MODIFIER_STATE_CHANGED", "LSHIFT", 1)
+		eq(compares, 1, "Shift pressed while its tooltip is up: compared with what I wear")
+		e.IsShiftKeyDown = function() return false end
+		local hidden = hides
+		B2.fire("MODIFIER_STATE_CHANGED", "LSHIFT", 0)
+		eq(hides, hidden + 1, "let go: the comparison is put away")
+		e.IsShiftKeyDown = function() return true end
+		items[2].scripts.OnEnter(items[2])
+		eq(compares, 2, "hovering with Shift already held: compared at once")
+		owner = nil
+		B2.fire("MODIFIER_STATE_CHANGED", "LSHIFT", 1)
+		eq(compares, 2, "the tooltip is somebody else's by now: left alone")
+		e.GameTooltip.IsOwned, e.IsShiftKeyDown, e.GameTooltip_ShowCompareItem, e.GameTooltip_HideShoppingTooltips = wasOwned, wasShift2, nil, nil
+		Quest.ShowRewards({ id = 999999, name = "Nothing", level = 1 })
+		eq(items[1].shown, false, "a quest without items: the rows are put away")
+		-- asked for while it is open: it comes in front of the main window again
+		local raised = 0
+		Quest.chain.Raise = function() raised = raised + 1 end
+		Quest.ShowChain(Quest.Entry(101) or Quest.Find("", {})[1].e)
+		eq(raised, 1, "another quest clicked while the window is open: it is brought to the front")
+		Quest.chain.Raise = nil
 		-- what ships with the addon counts the same, for a quest I never saw
 		B2.DT.QuestRewards[104] = { m = 0, x = 0, l = 5, r = { { 600, 1 } }, c = {} }
 		local shipped = Quest.Rewards({ id = 104, name = "Q104", level = 5 })
@@ -3028,23 +3539,65 @@ do
 		En.lib = lib
 		e.UnitExists, e.UnitIsPlayer, e.UnitCanAttack, e.UnitIsUnit, e.UnitName, e.UnitClass, e.UnitLevel, e.C_NamePlate, e.PlaySound = was[1], was[2], was[3], was[4], was[5], was[6], was[7], was[8], was[9]
 	end)()
-	;(function() -- Silencer: a box per noise, each the game's own setting
-		local Sil, e, cvars = A.DT.Silencer, A.env, { Sound_EnableErrorSpeech = "1" }
-		local tab
-		A.DT.Tools.Open("silencer")
-		for _, w in ipairs(Tools.buttons) do if w.id == "silencer" then tab = w end end
-		eq(Sil.boxes[1].enabled, false, "a client without the setting: the box cannot be ticked")
-		e.GetCVar = function(name) return cvars[name] end
-		e.SetCVar = function(name, value) cvars[name] = tostring(value) end
-		A.DT.Tools.Show("silencer")
-		eq(Sil.boxes[1].checked, false, "unticked to begin with"); eq(Sil.boxes[1].enabled, true, "and can be ticked"); eq(tab.text, "|cffffd100Silencer|r", "its sub-tab yellow")
-		Sil.boxes[1].checked = true
-		click(Sil.boxes[1])
-		eq(cvars.Sound_EnableErrorSpeech, "0", "ticked: the game's error speech is switched off"); eq(tab.text, "|cff40ff40Silencer|r", "and the sub-tab is green")
-		Sil.boxes[1].checked = false
-		click(Sil.boxes[1])
-		eq(cvars.Sound_EnableErrorSpeech, "1", "unticked: on again")
-		e.GetCVar, e.SetCVar = nil, nil
+	;(function() -- Carrot: on when I mount, my trinket back when I dismount
+		local Car, e = A.DT.Carrot, A.env
+		local worn, mounted, taxi, asked = { [13] = 501, [14] = 502 }, false, false, 0
+		local have = true
+		e.GetInventoryItemID = function(_, slot) return worn[slot] end
+		e.IsMounted = function() return mounted end
+		e.UnitOnTaxi = function() return taxi end
+		e.GetItemCount = function(id) return id == Car.ITEM and have and 1 or 0 end
+		e.EquipItemByName = function(item, slot)
+			asked = asked + 1
+			if not A.combat then worn[slot] = item end -- (the game changes no trinket in combat)
+		end
+		local function mount(on) mounted = on; A.fire("PLAYER_MOUNT_DISPLAY_CHANGED"); step(1.1) end
+		A.DT.Tools.Open("carrot")
+		eq(Car.db.settings.on, false, "off to begin with"); eq(Car.db.settings.slot, 14, "the bottom trinket is the one to make room")
+		mount(true)
+		eq(worn[14], 502, "switched off: mounting changes nothing")
+		mount(false)
+		Car.boxes.on.checked = true
+		click(Car.boxes.on)
+		mount(true)
+		eq(worn[14], Car.ITEM, "mounted: the carrot is on, in the slot picked"); eq(worn[13], 501, "the other trinket stays")
+		eq(Car.db.back[1], 502, "what it replaced is kept")
+		local n = asked
+		A.fire("UNIT_AURA", "player"); step(1.1)
+		eq(asked, n, "told again while mounted: nothing more is asked of the game")
+		mount(false)
+		eq(worn[14], 502, "dismounted: my trinket is back"); eq(Car.db.back, nil, "and nothing is owed")
+		-- the other slot
+		click(Car.boxes[13])
+		eq(Car.db.settings.slot, 13, "the top trinket picked"); eq(Car.boxes[13].checked, true, "its box ticked"); eq(Car.boxes[14].checked, false, "the other not")
+		mount(true)
+		eq(worn[13], Car.ITEM, "the carrot takes the top slot now"); eq(worn[14], 502, "the bottom one stays")
+		check(Car.boxes[13].label.text:find("501", 1, true), "while the carrot is on, the slot is named by what comes back: " .. tostring(Car.boxes[13].label.text))
+		-- knocked off the mount in a fight: it waits for the fight's end
+		A.combat = true
+		mount(false)
+		eq(worn[13], Car.ITEM, "dismounted in combat: the carrot stays on")
+		A.combat = false
+		A.fire("PLAYER_REGEN_ENABLED"); step(1.1)
+		eq(worn[13], 501, "the fight over: my trinket is back")
+		-- a flight path is no mount; no carrot, no swap
+		taxi = true
+		mount(true)
+		eq(worn[13], 501, "on a flight path: nothing")
+		taxi = false
+		mount(false)
+		have = false
+		mount(true)
+		eq(worn[13], 501, "without a carrot: nothing"); eq(Car.db.back, nil, "and nothing kept")
+		mount(false)
+		have = true
+		-- switched off while it is on: what was taken off still comes back
+		mount(true)
+		Car.boxes.on.checked = false
+		click(Car.boxes.on)
+		mount(false)
+		eq(worn[13], 501, "switched off on the mount: my trinket still comes back")
+		e.GetInventoryItemID, e.IsMounted, e.UnitOnTaxi, e.GetItemCount, e.EquipItemByName = nil, nil, nil, nil, nil
 	end)()
 end
 
@@ -3220,6 +3773,14 @@ eq(death.hits[2][5], nil, "a plain swing is not")
 	eq(k.class, "Warrior", "what was seen of them is kept: class"); eq(k.honor, 12, "the honour line adds its honour"); eq(k.rank, "Scout", "and their rank")
 	check(Combat.About(k):find("Warrior, Scout, 12 honor", 1, true), "all of it in one line: " .. tostring(Combat.About(k)))
 	check(Combat.Recap(k, false)[2].text:find("12 honor", 1, true), "shown in the kill's window")
+	;(function() -- a name is in the colour of its class where that is known
+		local was = RAID_CLASS_COLORS
+		eq(Combat.Recap(k, false).title:find("|cffff4040Gankalot|r", 1, true) ~= nil, true, "no class colours to be had: a player in red")
+		RAID_CLASS_COLORS = { [k.cfile or "WARRIOR"] = { colorStr = "ffc79c6e" } }
+		k.cfile = k.cfile or "WARRIOR"
+		check(Combat.Recap(k, false).title:find("|cffc79c6eGankalot|r", 1, true), "the class's colour: " .. Combat.Recap(k, false).title)
+		RAID_CLASS_COLORS = was
+	end)()
 	A.fire("PARTY_KILL", "Player-Bob", "Player-Elsewhere")
 	eq(#Combat.db.kills, kills + 1, "a group mate's kill of someone I was not on is not mine")
 	step(6)
@@ -3721,7 +4282,7 @@ do
 	Pia.slash("settings")
 	local titles = {}
 	for i, b in ipairs(UI.sectionButtons) do titles[i] = (b.label.text:gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", "")) end
-	eq(table.concat(titles, " / "), "General / Profiles / Tabs & Modules / Market / Food", "the Settings tab lists its sections: the fixed ones, then one per module with switches")
+	eq(table.concat(titles, " / "), "General / Profiles / Tabs & Modules / Built-ins / Market / Food / Quests / Data Sync", "the Settings tab lists its sections: the fixed ones, then one per module with switches, Data Sync at the bottom")
 	eq(db.settingsSection, "general", "General to begin with"); eq(UI.sectionPanels.general.shown, true, "its panel shown"); eq(UI.sectionPanels.profiles.shown, false, "the others not")
 	click(UI.sectionButtons[2])
 	eq(db.settingsSection, "profiles", "a click shows a section"); eq(UI.sectionPanels.profiles.shown, true, "its panel"); eq(UI.sectionPanels.general.shown, false, "the last one hidden")

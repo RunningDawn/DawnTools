@@ -469,7 +469,8 @@ end
 -- Vendors: what they sell, read whenever the player opens one
 ---------------------------------------------------------------------------
 -- db.vendors[itemID] = { p = copper for one, v = the vendor's name, z = where, l = true for limited stock, t = seen }
--- Kept on this computer. Items paid for in anything but money are left out.
+-- r = when it came from the guild (not there: I saw it myself). Shared with the guild where the player agreed to
+-- share prices (Sync.lua); otherwise kept on this computer. Items paid for in anything but money are left out.
 
 local function Merchant()
 	local npc = UnitName("npc")
@@ -490,6 +491,8 @@ local function Merchant()
 			-- the cheapest seller is kept; a seller's own price is brought up to date
 			if not old or unit <= old.p or old.v == npc then
 				M.db.vendors[id] = { p = unit, v = npc, z = where, l = (left or -1) >= 0 or nil, t = DT.Now() }
+				-- (new to me, or changed: told to the guild; a price only seen again is not)
+				if not old or old.p ~= unit or old.v ~= npc then M.Sync:QueueVendor(id) end
 			end
 		end
 	end

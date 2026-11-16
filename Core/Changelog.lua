@@ -6,6 +6,82 @@
 local _, DT = ...
 
 DT.CHANGELOG = {
+	{ "0.32.0", "2026-11-16", {
+		"Food: a \"Where to get it\" column for the recipe: the vendor (with the price where known), the mob that drops it, or the quest. Click it for a waypoint; Shift-click for all its sources.",
+	} },
+	{ "0.31.1", "2026-11-16", {
+		"Quests: a quest \"shut by\" its twin that you already did now counts as done (\"done as: ...\"), so its chain no longer looks blocked. One shut while you carry its twin is left out by \"Mine only\".",
+	} },
+	{ "0.31.0", "2026-11-16", {
+		"Quests: \"In log only\" shows just the quests in your log, each with the rest of its chain.",
+	} },
+	{ "0.30.0", "2026-11-16", {
+		"Items, and reward items in the quest window: hold Shift over one to compare it with what you wear.",
+	} },
+	{ "0.29.3", "2026-11-16", {
+		"Quests: reward items in the quest window have their icon, show their tooltip on hover, and link with Shift-click (Shift-right-click: web page).",
+		"Fixed: a quest clicked while the quest window was open opened it behind the main window.",
+	} },
+	{ "0.29.2", "2026-11-16", {
+		"Items and Quests: Shift-click a row to put its link in chat; Shift-right-click for its web page.",
+	} },
+	{ "0.29.1", "2026-11-16", {
+		"Quests: a dungeon's chain is shown up to its dungeon quests only; what comes after them is left out.",
+	} },
+	{ "0.29.0", "2026-11-16", {
+		"Quests: with a dungeon picked as the zone, a dungeon quest that is part of a chain shows its whole chain, the steps out in the world too.",
+	} },
+	{ "0.28.3", "2026-11-15", {
+		"Built-ins: the raid-style party frames box is gone: it is set in Edit Mode (click the party frames there).",
+	} },
+	{ "0.28.2", "2026-11-15", {
+		"Built-ins: the error speech box is \"Silence error speech\": ticked means the voice is off.",
+	} },
+	{ "0.28.1", "2026-11-15", {
+		"Fixed \"script ran too long\" with the Items tab open in combat: the NPC, Quests, Items and Zones lists now wait for the fight to end before they are gone through again.",
+	} },
+	{ "0.28.0", "2026-11-15", {
+		"Quests: what a quest gives can be shared with the guild (asked once, on the Quests tab): one member's look at a quest giver fills it in for everybody.",
+	} },
+	{ "0.27.0", "2026-11-15", {
+		"Settings: Built-ins. The game's own switches in one place: auto loot, cooldown numbers, all action bars, error speech, status text, target of target, raid frame options, scrolling combat text, in-game navigation.",
+		"The Silencer tool is gone: its switch (error speech) is on the Built-ins page.",
+		"Data Sync: lists the other addons DawnTools can read, and whether you have them.",
+	} },
+	{ "0.26.1", "2026-11-15", {
+		"Data Sync: the auction bar is every item ever priced, out of all items; a thin blue bar on it shows those seen in the last day.",
+	} },
+	{ "0.26.0", "2026-11-15", {
+		"Settings, Data Sync: bars that show how complete each kind of data is: auction prices, vendor prices, cooking recipes, quest rewards.",
+		"Settings: a line parts Data Sync from the settings above it.",
+	} },
+	{ "0.25.0", "2026-11-15", {
+		"Vendor prices are shared with the guild (if you share prices): one member's visit to a vendor fills the price in for everybody.",
+		"Settings: Data Sync. How much has been sent to and received from the guild, by module, and what is held.",
+	} },
+	{ "0.24.0", "2026-11-15", {
+		"Item tooltips: a Vendor line for anything vendors sell, also before you have seen it at one: who sells it, and the price where known.",
+	} },
+	{ "0.23.0", "2026-11-15", {
+		"Food: a Recipe column on the right with the recipe item that teaches it (or \"trainer\"). Hover it for the recipe's own tooltip.",
+	} },
+	{ "0.22.0", "2026-11-15", {
+		"Fish, Spots: a Levels column with the zone's mob levels, coloured for your level.",
+		"Fish, Spots: the hover is a tidy list: skill, how many of your casts land, pay per cast and hour, and every fish with its share and price.",
+	} },
+	{ "0.21.0", "2026-11-15", {
+		"Food: the Cooking column shows the whole band: learned at, yellow, green, grey.",
+		"Item tooltips: anything a profession makes says which profession and its skill band.",
+	} },
+	{ "0.20.0", "2026-11-15", {
+		"Food: a Cooking column with the skill at which each recipe can be learned. Click its header to sort by it.",
+	} },
+	{ "0.19.0", "2026-11-15", {
+		"Tools: Carrot. Puts your Carrot on a Stick on when you mount and your trinket back when you dismount. You pick which trinket makes room.",
+	} },
+	{ "0.18.6", "2026-11-15", {
+		"Combat: player names are in the colour of their class, where the class was seen.",
+	} },
 	{ "0.18.5", "2026-11-15", {
 		"Enemies: says \"target hidden\" when the game will not tell who an enemy is targeting, instead of showing nothing.",
 	} },

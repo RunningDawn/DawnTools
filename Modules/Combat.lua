@@ -435,13 +435,18 @@ local panel, side, search, countText, playersOnly, bar
 local rows, heads, sideButtons, list, offset = {}, {}, {}, {}, 0
 local onlyPlayers = false
 
-local function Who(name, player)
+-- A name in the colour of its class, where the class is known: from the record (cfile), else from what was
+-- seen of them this session. Unknown: a player in red, anything else white.
+local function Who(name, player, cfile)
+	cfile = cfile or (about[name] and about[name].cfile)
+	local col = cfile and RAID_CLASS_COLORS and RAID_CLASS_COLORS[cfile]
+	if col and col.colorStr then return "|c" .. col.colorStr .. name .. "|r" end
 	return (player and "|cffff4040" or "|cffffffff") .. name .. "|r"
 end
 
 -- the name with the guild after it, where one was seen
 local function Tag(name, rec)
-	return Who(name, rec.player) .. (rec.guild and (" |cff888888<" .. rec.guild .. ">|r") or "")
+	return Who(name, rec.player, rec.cfile) .. (rec.guild and (" |cff888888<" .. rec.guild .. ">|r") or "")
 end
 
 local function Where(rec)

@@ -432,12 +432,12 @@ function UI:ShowSection(id)
 	end
 	pick = pick or sections[1]
 	DT.db.settingsSection = pick.id
+	local gap = 0
 	for i, s in ipairs(sections) do
 		local b = sectionButtons[i]
 		if not b then
 			b = CreateFrame("Button", nil, settingsPanel)
 			b:SetHeight(20)
-			b:SetPoint("TOPLEFT", 2, -2 - (i - 1) * 21)
 			b:SetWidth(SECTION_W - 4)
 			b.sel = b:CreateTexture(nil, "BACKGROUND")
 			b.sel:SetAllPoints()
@@ -450,6 +450,18 @@ function UI:ShowSection(id)
 			b:SetScript("OnClick", function(self) UI:ShowSection(self.id) end)
 			sectionButtons[i] = b
 		end
+		-- (a thin line with room about it before the first section that is no setting: Data Sync)
+		if s.order >= 900 and i > 1 and sections[i - 1].order < 900 then
+			gap = 13
+			UI.sectionLine = UI.sectionLine or settingsPanel:CreateTexture(nil, "ARTWORK")
+			UI.sectionLine:SetColorTexture(1, 1, 1, 0.18)
+			UI.sectionLine:ClearAllPoints()
+			UI.sectionLine:SetPoint("TOPLEFT", 8, -2 - (i - 1) * 21 - 6)
+			UI.sectionLine:SetSize(SECTION_W - 16, 1)
+		end
+		b:ClearAllPoints()
+		b:SetPoint("TOPLEFT", 2, -2 - (i - 1) * 21 - gap)
+		b.gap = gap
 		b.id = s.id
 		b.label:SetText((s == pick and "|cffffd100" or "|cffffffff") .. s.title .. "|r")
 		b.sel:SetShown(s == pick)
@@ -529,6 +541,155 @@ UI:Section("tabs", "Tabs & Modules", 30, function(panel)
 			end)
 		y = y - 22
 	end
+end)
+
+-- Data Sync: what has gone to the guild and come from it, counted (Comms:Totals), and what is held
+local function Size(bytes)
+	if bytes < 1024 then return bytes .. " B" end
+	if bytes < 1024 * 1024 then return ("%.1f KB"):format(bytes / 1024) end
+	return ("%.1f MB"):format(bytes / 1024 / 1024)
+end
+
+function UI:SyncReport()
+	local sync, lines = DT.Comms:Totals(), {}
+	local names, all = {}, { o = 0, ob = 0, i = 0, ib = 0 }
+	for name in pairs(sync.mods) do names[#names + 1] = name end
+	table.sort(names)
+	local function Line(title, m)
+		return ("|cffffd100%s|r  sent %d messages (%s), received %d (%s)"):format(title, m.o, Size(m.ob), m.i, Size(m.ib))
+	end
+	lines[#lines + 1] = ("Guild messages since %s:"):format(date("%d %b %Y", sync.since))
+	for _, name in ipairs(names) do
+		local m = sync.mods[name]
+		for key in pairs(all) do all[key] = all[key] + (tonumber(m[key]) or 0) end
+		lines[#lines + 1] = Line(name == "core" and "Who has the addon" or DT.modules[name] and DT.modules[name].title or name, m)
+	end
+	lines[#lines + 1] = names[1] and Line("Total", all) or "|cff888888Nothing sent or received yet.|r"
+	lines[#lines + 1] = " "
+	lines[#lines + 1] = "Held on this computer:"
+	local held = false
+	for _, mod in DT:Enabled() do
+		if mod.held then
+			held = true
+			lines[#lines + 1] = ("|cffffd100%s|r  %s"):format(mod.title or mod.name, mod.held())
+		end
+	end
+	if not held then lines[#lines + 1] = "|cff888888Nothing.|r" end
+	lines[#lines + 1] = " "
+	lines[#lines + 1] = "Other addons DawnTools reads if you have them (none is required):"
+	local STATE = { loaded = "|cff40ff40installed|r", off = "|cffffd100installed, switched off|r", missing = "|cff888888not installed|r" }
+	for _, dep in ipairs(UI.DEPS) do
+		lines[#lines + 1] = ("|cffffd100%s|r  %s  |cffaaaaaa%s|r"):format(dep[1], STATE[UI:AddonState(dep[1])], dep[2])
+	end
+	lines[#lines + 1] = " "
+	lines[#lines + 1] = "This session:"
+	for _, line in ipairs(DT.Comms:Report()) do lines[#lines + 1] = "|cffaaaaaa" .. line .. "|r" end
+	return table.concat(lines, "\n")
+end
+
+-- The other addons DawnTools reads when they are there (all optional), and what for
+UI.DEPS = {
+	{ "QuestieDB", "the NPC, Quests, Items and Zones tabs; who sells what" },
+	{ "Questie", "not needed: QuestieDB alone is enough" },
+	{ "Auctionator", "its price history, for you only" },
+	{ "TomTom", "waypoint arrows (without it: the map pin)" },
+	{ "GatherMate2", "herb and ore nodes you found, on the Zones tab" },
+	{ "AtlasLootClassic", "which items are crafted" },
+	{ "OneForAll", "the quests of Forever's own dungeons" },
+}
+
+-- "loaded", "off" (installed, not switched on) or "missing"
+function UI:AddonState(name)
+	local loaded = (C_AddOns and C_AddOns.IsAddOnLoaded) or IsAddOnLoaded
+	local ok, is = pcall(function() return loaded(name) end)
+	if ok and is then return "loaded" end
+	local info = (C_AddOns and C_AddOns.GetAddOnInfo) or GetAddOnInfo
+	local got, _, _, _, _, reason = pcall(function() return info(name) end)
+	if got and reason ~= nil and reason ~= "MISSING" then return "off" end
+	return "missing"
+end
+
+-- How complete each kind of data is: every module that has a `progress` gives rows of
+--   { label, have, total (nil: cannot be counted yet), note, sub = a part of `have` drawn as a thin second bar, subNote = what that is }
+function UI:SyncProgress()
+	local rows = {}
+	for _, mod in DT:Enabled() do
+		local ok, list = pcall(mod.progress or function() end)
+		for _, row in ipairs(ok and list or {}) do rows[#rows + 1] = row end
+	end
+	return rows
+end
+
+local BAR_X, BAR_W, BAR_H = 250, 220, 14
+UI:Section("sync", "Data Sync", 900, function(panel)
+	Text(panel, "GameFontNormal", 4, -2, "Data Sync")
+	local note = Text(panel, "GameFontDisableSmall", 4, -22, "How complete each kind of data is on this computer, and what DawnTools has sent to the guild and received from it. Only what you agreed to share is ever sent: see each module's section.")
+	note:SetWidth(560)
+	note:SetWordWrap(true)
+	local bars = {}
+	UI.syncBars = bars
+	local function Bar(i)
+		local b = CreateFrame("Frame", nil, panel)
+		b:SetSize(700, 20)
+		b:SetPoint("TOPLEFT", 4, -54 - (i - 1) * 21)
+		b.label = Text(b, "GameFontHighlightSmall", 0, -3)
+		b.back = b:CreateTexture(nil, "BACKGROUND")
+		b.back:SetPoint("TOPLEFT", BAR_X, -3)
+		b.back:SetSize(BAR_W, BAR_H)
+		b.back:SetColorTexture(1, 1, 1, 0.08)
+		b.fill = b:CreateTexture(nil, "ARTWORK")
+		b.fill:SetPoint("TOPLEFT", BAR_X, -3)
+		b.fill:SetHeight(BAR_H)
+		b.sub = b:CreateTexture(nil, "OVERLAY") -- (a thin bright stripe along the foot of the bar)
+		b.sub:SetPoint("TOPLEFT", BAR_X, -3 - BAR_H + 3)
+		b.sub:SetHeight(3)
+		b.sub:SetColorTexture(0.4, 0.8, 1, 0.95)
+		b.count = b:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+		b.count:SetPoint("CENTER", b.back, "CENTER", 0, 0)
+		b.note = Text(b, "GameFontDisableSmall", BAR_X + BAR_W + 8, -3)
+		bars[i] = b
+		return b
+	end
+	local report = Text(panel, "GameFontHighlightSmall", 4, -52)
+	report:SetWidth(560)
+	report:SetWordWrap(true)
+	report:SetSpacing(3)
+	report.Load = function(self)
+		-- (worked out only while the page is the one looked at: counting goes through the long lists)
+		if DT.db.settingsSection ~= "sync" then return end
+		local rows = UI:SyncProgress()
+		for i = 1, math.max(#rows, #bars) do
+			local row, b = rows[i], bars[i] or (rows[i] and Bar(i))
+			if b then
+				b:SetShown(row ~= nil)
+				if row then
+					local have, total = row[2] or 0, row[3]
+					local share = total and total > 0 and math.min(1, have / total) or 0
+					b.share = share
+					b.label:SetText(row[1])
+					b.fill:SetWidth(math.max(1, share * BAR_W))
+					-- red when hardly begun, through gold, to green when nearly all there
+					if share >= 0.9 then b.fill:SetColorTexture(0.25, 0.8, 0.25, 0.75) elseif share >= 0.3 then b.fill:SetColorTexture(0.9, 0.75, 0.2, 0.75) else b.fill:SetColorTexture(0.85, 0.35, 0.25, 0.75) end
+					b.fill:SetShown(total ~= nil)
+					b.count:SetText(total and ("%d / %d  (%d%%)"):format(have, total, math.floor(share * 100 + 0.5)) or ("%d  |cff888888of ?|r"):format(have))
+					local sub = row.sub and total and total > 0 and math.min(1, row.sub / total) or nil
+					b.subShare = sub
+					b.sub:SetShown(sub ~= nil)
+					b.sub:SetWidth(math.max(1, (sub or 0) * BAR_W))
+					b.note:SetText((row.sub and ("|cff66ccff%d %s|r  "):format(row.sub, row.subNote or "") or "") .. (row[4] or ""))
+				end
+			end
+		end
+		self:ClearAllPoints()
+		self:SetPoint("TOPLEFT", 4, -54 - #rows * 21 - 12)
+		self:SetText(UI:SyncReport())
+	end
+	controls[#controls + 1] = report
+	UI.syncText = report
+	local reset = Button(panel, 4, -8, 150, "Start counting anew", function() DT.Comms:ResetTotals() end)
+	reset:ClearAllPoints()
+	reset:SetPoint("BOTTOMLEFT", 4, 8)
+	UI.syncReset = reset
 end)
 
 local function BuildSettings(panel)

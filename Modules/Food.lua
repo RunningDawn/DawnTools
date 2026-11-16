@@ -167,7 +167,88 @@ end
 ---------------------------------------------------------------------------
 
 local ROW_H, SIDE_W, TOP_H, SIDE_H = 18, 150, 28, 20
-local COLS = { { "Food", 230 }, { "Level", 44, true }, { "Gives", 96 }, { "This character", 96 }, { "Who can cook it", 0 } }
+-- (a column of width 0 takes what is left; those of a width below 0 sit at the right edge, that wide, side by side)
+local RECIPE_W, WHERE_W = 170, 260
+-- "Cooking skill": the band of its recipe (Data/CraftSkill.lua): learned at, yellow, green, grey; blank where none is known
+local COLS = { { "Food", 180 }, { "Level", 40, true }, { "Cooking skill", 120 }, { "Gives", 84 }, { "This character", 84 }, { "Who can cook it", 0 },
+	{ "Recipe", -RECIPE_W }, { "Where to get it", -WHERE_W } }
+-- how far from the right edge a column of the right-hand group ends (the last: 0), and how wide that group is
+local function RightOf(c)
+	local w = 0
+	for i = c + 1, #COLS do
+		if COLS[i][2] < 0 then w = w - COLS[i][2] end
+	end
+	return w
+end
+local RIGHT_W = RightOf(0)
+
+-- Where a recipe item comes from: a vendor (of my side, where there is one), else a mob that drops it, else a
+-- quest. { kind = "buy" / "drop" / "quest", npc = id, name =, text = "Name  Zone", more = how many others,
+-- quest = id, lines = every source, as the Items tab lists them }; nil for none known (or no QuestieDB).
+-- Read through the Items tab's own listing of an item's sources; kept for the session.
+-- ponytail: the first vendor of my side as QuestieDB lists them, not the nearest; a drop names one mob of
+-- several and no chance (none is known here). The Items tab has them all: Shift-click the cell.
+local sources = {}
+local function Friendly(npc)
+	local ok, to = pcall(function() return LibQuestieDB.Npc.Get(npc, "friendlyToFaction") end)
+	if not ok or type(to) ~= "string" then return true end
+	local mine = UnitFactionGroup and UnitFactionGroup("player")
+	return to == "AH" or type(mine) ~= "string" or to == mine:sub(1, 1)
+end
+
+function Food.Source(scroll)
+	if sources[scroll] ~= nil then return sources[scroll] or nil end
+	local I = DT.Item
+	if not (I and I.Sources and LibQuestieDB) then return nil end
+	local ok, lines = pcall(I.Sources, { id = scroll, src = {} })
+	if not ok then return nil end
+	local by, head = {}, nil
+	for _, line in ipairs(lines) do
+		if line.head then
+			head = line.head:match("^(.-) %(%d+%)$") or line.head
+			by[head] = { n = tonumber(line.head:match("%((%d+)%)$")) or 0 }
+		elseif head and (line.npc or line.quest) then
+			table.insert(by[head], line)
+		end
+	end
+	local found
+	local function Pick(kind, list, friendly)
+		if found or not (list and list[1]) then return end
+		local line = list[1]
+		for _, l in ipairs(friendly and list or {}) do
+			if Friendly(l.npc) then line = l break end
+		end
+		found = { kind = kind, npc = line.npc, quest = line.quest, name = line.name or line.text, text = line.text, more = math.max(0, list.n - 1),
+			foe = friendly and not Friendly(line.npc) or nil, lines = lines }
+	end
+	Pick("buy", by["Sold by"], true)
+	Pick("drop", by["Dropped by"])
+	Pick("quest", by["Reward of the quest"])
+	sources[scroll] = found or false
+	return found
+end
+
+-- the Items tab's own window on an item: everywhere it comes from, each a click for a waypoint
+function Food.OpenItem(id, name)
+	local I = DT.Item
+	if not (id and I and I.ShowInfo) then return end
+	local ok = pcall(I.ShowInfo, { id = id, name = name or ("item " .. id), nameL = (name or ""):lower(), req = 0, ilvl = 0, c = 9, s = 0, src = {} })
+	if not ok then DT:Print("Could not open that item's sources.") end
+end
+
+local KIND = { buy = "|cffffd100Buy|r", drop = "|cffff8040Drop|r", quest = "|cff66aaffQuest|r" }
+-- the cell's words: "Buy 4s  Kira Cook  Booty Bay (+2)"
+local function WhereText(scroll, src)
+	if not src then return "" end
+	local price = ""
+	if src.kind == "buy" then
+		local copper, _, _, limited = nil, nil, nil, nil
+		if DawnMarket and DawnMarket.API.GetVendor then copper, _, _, limited = DawnMarket.API.GetVendor(scroll) end
+		copper = copper or (DT.VendorPrice and DT.VendorPrice[scroll])
+		price = " " .. (copper and DT.Money(copper) or "|cff888888price ?|r") .. (limited and " |cff888888(limited)|r" or "")
+	end
+	return KIND[src.kind] .. price .. "  " .. src.text .. (src.foe and " |cffff4040(other side)|r" or "") .. (src.more > 0 and (" |cff888888(+%d)|r"):format(src.more) or "")
+end
 local panel, side, search, countText, missingButton, bar
 local rows, heads, sideButtons, list, offset = {}, {}, {}, {}, 0
 local picked, hideMissing -- the type picked on the left (nil = all); whether recipes I lack are left out
@@ -199,13 +280,25 @@ local function Rebuild()
 			if not picked or picked == kind then
 				local color = quality and ITEM_QUALITY_COLORS and ITEM_QUALITY_COLORS[quality] and ITEM_QUALITY_COLORS[quality].hex or "|cffffffff"
 				local cooks = Cooks(id)
-				list[#list + 1] = { id = id, name = name or ("item " .. id), level = level or 0, cooks = cooks,
+				local band, b = DT.CraftBand(id), DT.CraftSkill and DT.CraftSkill[id]
+				local skill = b and (b[2] > 0 and b[2] or b[3]) -- (sorted by where it is learned; not known: by where it turns yellow)
+				-- the recipe item that teaches it; none: a trainer does
+				local scroll = b and b[6] and b[6] > 0 and b[6] or nil
+				local sName, _, sQuality = nil, nil, nil
+				if scroll then sName, _, sQuality = C_Item.GetItemInfo(scroll) end
+				local sColor = sQuality and ITEM_QUALITY_COLORS and ITEM_QUALITY_COLORS[sQuality] and ITEM_QUALITY_COLORS[sQuality].hex or "|cffffffff"
+				local recipe = scroll and (sColor .. (sName or ("item " .. scroll)) .. "|r") or b and "|cff888888trainer|r" or ""
+				-- where to get the recipe: a vendor, a mob, a quest; a recipe without an item is taught by a trainer
+				local src = scroll and Food.Source(scroll) or nil
+				local where = scroll and WhereText(scroll, src) or b and "|cff888888Cooking trainer|r" or ""
+				list[#list + 1] = { id = id, name = name or ("item " .. id), level = level or 0, cooks = cooks, scroll = scroll, scrollName = sName, src = src,
 					(icon and ("|T%s:14|t "):format(icon) or "") .. color .. (name or ("item " .. id)) .. "|r",
-					level and level > 1 and tostring(level) or "", kind,
+					level and level > 1 and tostring(level) or "", band and ("  " .. band) or "", kind,
 					not me.t and "|cff888888?|r" or known and "|cff40ff40known|r" or "|cffff4040missing|r",
-					cooks[1] and table.concat(cooks, ", ") or "|cff888888nobody known|r",
-					-- what each column sorts by ("who can cook it": by how many can)
-					sort = { name or ("item " .. id), level or 0, kind, not me.t and 1 or known and 2 or 0, #cooks } }
+					cooks[1] and table.concat(cooks, ", ") or "|cff888888nobody known|r", recipe, where,
+					-- what each column sorts by ("who can cook it": by how many can; "where": by kind, then name)
+					sort = { name or ("item " .. id), level or 0, skill or 0, kind, not me.t and 1 or known and 2 or 0, #cooks, scroll and (sName or "") or b and "~" or "~~",
+						src and (src.kind .. " " .. (src.name or "")) or b and not scroll and "trainer" or "~~" } }
 			end
 		end
 	end
@@ -240,12 +333,70 @@ local function MakeRow(i)
 	for c, col in ipairs(COLS) do
 		local fs = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
 		fs:SetPoint("LEFT", x, 0)
-		if col[2] > 0 then fs:SetWidth(col[2] - 6) else fs:SetPoint("RIGHT", 0, 0) end
+		if col[2] > 0 then
+			fs:SetWidth(col[2] - 6)
+		elseif col[2] == 0 then
+			fs:SetPoint("RIGHT", -RIGHT_W - 6, 0)
+		else
+			fs:ClearAllPoints()
+			fs:SetPoint("RIGHT", -RightOf(c) - 6, 0)
+			fs:SetWidth(-col[2] - 6)
+		end
 		fs:SetJustifyH(col[3] and "RIGHT" or "LEFT")
 		fs:SetWordWrap(false)
 		row.fcols[c] = fs
-		x = x + col[2]
+		x = x + math.max(0, col[2])
 	end
+	-- over the Recipe column: the recipe's own tooltip and link, not the food's
+	-- over "Where to get it": every source on hover; a click sets a waypoint to the vendor or mob (a quest:
+	-- its chain); Shift-click opens the recipe on the Items tab
+	row.where = CreateFrame("Frame", nil, row)
+	row.where:SetPoint("TOPRIGHT", 0, 0)
+	row.where:SetPoint("BOTTOMRIGHT", 0, 0)
+	row.where:SetWidth(WHERE_W)
+	row.where:EnableMouse(true)
+	row.where:SetScript("OnEnter", function(self)
+		local d = row.data
+		if not (d and d.src) then return end
+		GameTooltip:SetOwner(self, "ANCHOR_LEFT")
+		GameTooltip:AddLine(d.scrollName or "Recipe")
+		for _, line in ipairs(d.src.lines) do
+			if line.head then GameTooltip:AddLine(line.head, 1, 0.82, 0) else GameTooltip:AddLine("  " .. line.text, 1, 1, 1) end
+		end
+		GameTooltip:AddLine(d.src.quest and "Click: the quest's chain." or "Click: a waypoint to " .. (d.src.name or "it") .. ".", 0.5, 0.8, 1)
+		GameTooltip:AddLine("Shift-click: the recipe on the Items tab.", 0.5, 0.8, 1)
+		GameTooltip:Show()
+	end)
+	row.where:SetScript("OnLeave", function() GameTooltip:Hide() end)
+	row.where:SetScript("OnMouseUp", function()
+		local d = row.data
+		if not (d and d.src) then return end
+		if IsShiftKeyDown and IsShiftKeyDown() then return Food.OpenItem(d.scroll, d.scrollName) end
+		if d.src.quest then
+			local quest = DT.Quest and DT.Quest.Entry and DT.Quest.Entry(d.src.quest)
+			if quest then DT.Quest.ShowChain(quest) else DT:Print("Open World, Quests once, then click again: the quests are not read yet.") end
+		elseif d.src.npc then
+			DT.Npc.Waypoint({ id = d.src.npc, name = d.src.name, zone = 0 })
+		end
+	end)
+	row.over = CreateFrame("Frame", nil, row)
+	row.over:SetPoint("TOPRIGHT", -WHERE_W, 0)
+	row.over:SetPoint("BOTTOMRIGHT", -WHERE_W, 0)
+	row.over:SetWidth(RECIPE_W)
+	row.over:EnableMouse(true)
+	row.over:SetScript("OnEnter", function(self)
+		local d = row.data
+		if not (d and d.scroll) then return end
+		GameTooltip:SetOwner(self, "ANCHOR_LEFT")
+		GameTooltip:SetHyperlink("item:" .. d.scroll)
+		GameTooltip:AddLine("Click: a link to read up on it.", 0.6, 0.6, 0.6)
+		GameTooltip:Show()
+	end)
+	row.over:SetScript("OnLeave", function() GameTooltip:Hide() end)
+	row.over:SetScript("OnMouseUp", function()
+		local d = row.data
+		if d and d.scroll then DT:ShowLink(d.scrollName or ("item " .. d.scroll), DT:ItemLink(d.scroll)) end
+	end)
 	row:EnableMouse(true)
 	row:SetScript("OnEnter", function(self)
 		local d = self.data
@@ -309,6 +460,8 @@ local function Refresh()
 			row.data = d or nil
 			row:SetShown(d and true or false)
 			for c, cell in ipairs(row.fcols) do cell:SetText(d and d[c] or "") end
+			row.over:SetShown(d and d.scroll and true or false) -- (no recipe item: the row's own hover, the food)
+			row.where:SetShown(d and d.src and true or false)
 		end
 	end
 	for i = 1, math.max(#sections, #sideButtons) do
@@ -381,8 +534,8 @@ local function Build(parent)
 	for c, col in ipairs(COLS) do
 		-- click to sort, again to turn it round
 		local h = CreateFrame("Button", nil, panel)
-		h:SetPoint("TOPLEFT", x, -TOP_H)
-		h:SetSize(col[2] > 0 and col[2] - 6 or 160, ROW_H)
+		if col[2] < 0 then h:SetPoint("TOPRIGHT", -12 - RightOf(c) - 6, -TOP_H) else h:SetPoint("TOPLEFT", x, -TOP_H) end
+		h:SetSize(col[2] > 0 and col[2] - 6 or col[2] < 0 and -col[2] - 6 or 160, ROW_H)
 		h.text = h:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
 		h.text:SetAllPoints()
 		h.text:SetJustifyH(col[3] and "RIGHT" or "LEFT")
@@ -392,12 +545,12 @@ local function Build(parent)
 				sortBy.desc = not sortBy.desc
 			else
 				-- (names and levels from the start; "this character" and "who can cook it" from the most)
-				sortBy.col, sortBy.desc = c, c >= 4
+				sortBy.col, sortBy.desc = c, c == 5 or c == 6
 			end
 			Refresh()
 		end)
 		heads[c] = h
-		x = x + col[2]
+		x = x + math.max(0, col[2])
 	end
 
 	bar = CreateFrame("Slider", nil, panel)
@@ -487,6 +640,27 @@ DT:RegisterModule("food", {
 			if name == "food" and key == "share" then Send() end
 		end)
 		C_Timer.After(30, Send) -- once a session, for members who came to the addon since
+	end,
+	held = function()
+		return ("what %d guild characters can cook"):format(Count(Food.db.guild))
+	end,
+	progress = function()
+		-- every Cooking recipe there is (the shipped list), or the foods heard of where that is more
+		local all, heard, have = 0, 0, 0
+		for _, b in pairs(DT.CraftSkill or {}) do
+			if b[1] == 185 then all = all + 1 end
+		end
+		for id in pairs(Food.db.foods) do
+			heard = heard + 1
+			local known = false
+			for _, c in pairs(Food.db.mine) do known = known or c.ids[id] or false end
+			for _, c in pairs(Food.db.guild) do known = known or c.ids[id] or false end
+			if known then have = have + 1 end
+		end
+		return {
+			{ "Cooking recipes heard of", heard, math.max(all, heard), "open the Cooking window: it lists them" },
+			{ "Foods somebody can cook", have, math.max(all, heard), "you, your characters, or the guild" },
+		}
 	end,
 	hello = function()
 		return On() and tostring(Count(Me().ids)) or nil

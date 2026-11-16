@@ -220,7 +220,7 @@ local function Spots()
 		table.sort(fish, function(a, b) return a[3] > b[3] end)
 		local ids = {}
 		for id in pairs(c.items) do ids[#ids + 1] = id end
-		spots[#spots + 1] = { name = name, skill = Need(zone), caught = c.skill, casts = c.casts, per = per / c.casts, fish = fish, best = Dearest(ids) }
+		spots[#spots + 1] = { name = name, zone = zone, skill = Need(zone), caught = c.skill, casts = c.casts, per = per / c.casts, fish = fish, best = Dearest(ids) }
 	end
 	for _, w in ipairs(WATERS) do
 		for _, zone in ipairs(w[2]) do
@@ -231,7 +231,7 @@ local function Spots()
 					fish[#fish + 1] = { id, 1 / #w[3], Worth(id) }
 				end
 				table.sort(fish, function(a, b) return a[3] > b[3] end)
-				spots[#spots + 1] = { name = zone, skill = w[1], per = per, fish = fish, best = Dearest(w[3]) }
+				spots[#spots + 1] = { name = zone, zone = zone, skill = w[1], per = per, fish = fish, best = Dearest(w[3]) }
 			end
 		end
 	end
@@ -326,7 +326,7 @@ local VIEWS = {
 		{ title = "Where (fishing skill)", width = 0 },
 	},
 	spots = {
-		{ title = "Spot", width = 200 }, { title = "Skill", width = 50, right = true }, { title = "Your casts", width = 70, right = true },
+		{ title = "Spot", width = 190 }, { title = "Levels", width = 54, right = true }, { title = "Skill", width = 50, right = true }, { title = "Your casts", width = 70, right = true },
 		{ title = "Per cast", width = 104, right = true }, { title = "Per hour", width = 104, right = true }, { title = "Best catch", width = 200 },
 		{ title = "What bites (per cast)", width = 0 },
 	},
@@ -338,7 +338,7 @@ local VIEWS = {
 }
 local view = "spots"
 -- per table: the column it is sorted by, and which way
-local sortBy = { spots = { col = 4, desc = true }, fish = { col = 2, desc = true }, gear = { col = 2, desc = true } }
+local sortBy = { spots = { col = 5, desc = true }, fish = { col = 2, desc = true }, gear = { col = 2, desc = true } }
 local panel, bar, note, search
 local rows, heads, viewButtons, list, offset = {}, {}, {}, {}, 0
 
@@ -391,6 +391,27 @@ local function SkillText(need, mine)
 	return "|c" .. (mine >= need and "ff40ff40" or mine >= need - 95 and "ffffd100" or "ffff4040") .. need .. "|r"
 end
 
+-- How many casts in a hundred land a fish: 5 at the least skill to cast (95 below the zone's), all of them at
+-- the zone's skill. Nothing when either number is missing.
+-- ponytail: the old-world rule (a point of skill, a point of chance). Forever may count otherwise: shown as "about".
+local function Chance(need, mine)
+	if not (need and mine) then return nil end
+	if mine < need - 95 then return 0 end
+	return math.min(100, mine - need + 100)
+end
+F.Chance = Chance
+
+-- the levels of a zone's mobs in a colour for my own level, and the lowest of them (to sort by); "" and 0
+-- until the Zones tab's data can be worked out (QuestieDB read) or where it knows no levels
+local function ZoneLevels(zone)
+	local Z = DT.Zone
+	local z = Z and Z.Ensure and Z.Ensure() and Z.Get(zone)
+	if not (z and z.lo) then return "", 0 end
+	return Z.LevelColor(z, UnitLevel and UnitLevel("player") or 0) .. Z.Levels(z) .. "|r", z.lo
+end
+
+local GOLD, GREY, GREEN = "|cffffd100", "|cff888888", "|cff40ff40"
+
 local function SpotRows()
 	local out, mine = {}, FishingSkill(true)
 	for _, s in ipairs(Spots()) do
@@ -398,17 +419,43 @@ local function SpotRows()
 		for i = 1, math.min(4, #s.fish) do
 			fish[i] = ("%s %d%%"):format(Name(s.fish[i][1]), math.floor(s.fish[i][2] * 100 + 0.5))
 		end
+		local levels, lowest = ZoneLevels(s.zone)
+		local own = s.casts and s.casts >= OWN_CASTS
+		local perCast = (own and "" or GREY .. "~|r") .. DT.Money(math.floor(s.per + 0.5))
+		local perHour = GOLD .. DT.Money(math.floor(s.per * CASTS_PER_HOUR + 0.5)) .. "|r"
+		local best = s.best and (Name(s.best[1]) .. " " .. GREEN .. DT.Money(math.floor(s.best[2] + 0.5)) .. "|r")
+		-- the hover: what | value
+		local tips = {}
+		if levels ~= "" then tips[#tips + 1] = { "Zone levels", levels } end
+		if s.skill then
+			tips[#tips + 1] = { "Fishing skill", SkillText(s.skill, mine) .. GREY .. ("  (cast from %d)|r"):format(math.max(1, s.skill - 95)) }
+			local chance = Chance(s.skill, mine)
+			if chance then
+				tips[#tips + 1] = { "At your " .. mine, chance >= 100 and (GREEN .. "nothing gets away|r")
+					or chance > 0 and ("|cffffd100about %d%% of casts land|r"):format(chance) or "|cffff4040cannot cast here yet|r" }
+			end
+		end
+		tips[#tips + 1] = { "Per cast", perCast }
+		tips[#tips + 1] = { "Per hour", perHour .. GREY .. ("  (%d casts)|r"):format(CASTS_PER_HOUR) }
+		if best then tips[#tips + 1] = { "Best catch", best } end
+		if s.fish[1] then
+			tips[#tips + 1] = " "
+			tips[#tips + 1] = GOLD .. "What bites|r" .. GREY .. "  (share of casts, price each)|r"
+			for i = 1, math.min(10, #s.fish) do
+				local id, share = s.fish[i][1], s.fish[i][2]
+				tips[#tips + 1] = { "  " .. Name(id), ("%s%s%d%%|r  %s"):format(own and "" or GREY .. "~|r", GREEN, math.floor(share * 100 + 0.5), DT.Money(math.floor(Worth(id) + 0.5))) }
+			end
+			if #s.fish > 10 then tips[#tips + 1] = GREY .. ("  and %d more|r"):format(#s.fish - 10) end
+		end
+		tips[#tips + 1] = " "
+		tips[#tips + 1] = GREY .. (s.casts and ("From your own %d cast%s here%s."):format(s.casts, s.casts == 1 and "" or "s", s.caught and (", the first at skill " .. s.caught) or "")
+			or "~ A guess from the built-in list, until you have fished here.") .. "|r"
 		out[#out + 1] = {
-			tip = (s.casts and ("From your own casts here" .. (s.caught and (", the first at fishing skill " .. s.caught) or "") .. ".")
-				or "From the built-in list: a guess until you have fished here.")
-				.. (s.skill and ("\nSkill %d: nothing gets away. You can cast from %d, losing some. Pole, gear and lures count."):format(s.skill, math.max(1, s.skill - 95)) or "")
-				.. (" Per hour: %d casts, one after the other. Best catch: the dearest single thing that bites here, cooked where that pays."):format(CASTS_PER_HOUR),
-			s.name, SkillText(s.skill, mine), s.casts and tostring(s.casts) or "|cff888888-|r",
-			(s.casts and s.casts >= OWN_CASTS and "" or "|cff888888~|r") .. DT.Money(math.floor(s.per + 0.5)),
-			"|cffffd100" .. DT.Money(math.floor(s.per * CASTS_PER_HOUR + 0.5)) .. "|r",
-			s.best and (Name(s.best[1]) .. " |cff40ff40" .. DT.Money(math.floor(s.best[2] + 0.5)) .. "|r") or "|cff888888-|r",
+			tips = tips,
+			s.name, levels, SkillText(s.skill, mine), s.casts and tostring(s.casts) or GREY .. "-|r",
+			perCast, perHour, best or GREY .. "-|r",
 			table.concat(fish, ", "),
-			sort = { s.name, s.skill or 0, s.casts or 0, s.per, s.per, s.best and s.best[2] or 0, table.concat(fish, ", ") } }
+			sort = { s.name, lowest, s.skill or 0, s.casts or 0, s.per, s.per, s.best and s.best[2] or 0, table.concat(fish, ", ") } }
 	end
 	return out
 end
@@ -433,7 +480,7 @@ local function MakeRow(i)
 	row:SetPoint("TOPLEFT", 0, -TOP_H - ROW_H - (i - 1) * ROW_H)
 	row:SetPoint("RIGHT", -12, 0)
 	row.cols = {}
-	for c = 1, 7 do
+	for c = 1, 8 do
 		row.cols[c] = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
 		row.cols[c]:SetWordWrap(false)
 	end
@@ -444,6 +491,10 @@ local function MakeRow(i)
 		GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
 		if d.id then GameTooltip:SetHyperlink("item:" .. d.id) else GameTooltip:AddLine(d[1]) end
 		if d.tip then GameTooltip:AddLine(d.tip, 1, 1, 1, true) end
+		-- (a spot: lines of "what | value", and plain lines between them)
+		for _, t in ipairs(d.tips or {}) do
+			if type(t) == "table" then GameTooltip:AddDoubleLine(t[1], t[2], 0.75, 0.75, 0.75, 1, 1, 1) else GameTooltip:AddLine(t, 1, 1, 1, true) end
+		end
 		if d.id then GameTooltip:AddLine("Click: a link to read up on it.", 0.6, 0.6, 0.6) end
 		GameTooltip:Show()
 	end)
@@ -605,7 +656,7 @@ local function Build(parent)
 	note:SetJustifyH("LEFT")
 	note:SetWordWrap(false)
 	-- column headers: click to sort, again to turn it round
-	for c = 1, 7 do
+	for c = 1, 8 do
 		local h = CreateFrame("Button", nil, panel)
 		h.text = h:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
 		h.text:SetAllPoints()

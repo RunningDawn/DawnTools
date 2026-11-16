@@ -319,8 +319,11 @@ function Q.Status(e)
 	if m.on(e.id) then return "log", "in your log" end
 	if e.races ~= 0 and m.race and not Has(e.races, m.race) then return "never", "other race or side" end
 	if e.classes ~= 0 and m.class and not Has(e.classes, m.class) then return "never", "other class" end
+	-- One of several quests that shut each other out (the same errand from different givers, say): doing one
+	-- is doing them all. With another of them done this one counts as done: its step of the chain is behind me,
+	-- and what follows stands open. With another of them in my log it cannot be taken: not for me for now.
 	for _, other in ipairs(e.excl) do
-		if m.done(other) then return "never", "shut by: " .. QuestName(other) end
+		if m.done(other) then return "done", "done as: " .. QuestName(other) end
 		if m.on(other) then return "never", "shut while you have: " .. QuestName(other) end
 	end
 	-- what follows it is done or in hand, or the quest it only leads to is: there is nothing left in it
@@ -353,6 +356,15 @@ function Q.Find(text, f)
 	for word in text:lower():gmatch("%S+") do words[#words + 1] = word end
 	local here = f.zoneOnly and GetRealZoneText and GetRealZoneText() or nil
 	local pool, state = {}, {}
+	-- (the switches on what I have done and may do: every quest listed passes them, pulled in or not)
+	local function Take(e)
+		local status, why = Q.Status(e)
+		-- ("mine only" also leaves out a quest shut while I carry its twin: that one is in the list already)
+		if not ((f.hideDone and status == "done") or (f.mine and status == "never" and (why:find("^other") or why:find("^shut")))
+			or (f.obtainable and (status == "later" or status == "never")) or (f.notLog and status == "log")) then
+			pool[#pool + 1], state[e] = e, { status, why }
+		end
+	end
 	for _, e in ipairs(index) do
 		local ok = (not f.min or e.level >= f.min) and (not f.max or (e.level <= f.max and e.level > 0)) and (not here or e.zoneName == here or e.instance == here)
 			and (not f.zone or e.zoneName == f.zone or e.instance == f.zone)
@@ -360,12 +372,44 @@ function Q.Find(text, f)
 		for type, name in pairs(f.sub or {}) do
 			if f.types and f.types[type] then ok = ok and (e.instance or e.zoneName) == name end
 		end
-		if ok then
-			local status, why = Q.Status(e)
-			if not ((f.hideDone and status == "done") or (f.mine and status == "never" and why:find("^other"))
-				or (f.obtainable and (status == "later" or status == "never")) or (f.notLog and status == "log")) then
-				pool[#pool + 1], state[e] = e, { status, why }
+		-- (only what is in my log: the rest of each such quest's chain is brought along below)
+		if ok and f.onlyLog and Q.Status(e) ~= "log" then ok = false end
+		if ok then Take(e) end
+	end
+	-- "In log only": each quest of my log brings its whole chain, whatever the zone, kind or level of its steps
+	-- (what is done is still hidden with the done ones).
+	-- ponytail: the chain whole (Q.Chain, as its window shows it), side branches and all.
+	if f.onlyLog then
+		for i = 1, #pool do
+			for _, step in ipairs(Q.Chain(pool[i])) do
+				if not state[step.e] then Take(step.e) end
 			end
+		end
+	end
+	-- An instance picked (as the zone, or on the left under a ticked Dungeon or Raid): a quest of it brings along
+	-- the steps that lead up to it, those given out in the world too, whatever their zone, kind or level. What
+	-- comes after it in the chain is not brought, unless it leads on to another quest of the instance (then it
+	-- is a step up to that one). Not for a plain zone.
+	local dungeon = (here and INSTANCE[here] and here) or (f.zone and INSTANCE[f.zone] and f.zone) or nil
+	for type, name in pairs(f.sub or {}) do
+		if not dungeon and f.types and f.types[type] then dungeon = name end
+	end
+	if dungeon then
+		local seen = {}
+		local function Up(e) -- every quest that has to be done before this one, and before those
+			for _, pres in ipairs({ e.preAny, e.preAll }) do
+				for _, pre in ipairs(pres) do
+					local p = byId[pre]
+					if p and not seen[p] then
+						seen[p] = true
+						if not state[p] then Take(p) end
+						Up(p)
+					end
+				end
+			end
+		end
+		for i = 1, #pool do
+			if pool[i].instance == dungeon then Up(pool[i]) end
 		end
 	end
 	local found = DT.Npc.Match(pool, words)
@@ -448,14 +492,75 @@ local function SeenItems(kind, n)
 	return out
 end
 
+-- Shared with the guild where the player agreed to (settings.share; asked once, when the tab is first looked
+-- at): a quest gives everybody the same, so one member's look at a quest giver fills it in for all. Passed on
+-- the shared way (Comms:Gossip). A record is "quest;copper;experience;level it was seen at;seen;given;choice",
+-- the last two as "item:count,item:count". No player's name is in it. The level goes along because the
+-- experience shown depends on it. What came from the guild is marked (g = when it came): not my sighting,
+-- not sent on, and replaced by what I see myself.
+local function Wire(list)
+	local out = {}
+	for i, it in ipairs(list or {}) do out[i] = ("%d:%d"):format(it[1], it[2] or 1) end
+	return table.concat(out, ",")
+end
+
+local function Unwire(text)
+	local out = {}
+	for id, n in text:gmatch("(%d+):(%d+)") do
+		if #out < 10 then out[#out + 1] = { tonumber(id), tonumber(n) } end
+	end
+	return out
+end
+
+local rewards = DT.Comms:Gossip("quest", {
+	on = function() return Q.db ~= nil and Q.db.settings.share == true end,
+	peers = function()
+		Q.db.rpeers = Q.db.rpeers or {}
+		return Q.db.rpeers
+	end,
+	own = function()
+		local out = {}
+		for id, s in pairs(Q.db.seen or {}) do
+			if not s.g then out[id] = s.t or 1 end -- (one from before the time was kept: old, but mine)
+		end
+		return out
+	end,
+	line = function(id)
+		local s = Q.db.seen and Q.db.seen[id]
+		return s and ("%d;%d;%d;%d;%d;%s;%s"):format(id, s.m or 0, s.x or 0, s.l or 0, s.t or 1, Wire(s.r), Wire(s.c))
+	end,
+	take = function(line, now)
+		local id, m, x, l, t, r, c = line:match("^(%d+);(%d+);(%d+);(%d+);(%d+);([%d:,]*);([%d:,]*)$")
+		id, m, x, l, t = tonumber(id), tonumber(m), tonumber(x), tonumber(l), math.min(tonumber(t) or 0, now)
+		if not (id and id > 0 and m < 1e9 and x < 1e9 and l <= 100) then return false end
+		Q.db.seen = Q.db.seen or {}
+		local old = Q.db.seen[id]
+		if old and (not old.g or t <= (old.t or 0)) then return false end -- (mine stands; of the guild's, the newest)
+		Q.db.seen[id] = { m = m, x = x, l = l, r = Unwire(r), c = Unwire(c), t = t, g = now }
+		return true
+	end,
+	taken = function() dirty = true end,
+})
+Q.Gossip = rewards
+
+local function SameItems(a, b)
+	return Wire(a) == Wire(b)
+end
+
 function Q.SeeRewards()
 	local id = GetQuestID and GetQuestID()
 	if type(id) ~= "number" or id <= 0 or not Q.db then return end
 	Q.db.seen = Q.db.seen or {}
-	Q.db.seen[id] = { m = tonumber(GetRewardMoney and GetRewardMoney()) or 0, x = tonumber(GetRewardXP and GetRewardXP()) or 0,
+	local old = Q.db.seen[id]
+	local new = { m = tonumber(GetRewardMoney and GetRewardMoney()) or 0, x = tonumber(GetRewardXP and GetRewardXP()) or 0,
 		l = UnitLevel and UnitLevel("player") or 0,
 		r = GetQuestItemInfo and SeenItems("reward", GetNumQuestRewards and GetNumQuestRewards()) or {},
-		c = GetQuestItemInfo and SeenItems("choice", GetNumQuestChoices and GetNumQuestChoices()) or {} }
+		c = GetQuestItemInfo and SeenItems("choice", GetNumQuestChoices and GetNumQuestChoices()) or {},
+		t = DT.Now() }
+	-- (seen again and nothing changed: the first sighting stands, and nothing is told a second time)
+	if old and not old.g and old.m == new.m and old.x == new.x and old.l == new.l and SameItems(old.r, new.r) and SameItems(old.c, new.c) then return end
+	Q.db.seen[id] = new
+	rewards:Queue(id)
 end
 
 -- What a quest gives. Nothing of it is ours: read where it lies, when asked.
@@ -521,7 +626,8 @@ end
 
 -- the same, as lines of text for the chain window
 local MAX_ITEMS = 8
-function Q.RewardLines(e)
+-- bare: without the item lines (the window draws the items itself, as rows); the rewards are returned besides
+function Q.RewardLines(e, bare)
 	local r, lines = Q.Rewards(e), {}
 	local xp = r.xpNow and (r.xpNow .. " XP") or (r.xp and r.xp > 0 and ("%d XP |cff888888(at level %d; less when far above it)|r"):format(r.xp, r.xpLevel or e.level))
 		or "|cff888888XP not known|r"
@@ -534,6 +640,7 @@ function Q.RewardLines(e)
 	elseif not r.items[1] then
 		lines[2] = "|cff888888No item rewards known.|r"
 	end
+	if bare then return lines, r end
 	for i = 1, math.min(#r.items, MAX_ITEMS) do
 		local item = r.items[i]
 		lines[#lines + 1] = "    " .. item.name .. (item.count > 1 and (" x" .. item.count) or "") .. (item.choose and "  |cff66aaff(choose one)|r" or "")
@@ -566,17 +673,85 @@ end
 
 -- What one quest asks and gives, under the chain's rows; the window grows to hold it. The text is as wide as
 -- the window and no wider: a long line goes on to the next, it does not run out over the edge.
+-- Under the text, a row an item: its icon, its name in the colour of its quality, how many, whether it is one
+-- to choose, what a vendor pays. Hover: the item's own tooltip. Shift-click: its link into the chat;
+-- Shift-right-click: its web page.
+local IH = 18
+local function ItemRow(i)
+	local row = CreateFrame("Button", nil, chain)
+	row:SetHeight(IH)
+	row.icon = row:CreateTexture(nil, "ARTWORK")
+	row.icon:SetSize(15, 15)
+	row.icon:SetPoint("LEFT", 14, 0)
+	row.icon:SetTexCoord(0.07, 0.93, 0.07, 0.93) -- (without the icon's own border)
+	local highlight = row:CreateTexture(nil, "HIGHLIGHT")
+	highlight:SetAllPoints()
+	highlight:SetColorTexture(1, 1, 1, 0.08)
+	row.text = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+	row.text:SetPoint("LEFT", 34, 0)
+	row.text:SetPoint("RIGHT", -4, 0)
+	row.text:SetJustifyH("LEFT")
+	row.text:SetWordWrap(false)
+	row:RegisterForClicks("LeftButtonUp", "RightButtonUp")
+	row:SetScript("OnClick", function(self, button)
+		local item = self.item
+		if item then DT:LinkClick(button, DT:GameItemLink(item.id, item.name), item.name, DT:ItemLink(item.id)) end
+	end)
+	row:SetScript("OnEnter", function(self)
+		if not self.item then return end
+		GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+		GameTooltip:SetHyperlink("item:" .. self.item.id)
+		GameTooltip:AddLine("Shift-click: link in chat. Shift-right-click: its web page. Hold Shift: compare.", 0.5, 0.8, 1)
+		GameTooltip:Show()
+		DT:CompareTip(self)
+	end)
+	row:SetScript("OnLeave", function() GameTooltip:Hide() end)
+	chain.items[i] = row
+	return row
+end
+
+-- What one quest asks and gives, under the chain's rows; the window grows to hold it. The text is as wide as
+-- the window and no wider: a long line goes on to the next, it does not run out over the edge.
 function Q.ShowRewards(e)
-	local lines, n = Q.RewardLines(e), math.min(#chainLines, CROWS)
+	local lines, r = Q.RewardLines(e, true)
+	local n = math.min(#chainLines, CROWS)
 	local asked = Q.Asks(e)
 	table.insert(lines, 1, "|cffffd100To do:|r  " .. (asked ~= "" and asked or "|cff888888not known|r"))
+	local shown = math.min(#r.items, MAX_ITEMS)
 	chain.rewards:ClearAllPoints()
 	chain.rewards:SetPoint("TOPLEFT", 10, -46 - n * CH - 6)
 	chain.rewards:SetWidth(CW - 20)
 	chain.rewards:SetText(table.concat(lines, "\n"))
 	local height = chain.rewards.GetStringHeight and chain.rewards:GetStringHeight() or 0
 	if not height or height <= 0 then height = #lines * 13 end -- (a client that will not say: one line each)
-	chain:SetSize(CW, 46 + n * CH + 24 + 8 + height)
+	local icon = (C_Item and C_Item.GetItemIconByID) or GetItemIcon
+	local info = (C_Item and C_Item.GetItemInfo) or GetItemInfo
+	chain.items = chain.items or {}
+	for i = 1, math.max(shown, #chain.items) do
+		local item, row = i <= shown and r.items[i] or nil, chain.items[i]
+		if item and not row then row = ItemRow(i) end
+		if row then
+			row.item = item
+			row:SetShown(item ~= nil)
+			if item then
+				row:ClearAllPoints()
+				row:SetPoint("TOPLEFT", 8, -46 - n * CH - 6 - height - 4 - (i - 1) * IH)
+				row:SetPoint("RIGHT", -8, 0)
+				local okIcon, texture = pcall(function() return icon(item.id) end)
+				row.icon:SetTexture(okIcon and texture or "Interface\\Icons\\INV_Misc_QuestionMark")
+				local okInfo, _, _, quality = pcall(function() return info(item.id) end)
+				local color = okInfo and quality and ITEM_QUALITY_COLORS and ITEM_QUALITY_COLORS[quality] and ITEM_QUALITY_COLORS[quality].hex or "|cffffffff"
+				row.text:SetText(color .. item.name .. "|r" .. (item.count > 1 and (" x" .. item.count) or "") .. (item.choose and "  |cff66aaff(choose one)|r" or "")
+					.. "  |cff888888vendor:|r " .. (item.sell and item.sell > 0 and DT.Money(item.sell * item.count) or "|cff888888-|r"))
+			end
+		end
+	end
+	local more = #r.items - shown
+	chain.moreItems:SetShown(more > 0)
+	chain.moreItems:ClearAllPoints()
+	chain.moreItems:SetPoint("TOPLEFT", 42, -46 - n * CH - 6 - height - 4 - shown * IH - 2)
+	chain.moreItems:SetText(more > 0 and ("|cff888888and %d more|r"):format(more) or "")
+	chain:SetSize(CW, 46 + n * CH + 24 + 8 + height + (shown > 0 and 4 + shown * IH or 0) + (more > 0 and 14 or 0))
 end
 
 function Q.ShowChain(e)
@@ -611,13 +786,14 @@ function Q.ShowChain(e)
 		chain.note:SetPoint("RIGHT", -10, 0)
 		chain.note:SetJustifyH("LEFT")
 		chain.note:SetWordWrap(false)
-		chain.note:SetText("|cff40a040done|r  |cffffd100in your log|r  |cffffffffopen to you|r  |cff999999not yet|r  |cff905050not for you|r    |cff888888Click: waypoint, what to do, rewards. Shift-click: link.|r")
+		chain.note:SetText("|cff40a040done|r  |cffffd100in your log|r  |cffffffffopen to you|r  |cff999999not yet|r  |cff905050not for you|r    |cff888888Click: waypoint, what to do, rewards. Shift-click: link in chat. Shift-right-click: web page.|r")
 		chain.more = chain:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
 		chain.more:SetPoint("BOTTOMLEFT", 10, 6)
 		chain.rewards = chain:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
 		chain.rewards:SetJustifyH("LEFT")
 		if chain.rewards.SetJustifyV then chain.rewards:SetJustifyV("TOP") end
 		if chain.rewards.SetWordWrap then chain.rewards:SetWordWrap(true) end
+		chain.moreItems = chain:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
 		chain.rows = {}
 		for i = 1, CROWS do
 			local row = CreateFrame("Button", nil, chain)
@@ -635,11 +811,11 @@ function Q.ShowChain(e)
 			row.text:SetPoint("RIGHT", -4, 0)
 			row.text:SetJustifyH("LEFT")
 			row.text:SetWordWrap(false)
-			row:SetScript("OnClick", function(self)
+			row:RegisterForClicks("LeftButtonUp", "RightButtonUp")
+			row:SetScript("OnClick", function(self, button)
 				if not self.data then return end
-				if IsShiftKeyDown and IsShiftKeyDown() then -- (as in the list: the page to read up on it)
-					return DT:ShowLink(self.data.e.name, Q.Link(self.data.e))
-				end
+				-- (as in the list: Shift-click its link into the chat, Shift-right-click its page)
+				if DT:LinkClick(button, Q.GameLink(self.data.e), self.data.e.name, Q.Link(self.data.e)) or button == "RightButton" then return end
 				Q.Waypoint(self.data.e)
 				Q.ShowRewards(self.data.e) -- (and what that step gives)
 			end)
@@ -667,11 +843,18 @@ function Q.ShowChain(e)
 	chain.title:SetText(#chainLines > 1 and ("Chain of: %s"):format(e.name) or e.name)
 	Q.ShowRewards(e)
 	chain:Show()
+	-- (in front of the main window: the click that asked for it just brought that one to the front)
+	if chain.Raise then chain:Raise() end
 	DrawChain()
 	return chainLines
 end
 
 -- where to read up on a quest
+-- the game's own link of a quest, for the chat
+function Q.GameLink(e)
+	return ("|cffffff00|Hquest:%d:%d|h[%s]|h|r"):format(e.id, e.level or 0, e.name)
+end
+
 function Q.Link(e)
 	return "https://www.wowhead.com/forever/quest=" .. e.id
 end
@@ -703,7 +886,7 @@ function Q.Tooltip(owner, e)
 		for i = 1, math.min(4, #opens) do names[i] = opens[i].name end
 		GameTooltip:AddLine("Opens: " .. table.concat(names, ", ") .. (#opens > 4 and (" and %d more"):format(#opens - 4) or ""), 0.8, 0.8, 0.8, true)
 	end
-	GameTooltip:AddLine("Click: its chain and rewards. Shift-click: its page.", 0.5, 0.8, 1)
+	GameTooltip:AddLine("Click: its chain and rewards. Shift-click: link in chat. Shift-right-click: its web page.", 0.5, 0.8, 1)
 	GameTooltip:Show()
 end
 
@@ -930,14 +1113,11 @@ local function MakeRow(i)
 		if self.data then Q.Tooltip(self, self.data.e) end
 	end)
 	row:SetScript("OnLeave", function() GameTooltip:Hide() end)
-	row:SetScript("OnMouseUp", function(self)
+	row:SetScript("OnMouseUp", function(self, button)
 		local d = self.data
 		if not d then return end
-		if IsShiftKeyDown and IsShiftKeyDown() then
-			DT:ShowLink(d.e.name, Q.Link(d.e))
-		else
-			Q.ShowChain(d.e)
-		end
+		if DT:LinkClick(button, Q.GameLink(d.e), d.e.name, Q.Link(d.e)) or button == "RightButton" then return end
+		Q.ShowChain(d.e)
 	end)
 	rows[i] = row
 	return row
@@ -1087,6 +1267,8 @@ local function Build(parent)
 		local label = Label(text, box, 0)
 		box:SetScript("OnClick", function(self)
 			Q.db[key] = self:GetChecked() and true or false
+			-- ("in log only" and "not in log" cannot both be: the one just ticked stands)
+			if key == "onlyLog" and Q.db.onlyLog then Q.db.notLog = false elseif key == "notLog" and Q.db.notLog then Q.db.onlyLog = false end
 			offset = 0
 			Q.Refresh()
 		end)
@@ -1103,6 +1285,7 @@ local function Build(parent)
 	last = Tick("hideDone", "Hide done", "Leaves out the quests this character has completed.", last)
 	last = Tick("mine", "Mine only", "Leaves out quests of the other side, another race or another class.", last)
 	last = Tick("notLog", "Not in log", "Leaves out the quests already in your quest log: what is left is what there is still to pick up.", last)
+	last = Tick("onlyLog", "In log only", "Only the quests in your quest log, each with the rest of its chain: what led to it and what it leads to.", last)
 	last = Tick("obtainable", "Can take now", "Leaves out what this character cannot take yet: level too low, an earlier quest not done, a profession missing.", last)
 	Q.ticks = ticks
 	zoneButton = DT:Dropdown(panel, 180, { search = true, menuWidth = 240, entries = ZoneEntries, pick = Q.PickZone,
@@ -1120,6 +1303,7 @@ local function Build(parent)
 		local db = Q.db
 		db.types, db.min, db.max, db.hideDone, db.mine, db.obtainable, db.zoneOnly, db.zone = {}, nil, nil, true, true, false, false, nil
 		db.nested, db.notLog, db.sub, sortCol = true, false, {}, nil
+		db.onlyLog = false
 		zoneButton.menu:Hide()
 		minBox:SetText("")
 		maxBox:SetText("")
@@ -1170,6 +1354,8 @@ local function Build(parent)
 	end)
 	panel:SetScript("OnSizeChanged", function() Q.Refresh(true) end) -- (the same quests, laid out anew)
 	panel:SetScript("OnUpdate", function()
+		-- (in a fight the game cuts off a script that takes long: reading and searching the list wait for its end)
+		if InCombatLockdown and InCombatLockdown() then return end
 		-- the reading goes on a little every frame, and says how far it is
 		if reading then
 			Q.Step(8)
@@ -1222,22 +1408,63 @@ function Q.Entry(id)
 	return ready and byId[id] or nil -- (half-read ones are not whole yet)
 end
 
+local asking
 local function Show()
+	-- asked once, the first time the tab is looked at
+	if Q.db.settings.share == nil and IsInGuild() and not asking then
+		asking = true
+		StaticPopup_Show("DAWNTOOLS_QUEST_SHARE")
+	end
 	Q.Start()
 	me = nil -- (what is done and in the log is read anew at each look)
 	Q.Refresh()
 end
 
 DT:RegisterModule("quest", {
-	profile = { "types", "sub", "min", "max", "hideDone", "mine", "obtainable", "zoneOnly", "zone", "nested", "notLog" }, -- (what of its saved table is how it is set up: goes with a profile)
+	profile = { "types", "sub", "min", "max", "hideDone", "mine", "obtainable", "zoneOnly", "zone", "nested", "notLog", "onlyLog" }, -- (what of its saved table is how it is set up: goes with a profile)
 	title = "Quests",
 	version = 1,
 	slash = "/dtquest",
+	settings = {
+		{ key = "share", label = "Share what quests give with the guild (and receive what others saw)" },
+	},
+	held = function()
+		local n, guild = 0, 0
+		for _, s in pairs(Q.db.seen or {}) do n, guild = n + 1, guild + (s.g and 1 or 0) end
+		return ("what %d quests give, as seen at a quest giver; %d of them from the guild"):format(n, guild)
+	end,
+	hello = function() return rewards:Hello() end,
+	onHello = function(_, sender, summary) rewards:OnHello(sender, summary) end,
+	onMessage = function(_, kind, payload, sender) rewards:OnMessage(kind, payload, sender) end,
+	progress = function()
+		local seen, n = {}, 0
+		for id in pairs(DT.QuestRewards or {}) do seen[id], n = true, n + 1 end
+		for id in pairs(Q.db and Q.db.seen or {}) do
+			if not seen[id] then n = n + 1 end
+		end
+		local note = "what you and (if you share them) the guild saw"
+		if Q.Ready() then return { { "Quest rewards seen at a quest giver", n, #Q.All(), note } } end
+		return { { "Quest rewards seen at a quest giver", n, nil, "open World, Quests once: it counts the quests" } }
+	end,
 	tab = { id = "quest", title = "Quests", defaultOrder = 57, under = "world", create = Build, onShow = Show },
 	onEnable = function(mod)
 		Q.db = mod.db
 		local db = Q.db
 		db.types = db.types or {}
+		StaticPopupDialogs.DAWNTOOLS_QUEST_SHARE = {
+			text = "DawnTools Quests: share what quests give with the guild?\n\n"
+				.. "Sent to guild members who use DawnTools: for a quest whose rewards a quest giver showed you, the quest, "
+				.. "its money, experience and items, and the level you were when you saw it. No names. In return you see "
+				.. "what others saw.\n\nNothing else is sent, and you can switch it off at any time: /dt settings.",
+			button1 = "Share", button2 = "Not now",
+			OnAccept = function() db.settings.share = true end,
+			-- (only a real no: a popup pushed aside by another one asks again next time)
+			OnCancel = function(_, _, reason)
+				if reason == "clicked" then db.settings.share = false end
+				asking = false
+			end,
+			timeout = 0, whileDead = true, hideOnEscape = true, preferredIndex = 3,
+		}
 		DT:Background({ Start = Q.Start, Step = Q.Step })
 		-- (done and not-mine are left out unless asked for; what cannot be taken yet stays in)
 		if db.hideDone == nil then db.hideDone = true end

@@ -47,8 +47,8 @@ Patch for fixes, minor for features. Changelog lines are short and say only what
 ## Principles that must hold
 
 - **Opt-in and visible.** Nothing goes to the guild before the player agrees in a popup. Sharing off means nothing sent *and* nothing merged. An imported profile never switches sharing on.
-- **Only two kinds of shared data:** Market observations (item, price, quantity, time, observer name) and Food (character name, food item IDs). A third kind is a decision for the owner and goes in the spec first.
-- **Everything else is local:** inventory, combat records, vendor prices, Auctionator's imported prices, anything about other players.
+- **Only four kinds of shared data:** Market observations (item, price, quantity, time, observer name), vendor prices (item, price, vendor's name, place; under Market's sharing switch), Food (character name, food item IDs) and quest rewards (quest, money, experience, items, the level it was seen at; no name). A fifth kind is a decision for the owner and goes in the spec first.
+- **Everything else is local:** inventory, combat records, Auctionator's imported prices, anything about other players.
 - **No automation of trade.** No buying, bidding, posting, cancelling. A scan starts from a click only; a full scan (`ReplicateItems`) at most once per 15 minutes.
 - **Libraries** in `Libs/` stay unchanged and keep their licence files.
 
