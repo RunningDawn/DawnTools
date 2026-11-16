@@ -10,8 +10,9 @@ One window (`/dt`, or the minimap button) with a tab per tool. Most of it works 
 |---|---|---|
 | **Market** | Auction prices you have seen, viewable anywhere. 14 days of history, vendor prices, a price line on item tooltips (hold Shift over a stack for the whole stack). Can scan the auction house on a button click and import Auctionator's prices. | Prices, opt-in |
 | **Inventory** | Bags and bank of every character on the account, one searchable list. | No |
-| **Craft → Fish** | What a cast is worth in each fishing spot, fish raw and cooked, fishing gear. | No |
-| **Craft → Food** | Every cooked food, by what it gives, and who can cook it. | Recipes known, opt-in |
+| **Craft → Fishing** | What a cast is worth in each fishing spot, fish raw and cooked, fishing gear. | No |
+| **Craft → Cooking** | Every cooked food, by what it gives, who can cook it, where its recipe comes from, and what cooking it earns. | Recipes known, opt-in |
+| **Craft → First Aid, Alchemy, Blacksmithing, Enchanting, Engineering, Leatherworking, Mining, Tailoring** | Every recipe: skill band, cost of materials, profit at today's prices, who can make it, where the recipe comes from. | Recipes known, opt-in (Cooking's switch) |
 | **World → NPC / Quests / Items / Zones** | Search every NPC, quest, item and zone; waypoints (TomTom or the map pin). Needs the QuestieDB addon (Questie itself is not needed), read at runtime. | No |
 | **Combat** | PvP only: who killed me and who I killed, with place, time, guild, class and level. A recap of the hits taken before a death. | No |
 | **Tools → Range** | Estimated distance to target and focus. | No |
@@ -28,7 +29,7 @@ One window (`/dt`, or the minimap button) with a tab per tool. Most of it works 
 Nothing, until you say yes. Three things can be shared, each asked about once:
 
 - **Market:** item prices, quantities and times, plus the name of the character that saw them (can be made anonymous). Also what vendors ask for their goods: the item, the price, the vendor's name and the place.
-- **Food:** your character's name and which foods it can cook.
+- **Cooking and professions:** your character's name and which recipes it knows (one switch for cooking and the other professions).
 - **Quests:** what a quest gives, as a quest giver showed it to you: money, experience, items, and the level you were. No names.
 
 Both travel as addon messages on the guild channel and reach only guild members running DawnTools. With sharing off, nothing is sent and nothing is taken in. Everything else stays on your machine. No messages are sent in combat, nor in instances unless you switch that on.

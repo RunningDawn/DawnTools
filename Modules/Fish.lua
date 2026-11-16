@@ -712,10 +712,10 @@ end
 ---------------------------------------------------------------------------
 
 DT:RegisterModule("fish", {
-	title = "Fish",
+	title = "Fishing",
 	version = 1,
 	slash = "/dtfish",
-	tab = { id = "fish", title = "Fish", defaultOrder = 40, under = "craft", create = Build, onShow = Refresh },
+	tab = { id = "fish", title = "Fishing", defaultOrder = 40, under = "craft", create = Build, onShow = Refresh },
 	onEnable = function(mod)
 		F.db = mod.db
 		F.db.catches, F.db.recipes, F.db.names = F.db.catches or {}, F.db.recipes or {}, F.db.names or {}

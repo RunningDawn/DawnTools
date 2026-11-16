@@ -271,6 +271,9 @@ local me -- { level, race, class (their bits), done = fn(id), on = fn(id), skill
 local function Me()
 	if me then return me end
 	me = { level = UnitLevel and UnitLevel("player") or 0 }
+	-- (the repeatable quests this character handed in, as seen by this addon: see Q.Turned)
+	local guid = UnitGUID and UnitGUID("player") or "?"
+	me.turned = Q.db and Q.db.turned and Q.db.turned[guid] or {}
 	local race, class, _
 	if UnitRace then _, _, race = UnitRace("player") end
 	if UnitClass then _, _, class = UnitClass("player") end
@@ -306,6 +309,38 @@ local function Me()
 	return me
 end
 
+-- A quest was handed in: noted for this character (db.turned[guid][quest] = true), since the game does not
+-- reliably count a quest that can be repeated among the completed. Kept on this machine. (Every hand-in is
+-- noted, not only the repeatable ones: the quests may not have been read yet to tell which is which.)
+-- ponytail: only from now on. One done before this was written, and not flagged by the game, still reads as open.
+function Q.Turned(id)
+	if not (Q.db and type(id) == "number" and id > 0) then return end
+	local guid = UnitGUID and UnitGUID("player") or "?"
+	Q.db.turned = Q.db.turned or {}
+	Q.db.turned[guid] = Q.db.turned[guid] or {}
+	Q.db.turned[guid][id] = true
+end
+
+-- Marked by hand (a right-click on a quest): done, or not done after all. For what was done before this addon
+-- kept count and the game does not remember: a quest that can be done again, though the list does not say so.
+-- Returns what it is now marked as (true: done), or nil where the game itself says it is done.
+function Q.Mark(e)
+	if not Q.db then return end
+	local guid = UnitGUID and UnitGUID("player") or "?"
+	Q.db.turned = Q.db.turned or {}
+	Q.db.turned[guid] = Q.db.turned[guid] or {}
+	local mine = Q.db.turned[guid]
+	if Me().done(e.id) and not mine[e.id] then
+		DT:Print("%s: the game itself says it is done.", e.name)
+		return nil
+	end
+	mine[e.id] = not mine[e.id] or nil
+	me = nil -- (what is done is read anew)
+	if Q.Refresh then Q.Refresh() end
+	DT:Print(mine[e.id] and "%s: marked as done." or "%s: no longer marked as done.", e.name)
+	return mine[e.id] or false
+end
+
 local function QuestName(id)
 	return byId[id] and byId[id].name or ("quest " .. id)
 end
@@ -315,7 +350,12 @@ end
 --   never (not for this character: other side or class, or shut by another quest)
 function Q.Status(e)
 	local m = Me()
-	if m.done(e.id) and not e.types.Repeatable and not e.types.Daily then return "done", "done" end
+	-- Done: the game says so, or (a quest that can be done again, which the game may not keep among the done)
+	-- I handed it in while this addon was looking (db.turned). One that can be repeated counts as done once it
+	-- was done once, and says that it can be done again; a daily is never done for good.
+	if (m.done(e.id) or m.turned[e.id]) and not e.types.Daily then
+		return "done", e.types.Repeatable and "done once (can be repeated)" or "done"
+	end
 	if m.on(e.id) then return "log", "in your log" end
 	if e.races ~= 0 and m.race and not Has(e.races, m.race) then return "never", "other race or side" end
 	if e.classes ~= 0 and m.class and not Has(e.classes, m.class) then return "never", "other class" end
@@ -461,17 +501,51 @@ function Q.Chain(e)
 	return lines
 end
 
--- who gives a quest: the name of its first NPC (or nil), and that NPC for a waypoint
-local starters = {}
-local function Starter(e)
-	local id = type(e.starts[1]) == "table" and e.starts[1][1]
-	if not id then return end
-	if starters[id] == nil then
-		local lib = Lib()
-		local ok, name = pcall(function() return lib.Npc.Get(id, "name") end)
-		starters[id] = ok and type(name) == "string" and name or false
+-- Where a quest begins, for the many that no NPC gives:
+--   { kind = "npc" / "object" / "item" / "turnin", id =, name =, text = (for a list), say = (a sentence) }
+-- an NPC; else an object in the world (a poster, a chest); else an item that starts it (a drop that is read or
+-- handed in); else, where QuestieDB names no beginning at all, whom it is handed in to. nil: nothing known.
+-- Kept for the session.
+local origins = {}
+function Q.Origin(e)
+	if origins[e.id] ~= nil then return origins[e.id] or nil end
+	local lib = Lib()
+	local function Get(entity, id, field)
+		local ok, v = pcall(function() return lib[entity].Get(id, field) end)
+		return ok and v or nil
 	end
-	return starters[id] or nil, id
+	local function First(who, i)
+		local id = type(who) == "table" and type(who[i]) == "table" and who[i][1]
+		return type(id) == "number" and id > 0 and id or nil
+	end
+	local o
+	local npc, object, item = First(e.starts, 1), First(e.starts, 2), First(e.starts, 3)
+	if not (npc or object or item) then
+		local source = Get("Quest", e.id, "sourceItemId")
+		item = type(source) == "number" and source > 0 and source or nil
+	end
+	if npc then
+		local name = Get("Npc", npc, "name") or ("NPC " .. npc)
+		o = { kind = "npc", id = npc, name = name, text = name, say = "Given by " .. name }
+	elseif object then
+		local name = Get("Object", object, "name") or ("object " .. object)
+		o = { kind = "object", id = object, name = name, text = "object: " .. name, say = "Begins at an object in the world: " .. name }
+	elseif item then
+		local name = Get("Item", item, "name") or ("item " .. item)
+		o = { kind = "item", id = item, name = name, text = "item: " .. name, say = "Begins from an item: " .. name }
+	else
+		local ends = Get("Quest", e.id, "finishedBy")
+		local to, thing = First(ends, 1), First(ends, 2)
+		if to then
+			local name = Get("Npc", to, "name") or ("NPC " .. to)
+			o = { kind = "turnin", id = to, name = name, text = "hand in: " .. name, say = "No beginning known. Handed in to " .. name }
+		elseif thing then
+			local name = Get("Object", thing, "name") or ("object " .. thing)
+			o = { kind = "turnin", object = thing, name = name, text = "hand in: " .. name, say = "No beginning known. Handed in at " .. name }
+		end
+	end
+	origins[e.id] = o or false
+	return o
 end
 
 local STATUS_COLOR = { done = "|cff40a040", log = "|cffffd100", open = "|cffffffff", later = "|cff999999", never = "|cff905050" }
@@ -661,7 +735,8 @@ local function DrawChain()
 		row:SetShown(d ~= nil)
 		if d then
 			local status = Q.Status(d.e)
-			local giver = Starter(d.e)
+			local origin = Q.Origin(d.e)
+			local giver = origin and origin.text
 			row.text:SetText(("    "):rep(d.depth) .. (d.depth > 0 and "|cff666666> |r" or "") .. STATUS_COLOR[status]
 				.. ("[%d] %s"):format(d.e.level, d.e.name) .. "|r" .. (d.again and " |cff666666(above)|r" or "")
 				.. ((giver and not d.again) and ("  |cff6699cc" .. giver .. "|r") or ""))
@@ -859,12 +934,33 @@ function Q.Link(e)
 	return "https://www.wowhead.com/forever/quest=" .. e.id
 end
 
+-- A waypoint to where a quest begins: its NPC; an object's place in the world; for one that begins from an
+-- item, the window of where that item comes from; with no beginning known, whom it is handed in to.
 function Q.Waypoint(e)
-	local name, id = Starter(e)
-	if not id then
+	local o = Q.Origin(e)
+	if not o then
 		return DT:Print("%s: started by no NPC that is known (an item, an object, or nobody).", e.name)
 	end
-	DT.Npc.Waypoint({ id = id, name = (name or "NPC") .. " (" .. e.name .. ")", zone = e.zone > 0 and e.zone or 0 })
+	local title = o.name .. " (" .. e.name .. ")"
+	if o.kind == "item" then
+		DT:Print("%s begins from the item %s: where that comes from is shown.", e.name, o.name)
+		local I = DT.Item
+		if I and I.ShowInfo then pcall(I.ShowInfo, { id = o.id, name = o.name, nameL = o.name:lower(), req = 0, ilvl = 0, c = 12, s = 0, src = {} }) end
+		return
+	end
+	if o.kind == "turnin" then DT:Print("%s: no beginning is known. This is where it is handed in.", e.name) end
+	local object = o.kind == "object" and o.id or o.object
+	if object then
+		-- (an object's places, by area: the first of the zone the quest is of, else the first there is)
+		local ok, spawns = pcall(function() return Lib().Object.Get(object, "spawns") end)
+		local area, spot
+		for a, list in pairs(ok and type(spawns) == "table" and spawns or {}) do
+			if type(list) == "table" and type(list[1]) == "table" and (not spot or a == e.zone) then area, spot = a, list[1] end
+		end
+		if not spot then return DT:Print("%s: the place of %s is not known.", e.name, o.name) end
+		return DT.Npc.Pin(area, spot[1], spot[2], title)
+	end
+	DT.Npc.Waypoint({ id = o.id, name = title, zone = e.zone > 0 and e.zone or 0 })
 end
 
 function Q.Tooltip(owner, e)
@@ -878,8 +974,8 @@ function Q.Tooltip(owner, e)
 	if asked ~= "" then GameTooltip:AddLine(asked, 1, 1, 1, true) end -- (what it asks, wrapped)
 	if e.typeText ~= "" then GameTooltip:AddLine(e.typeText, 1, 0.82, 0, true) end
 	GameTooltip:AddLine(STATUS_COLOR[status] .. why:sub(1, 1):upper() .. why:sub(2) .. "|r")
-	local giver = Starter(e)
-	if giver then GameTooltip:AddLine("Given by " .. giver, 0.4, 0.6, 0.8) end
+	local origin = Q.Origin(e)
+	if origin then GameTooltip:AddLine(origin.say, 0.4, 0.6, 0.8, true) end
 	local opens = followers[e.id]
 	if opens then
 		local names = {}
@@ -887,6 +983,7 @@ function Q.Tooltip(owner, e)
 		GameTooltip:AddLine("Opens: " .. table.concat(names, ", ") .. (#opens > 4 and (" and %d more"):format(#opens - 4) or ""), 0.8, 0.8, 0.8, true)
 	end
 	GameTooltip:AddLine("Click: its chain and rewards. Shift-click: link in chat. Shift-right-click: its web page.", 0.5, 0.8, 1)
+	GameTooltip:AddLine("Right-click: mark it done, or not done, by hand (for one the game does not remember).", 0.5, 0.8, 1, true)
 	GameTooltip:Show()
 end
 
@@ -1116,7 +1213,9 @@ local function MakeRow(i)
 	row:SetScript("OnMouseUp", function(self, button)
 		local d = self.data
 		if not d then return end
-		if DT:LinkClick(button, Q.GameLink(d.e), d.e.name, Q.Link(d.e)) or button == "RightButton" then return end
+		if DT:LinkClick(button, Q.GameLink(d.e), d.e.name, Q.Link(d.e)) then return end
+		-- (a plain right-click: marked as done by hand, or not done after all)
+		if button == "RightButton" then return Q.Mark(d.e) end
 		Q.ShowChain(d.e)
 	end)
 	rows[i] = row
@@ -1474,6 +1573,7 @@ DT:RegisterModule("quest", {
 		for _, event in ipairs({ "QUEST_DETAIL", "QUEST_COMPLETE" }) do
 			DT:On(event, function() pcall(Q.SeeRewards) end)
 		end
+		DT:On("QUEST_TURNED_IN", function(id) Q.Turned(id) end) -- (before the handler below, which reads what is done anew)
 		for _, event in ipairs({ "QUEST_TURNED_IN", "QUEST_ACCEPTED", "QUEST_REMOVED", "PLAYER_LEVEL_UP" }) do
 			DT:On(event, function() me, dirty = nil, true end)
 		end

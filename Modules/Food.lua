@@ -168,10 +168,12 @@ end
 
 local ROW_H, SIDE_W, TOP_H, SIDE_H = 18, 150, 28, 20
 -- (a column of width 0 takes what is left; those of a width below 0 sit at the right edge, that wide, side by side)
-local RECIPE_W, WHERE_W = 170, 260
+local RECIPE_W, WHERE_W, PROFIT_W, VENDOR_W = 170, 250, 92, 104
 -- "Cooking skill": the band of its recipe (Data/CraftSkill.lua): learned at, yellow, green, grey; blank where none is known
-local COLS = { { "Food", 180 }, { "Level", 40, true }, { "Cooking skill", 120 }, { "Gives", 84 }, { "This character", 84 }, { "Who can cook it", 0 },
-	{ "Recipe", -RECIPE_W }, { "Where to get it", -WHERE_W } }
+-- "Profit (AH)" / "Profit (vendor)": what one cooking earns at today's prices, sold on the auction house or to a
+-- vendor (DT.Craft.Profit); hover the row for how it is made up
+local COLS = { { "Food", 168 }, { "Level", 52, true }, { "Cooking skill", 120 }, { "Gives", 84 }, { "This character", 84 }, { "Who can cook it", 0 },
+	{ "Recipe", -RECIPE_W }, { "Where to get it", -WHERE_W }, { "Profit (AH)", -PROFIT_W, true }, { "Profit (vendor)", -VENDOR_W, true } }
 -- how far from the right edge a column of the right-hand group ends (the last: 0), and how wide that group is
 local function RightOf(c)
 	local w = 0
@@ -236,6 +238,42 @@ function Food.OpenItem(id, name)
 	if not ok then DT:Print("Could not open that item's sources.") end
 end
 
+-- The frame over a row's "Where to get it" cell (the row's data has .src, .scroll, .scrollName): every source
+-- on hover; a click sets a waypoint to the vendor or mob (a quest: its chain); Shift-click opens the recipe's
+-- sources. `right`: how far from the row's right edge the cell ends. Used by the profession tabs too.
+function Food.WhereFrame(row, width, right)
+	local where = CreateFrame("Frame", nil, row)
+	where:SetPoint("TOPRIGHT", -(right or 0), 0)
+	where:SetPoint("BOTTOMRIGHT", -(right or 0), 0)
+	where:SetWidth(width)
+	where:EnableMouse(true)
+	where:SetScript("OnEnter", function(self)
+		local d = row.data
+		if not (d and d.src) then return end
+		GameTooltip:SetOwner(self, "ANCHOR_LEFT")
+		GameTooltip:AddLine(d.scrollName or "Recipe")
+		for _, line in ipairs(d.src.lines) do
+			if line.head then GameTooltip:AddLine(line.head, 1, 0.82, 0) else GameTooltip:AddLine("  " .. line.text, 1, 1, 1) end
+		end
+		GameTooltip:AddLine(d.src.quest and "Click: the quest's chain." or "Click: a waypoint to " .. (d.src.name or "it") .. ".", 0.5, 0.8, 1)
+		GameTooltip:AddLine("Shift-click: the recipe on the Items tab.", 0.5, 0.8, 1)
+		GameTooltip:Show()
+	end)
+	where:SetScript("OnLeave", function() GameTooltip:Hide() end)
+	where:SetScript("OnMouseUp", function()
+		local d = row.data
+		if not (d and d.src) then return end
+		if IsShiftKeyDown and IsShiftKeyDown() then return Food.OpenItem(d.scroll, d.scrollName) end
+		if d.src.quest then
+			local quest = DT.Quest and DT.Quest.Entry and DT.Quest.Entry(d.src.quest)
+			if quest then DT.Quest.ShowChain(quest) else DT:Print("Open World, Quests once, then click again: the quests are not read yet.") end
+		elseif d.src.npc then
+			DT.Npc.Waypoint({ id = d.src.npc, name = d.src.name, zone = 0 })
+		end
+	end)
+	return where
+end
+
 local KIND = { buy = "|cffffd100Buy|r", drop = "|cffff8040Drop|r", quest = "|cff66aaffQuest|r" }
 -- the cell's words: "Buy 4s  Kira Cook  Booty Bay (+2)"
 local function WhereText(scroll, src)
@@ -249,9 +287,12 @@ local function WhereText(scroll, src)
 	end
 	return KIND[src.kind] .. price .. "  " .. src.text .. (src.foe and " |cffff4040(other side)|r" or "") .. (src.more > 0 and (" |cff888888(+%d)|r"):format(src.more) or "")
 end
-local panel, side, search, countText, missingButton, bar
+Food.WhereText = WhereText
+local panel, side, search, countText, bar
 local rows, heads, sideButtons, list, offset = {}, {}, {}, {}, 0
-local picked, hideMissing -- the type picked on the left (nil = all); whether recipes I lack are left out
+local picked -- the type picked on the left (nil = all)
+local filter = {} -- the boxes ticked beside the search box (DT.Craft.FILTERS): known, missing, profit, mats
+Food.filter = filter
 local sortBy = { col = 2, desc = false } -- the column the table is sorted by, and which way
 
 -- everyone who can cook it: this character first, then my others, then the guild
@@ -274,8 +315,13 @@ local function Rebuild()
 	for id in pairs(Food.db.foods) do
 		local name, _, quality, _, level, _, _, _, _, icon = C_Item.GetItemInfo(id)
 		local kind, known = Type(id), me.ids[id] or false
+		-- (what Cooking makes for the camp, the campfires and the like, is listed on the Campsite tab, not here)
+		local camp = DT.Craft and DT.Craft.IsCampItem and DT.Craft.IsCampItem(id)
 		-- (a character whose Cooking window was never read, or who has no Cooking, knows none: all are missing)
-		if not (hideMissing and not known) and (q == "" or (name or ""):lower():find(q, 1, true)) then
+		-- what cooking one earns (the profession tabs' sum: Modules/Craft.lua), and whether it passes the boxes ticked
+		local C = DT.Craft
+		local profit = C and C.Profit and C.Profit(C.ByItem(id)) or nil
+		if not camp and (not C or C.Passes(filter, known, profit, C.Have(profit))) and (q == "" or (name or ""):lower():find(q, 1, true)) then
 			counts[kind] = (counts[kind] or 0) + 1
 			if not picked or picked == kind then
 				local color = quality and ITEM_QUALITY_COLORS and ITEM_QUALITY_COLORS[quality] and ITEM_QUALITY_COLORS[quality].hex or "|cffffffff"
@@ -291,14 +337,15 @@ local function Rebuild()
 				-- where to get the recipe: a vendor, a mob, a quest; a recipe without an item is taught by a trainer
 				local src = scroll and Food.Source(scroll) or nil
 				local where = scroll and WhereText(scroll, src) or b and "|cff888888Cooking trainer|r" or ""
-				list[#list + 1] = { id = id, name = name or ("item " .. id), level = level or 0, cooks = cooks, scroll = scroll, scrollName = sName, src = src,
+				list[#list + 1] = { id = id, name = name or ("item " .. id), level = level or 0, cooks = cooks, scroll = scroll, scrollName = sName, src = src, profit = profit,
 					(icon and ("|T%s:14|t "):format(icon) or "") .. color .. (name or ("item " .. id)) .. "|r",
 					level and level > 1 and tostring(level) or "", band and ("  " .. band) or "", kind,
 					not me.t and "|cff888888?|r" or known and "|cff40ff40known|r" or "|cffff4040missing|r",
-					cooks[1] and table.concat(cooks, ", ") or "|cff888888nobody known|r", recipe, where,
+					cooks[1] and table.concat(cooks, ", ") or "|cff888888nobody known|r", recipe, where, profit and C.ProfitText(profit) or "", profit and C.ProfitText(profit, true) or "",
 					-- what each column sorts by ("who can cook it": by how many can; "where": by kind, then name)
 					sort = { name or ("item " .. id), level or 0, skill or 0, kind, not me.t and 1 or known and 2 or 0, #cooks, scroll and (sName or "") or b and "~" or "~~",
-						src and (src.kind .. " " .. (src.name or "")) or b and not scroll and "trainer" or "~~" } }
+						src and (src.kind .. " " .. (src.name or "")) or b and not scroll and "trainer" or "~~",
+						profit and profit.profit or -math.huge, profit and profit.vendorProfit or -math.huge } }
 			end
 		end
 	end
@@ -347,41 +394,11 @@ local function MakeRow(i)
 		row.fcols[c] = fs
 		x = x + math.max(0, col[2])
 	end
+	row.where = Food.WhereFrame(row, WHERE_W, PROFIT_W + VENDOR_W)
 	-- over the Recipe column: the recipe's own tooltip and link, not the food's
-	-- over "Where to get it": every source on hover; a click sets a waypoint to the vendor or mob (a quest:
-	-- its chain); Shift-click opens the recipe on the Items tab
-	row.where = CreateFrame("Frame", nil, row)
-	row.where:SetPoint("TOPRIGHT", 0, 0)
-	row.where:SetPoint("BOTTOMRIGHT", 0, 0)
-	row.where:SetWidth(WHERE_W)
-	row.where:EnableMouse(true)
-	row.where:SetScript("OnEnter", function(self)
-		local d = row.data
-		if not (d and d.src) then return end
-		GameTooltip:SetOwner(self, "ANCHOR_LEFT")
-		GameTooltip:AddLine(d.scrollName or "Recipe")
-		for _, line in ipairs(d.src.lines) do
-			if line.head then GameTooltip:AddLine(line.head, 1, 0.82, 0) else GameTooltip:AddLine("  " .. line.text, 1, 1, 1) end
-		end
-		GameTooltip:AddLine(d.src.quest and "Click: the quest's chain." or "Click: a waypoint to " .. (d.src.name or "it") .. ".", 0.5, 0.8, 1)
-		GameTooltip:AddLine("Shift-click: the recipe on the Items tab.", 0.5, 0.8, 1)
-		GameTooltip:Show()
-	end)
-	row.where:SetScript("OnLeave", function() GameTooltip:Hide() end)
-	row.where:SetScript("OnMouseUp", function()
-		local d = row.data
-		if not (d and d.src) then return end
-		if IsShiftKeyDown and IsShiftKeyDown() then return Food.OpenItem(d.scroll, d.scrollName) end
-		if d.src.quest then
-			local quest = DT.Quest and DT.Quest.Entry and DT.Quest.Entry(d.src.quest)
-			if quest then DT.Quest.ShowChain(quest) else DT:Print("Open World, Quests once, then click again: the quests are not read yet.") end
-		elseif d.src.npc then
-			DT.Npc.Waypoint({ id = d.src.npc, name = d.src.name, zone = 0 })
-		end
-	end)
 	row.over = CreateFrame("Frame", nil, row)
-	row.over:SetPoint("TOPRIGHT", -WHERE_W, 0)
-	row.over:SetPoint("BOTTOMRIGHT", -WHERE_W, 0)
+	row.over:SetPoint("TOPRIGHT", -WHERE_W - PROFIT_W - VENDOR_W, 0)
+	row.over:SetPoint("BOTTOMRIGHT", -WHERE_W - PROFIT_W - VENDOR_W, 0)
 	row.over:SetWidth(RECIPE_W)
 	row.over:EnableMouse(true)
 	row.over:SetScript("OnEnter", function(self)
@@ -405,6 +422,7 @@ local function MakeRow(i)
 		GameTooltip:SetHyperlink("item:" .. d.id)
 		GameTooltip:AddLine(" ")
 		GameTooltip:AddLine(d.cooks[1] and ("Can cook it: " .. table.concat(d.cooks, ", ")) or "Nobody known who can cook it.", 1, 1, 1, true)
+		if d.profit and DT.Craft then DT.Craft.ProfitTip(GameTooltip, d.profit) end
 		GameTooltip:AddLine("Click: a link to read up on it.", 0.6, 0.6, 0.6)
 		GameTooltip:Show()
 	end)
@@ -479,10 +497,9 @@ local function Refresh()
 	for c, h in ipairs(heads) do
 		h.text:SetText("|cffffd100" .. COLS[c][1] .. (sortBy.col == c and (sortBy.desc and " v" or " ^") or "") .. "|r")
 	end
-	missingButton:SetText(hideMissing and "Show missing" or "Hide missing")
 	local me = Me()
 	countText:SetText(not next(Food.db.foods) and "|cff888888Open your Cooking window once: the food list is read from it.|r"
-		or not me.t and (hideMissing and "|cff888888Nothing known on this character: it has no Cooking, or its Cooking window was never opened.|r"
+		or not me.t and (filter.known and "|cff888888Nothing known on this character: it has no Cooking, or its Cooking window was never opened.|r"
 			or ("%d foods  |cff888888Open the Cooking window on this character to see what it lacks.|r"):format(#list))
 		or ("%d foods, %d of them known to this character"):format(#list, Count(me.ids)))
 end
@@ -510,23 +527,17 @@ local function Build(parent)
 		self:SetText("")
 		self:ClearFocus()
 	end)
-	-- recipes this character lacks: listed, or left out
-	missingButton = CreateFrame("Button", nil, panel, "UIPanelButtonTemplate")
-	missingButton:SetSize(110, 22)
-	missingButton:SetPoint("TOPRIGHT", -2, -2)
-	missingButton:SetScript("OnClick", function()
-		hideMissing, offset = not hideMissing, 0
-		Refresh()
-	end)
-	missingButton:SetScript("OnEnter", function(self)
-		GameTooltip:SetOwner(self, "ANCHOR_TOP")
-		GameTooltip:AddLine("Lists, or leaves out, the food this character has no recipe for.", 1, 1, 1, true)
-		GameTooltip:Show()
-	end)
-	missingButton:SetScript("OnLeave", function() GameTooltip:Hide() end)
+	-- what to list: known, missing, profitable, what I have the materials for (the same boxes as the profession tabs)
+	local last = search
+	if DT.Craft and DT.Craft.Ticks then
+		Food.ticks, last = DT.Craft.Ticks(panel, search, filter, function()
+			offset = 0
+			Refresh()
+		end)
+	end
 	countText = panel:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-	countText:SetPoint("LEFT", search, "RIGHT", 12, 0)
-	countText:SetPoint("RIGHT", missingButton, "LEFT", -8, 0)
+	countText:SetPoint("LEFT", last, "RIGHT", 12, 0)
+	countText:SetPoint("RIGHT", panel, "RIGHT", -8, 0)
 	countText:SetJustifyH("LEFT")
 	countText:SetWordWrap(false)
 
@@ -545,7 +556,7 @@ local function Build(parent)
 				sortBy.desc = not sortBy.desc
 			else
 				-- (names and levels from the start; "this character" and "who can cook it" from the most)
-				sortBy.col, sortBy.desc = c, c == 5 or c == 6
+				sortBy.col, sortBy.desc = c, c == 5 or c == 6 or c == 9 or c == 10
 			end
 			Refresh()
 		end)
@@ -591,14 +602,14 @@ end
 ---------------------------------------------------------------------------
 
 DT:RegisterModule("food", {
-	title = "Food",
+	title = "Cooking",
 	version = 1,
 	slash = "/dtfood",
 	settings = {
-		{ key = "share", label = "Tell the guild which food my characters can cook (and see theirs)" },
+		{ key = "share", label = "Tell the guild which recipes my characters know: cooking and the other professions (and see theirs)" },
 	},
 	tab = {
-		id = "food", title = "Food", defaultOrder = 50, under = "craft", create = Build,
+		id = "food", title = "Cooking", defaultOrder = 50, under = "craft", create = Build,
 		onShow = function()
 			Refresh()
 			-- asked once, the first time the tab is looked at
@@ -619,13 +630,15 @@ DT:RegisterModule("food", {
 		me.name = (first or "?") .. (surname and surname ~= "" and (" " .. surname) or "")
 
 		StaticPopupDialogs.DAWNTOOLS_FOOD_SHARE = {
-			text = "DawnTools Food: tell the guild which food your characters can cook?\n\n"
-				.. "Sent to guild members who use DawnTools: each character's name and the food it has recipes for. "
+			text = "DawnTools Cooking and professions: tell the guild which recipes your characters know?\n\n"
+				.. "Sent to guild members who use DawnTools: each character's name and the recipes it knows, of cooking and of its other professions. "
 				.. "In return you see who can cook what.\n\nNothing else is sent, and you can switch it off at any time: /dt settings.",
 			button1 = "Share", button2 = "Not now",
 			OnAccept = function()
 				db.settings.share = true
-				Send()
+				-- (said as a change of the setting: the food goes out below, and the profession tabs,
+				-- which go by this switch too, send theirs)
+				DT:Fire("DT_SETTINGS", "food", "share")
 			end,
 			-- (only a real no: a popup pushed aside by another one asks again next time)
 			OnCancel = function(_, _, reason)

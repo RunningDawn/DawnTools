@@ -63,6 +63,27 @@ lines[#lines + 1] = "-- Source: the same addon's Data/Vendor.lua (which items: L
 lines[#lines + 1] = "DT.VendorPrice = {"
 for _, item in ipairs(sold) do lines[#lines + 1] = ("\\t[%d] = %d,"):format(item, ns.VendorPrices[item]) end
 lines[#lines + 1] = "}"
+-- every recipe, with what it takes and what it makes
+local spells = {}
+for spell in pairs(ns.RecipeData) do
+	if ns.Thresholds[spell] then spells[#spells + 1] = spell end
+end
+table.sort(spells)
+lines[#lines + 1] = ""
+lines[#lines + 1] = "-- Every recipe: [recipe spell] = { profession (skill line), learned at, yellow, green, grey, scroll, item made (0: none,"
+lines[#lines + 1] = "-- an enchantment), how many it makes (the mean), { reagent, count, reagent, count, ... } }. Same source."
+lines[#lines + 1] = "DT.Recipes = {"
+for _, spell in ipairs(spells) do
+	local r, t = ns.RecipeData[spell], ns.Thresholds[spell]
+	local learn = ns.TrainerFees[spell] and ns.TrainerFees[spell][2] or t[1]
+	if learn == 1 and t[2] > 45 then learn = 0 end
+	local made = type(r.output) == "table" and r.output or nil
+	local mats = {}
+	for _, m in ipairs(r.reagents or {}) do mats[#mats + 1] = ("%d, %d"):format(m.itemID, m.quantity) end
+	lines[#lines + 1] = ("\\t[%d] = { %d, %d, %d, %d, %d, %d, %d, %s, { %s } },"):format(spell, r.skillLine, learn, t[2], t[3], t[4],
+		ns.RecipeScrolls[spell] and ns.RecipeScrolls[spell][1] or 0, made and made.itemID or 0, ("%g"):format(made and made.quantity or 1), table.concat(mats, ", "))
+end
+lines[#lines + 1] = "}"
 return table.concat(lines, "\\n") .. "\\n", #ids, unknown
 `;
 

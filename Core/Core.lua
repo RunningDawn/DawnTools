@@ -4,7 +4,7 @@
 local ADDON, DT = ...
 _G.DawnTools = DT
 
-DT.VERSION = "0.32.0" -- keep in step with the .toc
+DT.VERSION = "0.36.1" -- keep in step with the .toc
 DT.LOGO = "Interface\\AddOns\\DawnTools\\logo"
 
 local DEFAULTS = {
@@ -335,7 +335,7 @@ local function Slash(input)
 	else
 		local tabs = {}
 		for _, mod in DT:Enabled() do
-			if mod.tab then tabs[#tabs + 1] = mod.tab.id end
+			for _, tab in ipairs(mod.tabs or { mod.tab }) do tabs[#tabs + 1] = tab.id end
 		end
 		tabs[#tabs + 1] = "settings"
 		DT:Print("/dt (window) | /dt %s | /dt debug <%s> | /dt probe | /dt sync (guild messages: what goes out and comes in) | /dt selftest | /dt reset (window size and place)",

@@ -6,6 +6,33 @@
 local _, DT = ...
 
 DT.CHANGELOG = {
+	{ "0.36.1", "2026-11-16", {
+		"Craft: Mining and Campsite stand on the first row, after First Aid; the crafting professions have the second row.",
+	} },
+	{ "0.36.0", "2026-11-16", {
+		"Craft: a Campsite tab with everything the professions make for the camp (tent, chair, campfires, workbenches), each with its profession. They are no longer in the professions' own tabs.",
+		"Craft: the crafting professions have a row of their own, under Fishing, Cooking and First Aid.",
+	} },
+	{ "0.35.0", "2026-11-16", {
+		"Craft: the gathering professions stand apart at the end: Mining, and new tabs for what Herbalism, Skinning and Fishing make.",
+		"Quests: right-click a quest to mark it done (or not done) by hand, for one the game does not remember, such as a quest that can be repeated.",
+	} },
+	{ "0.34.0", "2026-11-16", {
+		"Craft tabs: tick boxes beside the search box: Known, Missing, Profitable, Have mats.",
+		"Craft tabs: two profit columns, Profit (AH) and Profit (vendor): made and sold on the auction house, or to a vendor.",
+	} },
+	{ "0.33.1", "2026-11-16", {
+		"Quests: a repeatable quest you have done once counts as done (\"done once (can be repeated)\") and is hidden with the done ones.",
+	} },
+	{ "0.33.0", "2026-11-16", {
+		"Craft: a tab for each profession: First Aid, Alchemy, Blacksmithing, Enchanting, Engineering, Leatherworking, Mining, Tailoring. Every recipe with its skill, what its materials cost, what it earns, who can make it and where the recipe comes from.",
+		"Craft: Fish is now Fishing, Food is now Cooking. Cooking has a Profit column too.",
+		"Sharing which recipes you know now covers all professions, under Cooking's switch.",
+		"Cooking: the Level header is no longer cut off.",
+	} },
+	{ "0.32.1", "2026-11-16", {
+		"Quests: a quest that no NPC gives now says where it begins: an object in the world, an item, or (where nothing is known) whom it is handed in to. A click takes you there.",
+	} },
 	{ "0.32.0", "2026-11-16", {
 		"Food: a \"Where to get it\" column for the recipe: the vendor (with the price where known), the mob that drops it, or the quest. Click it for a waypoint; Shift-click for all its sources.",
 	} },

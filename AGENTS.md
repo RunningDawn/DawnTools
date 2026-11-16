@@ -13,7 +13,7 @@ DawnTools.toc   load order; version
 Core/           Logic (pure functions), Core (events, slash commands, minimap button, DT.VERSION),
                 Comms (guild messages), UI (window, tabs, settings), Profiles, Changelog, Home
 Market/         Capture (reading the auction house), Sync (guild sharing), UI
-Modules/        Inventory, Fish, Food, Npc, Quest, Item, Zone, Combat: one file, one tab
+Modules/        Inventory, Fish, Food, Npc, Quest, Item, Zone, Combat: one file, one tab; Craft: a tab for each profession
 Tools/          Tools (the tab), Range, Mp5, Tracker: small tools as sub-tabs
 Libs/           third-party libraries, unchanged
 tests/          run.js starts fengari; run.lua is a fake client plus every check
@@ -47,7 +47,7 @@ Patch for fixes, minor for features. Changelog lines are short and say only what
 ## Principles that must hold
 
 - **Opt-in and visible.** Nothing goes to the guild before the player agrees in a popup. Sharing off means nothing sent *and* nothing merged. An imported profile never switches sharing on.
-- **Only four kinds of shared data:** Market observations (item, price, quantity, time, observer name), vendor prices (item, price, vendor's name, place; under Market's sharing switch), Food (character name, food item IDs) and quest rewards (quest, money, experience, items, the level it was seen at; no name). A fifth kind is a decision for the owner and goes in the spec first.
+- **Only four kinds of shared data:** Market observations (item, price, quantity, time, observer name), vendor prices (item, price, vendor's name, place; under Market's sharing switch), recipes known (character name, and the food item IDs and profession recipe IDs it knows; one switch, Cooking's) and quest rewards (quest, money, experience, items, the level it was seen at; no name). A fifth kind is a decision for the owner and goes in the spec first.
 - **Everything else is local:** inventory, combat records, Auctionator's imported prices, anything about other players.
 - **No automation of trade.** No buying, bidding, posting, cancelling. A scan starts from a click only; a full scan (`ReplicateItems`) at most once per 15 minutes.
 - **Libraries** in `Libs/` stay unchanged and keep their licence files.

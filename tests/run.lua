@@ -140,7 +140,7 @@ local LibDeflate = {
 		return (text:gsub("..", function(h) return string.char(tonumber(h, 16)) end))
 	end,
 }
-local FILES = { "Core/Logic.lua", "Core/Core.lua", "Core/Comms.lua", "Core/UI.lua", "Core/Builtins.lua", "Core/Profiles.lua", "Market/Capture.lua", "Market/Sync.lua", "Market/UI.lua", "Data/QuestRewards.lua", "Data/CraftSkill.lua", "Modules/Inventory.lua", "Modules/Fish.lua", "Modules/Food.lua", "Modules/Npc.lua", "Modules/Quest.lua", "Modules/Item.lua", "Modules/Zone.lua", "Modules/Combat.lua", "Tools/Tools.lua", "Tools/Range.lua", "Tools/Mp5.lua", "Tools/Tracker.lua", "Tools/Enemies.lua", "Tools/Carrot.lua", "Core/Changelog.lua", "Core/Home.lua" }
+local FILES = { "Core/Logic.lua", "Core/Core.lua", "Core/Comms.lua", "Core/UI.lua", "Core/Builtins.lua", "Core/Profiles.lua", "Market/Capture.lua", "Market/Sync.lua", "Market/UI.lua", "Data/QuestRewards.lua", "Data/CraftSkill.lua", "Modules/Inventory.lua", "Modules/Fish.lua", "Modules/Food.lua", "Modules/Craft.lua", "Modules/Npc.lua", "Modules/Quest.lua", "Modules/Item.lua", "Modules/Zone.lua", "Modules/Combat.lua", "Tools/Tools.lua", "Tools/Range.lua", "Tools/Mp5.lua", "Tools/Tracker.lua", "Tools/Enemies.lua", "Tools/Carrot.lua", "Core/Changelog.lua", "Core/Home.lua" }
 
 local function after(delay, fn, owner) timers[#timers + 1] = { at = now + delay, fn = fn, owner = owner } end
 local function Now() return BASE + math.floor(now) end
@@ -819,7 +819,7 @@ do
 	eq(table.concat(guide, " "), "demo early inventory craft world combat tools settings", "where things are: the tabs on the bar, in order (hidden ones left out)")
 	local craftLine
 	for _, b in ipairs(Home.guide) do if b.tab == "craft" then craftLine = b end end
-	check(craftLine.label.text:find("(Fish, Food)", 1, true), "a place names what is under it: " .. craftLine.label.text)
+	check(craftLine.label.text:find("(Fishing, Cooking, First Aid, Mining, Campsite, Alchemy, Blacksmithing, Enchanting, Engineering, Leatherworking, Tailoring)", 1, true), "a place names what is under it: " .. craftLine.label.text)
 	craftLine.scripts.OnClick(craftLine)
 	eq(C.DT.db.lastTab, "craft", "a click on a line opens that tab")
 	C.slash("")
@@ -898,6 +898,7 @@ end
 leave(C)
 local off = C.env.DawnToolsDB.modules
 off.market, off.inventory, off.fish, off.food, off.combat, off.npc, off.quest, off.tools, off.range, off.mp5, off.tracker, off.home, off.item, off.zone = false, false, false, false, false, false, false, false, false, false, false, false, false, false
+off.crafts = false
 local D = NewClient("Carol", { db = C.env.DawnToolsDB })
 eq(ids(D.DT.UI:TabList(true)), "", "no tab for a module switched off")
 D.fire("COMMODITY_SEARCH_RESULTS_UPDATED", 100)
@@ -1706,6 +1707,168 @@ end)()
 	eq(Q2.DT.Quest.db.seen[777], nil, "a level that cannot be is not taken"); eq(Q2.DT.Quest.db.seen[778] and #Q2.DT.Quest.db.seen[778].r, 2, "(a good line of the same message is)")
 	leave(Q1); leave(Q2)
 end)()
+;(function() -- the profession tabs: every recipe from the shipped list, what it costs and earns, who knows it
+	local P1, P2 = NewClient("Pat"), NewClient("Rex")
+	local Craft = P1.DT.Craft
+	local function price(c, id, copper) c.items()[id] = copper and { p = copper, q = 1, t = Now(), o = "", d = {} } or nil end
+	local function crafts(kind, from)
+		local n = 0
+		for _, m in ipairs(sent) do
+			if m.text:find("^crafts\t" .. kind .. "\t") and (not from or m.from == from) then n = n + 1 end
+		end
+		return n
+	end
+	-- the shipped list
+	local r = P1.DT.Recipes[7934] -- Anti-Venom: First Aid, three made from one Large Venom Sac
+	eq(r[1], 129, "a recipe's profession"); eq(r[7], 6452, "what it makes"); eq(r[8], 3, "how many"); eq(r[9][1], 1475, "of what"); eq(r[9][2], 1, "and how much of it")
+	eq(P1.DT.Recipes[7418][7], 0, "an enchantment makes no item")
+	eq(Craft.ByItem(6452), 7934, "the recipe that makes an item is found")
+	-- what it costs and earns
+	local p = Craft.Profit(7934)
+	eq(p.profit, nil, "no prices known: no profit said"); eq(p.missing[1], 1475, "and what has no price is named"); check(Craft.ProfitText(p):find("?", 1, true), "shown as a question mark")
+	check(Craft.MatsText(p):find("+?", 1, true), "the materials too: " .. Craft.MatsText(p))
+	price(P1, 1475, 100)
+	p = Craft.Profit(7934)
+	eq(p.mats, 100, "the materials at the auction price"); eq(p.profit, nil, "what is made has no price yet: still no profit")
+	price(P1, 6452, 60)
+	p = Craft.Profit(7934)
+	eq(p.sells, 171, "what is made: three of them, less the house's 5%"); eq(p.profit, 71, "less the materials: the profit")
+	check(Craft.ProfitText(p):find("|cff40ff40+", 1, true), "in green"); eq(Craft.MatsText(p), P1.DT.Money(100), "the materials as money")
+	price(P1, 1475, 400)
+	check(Craft.ProfitText(Craft.Profit(7934)):find("|cffff4040-", 1, true), "a loss in red")
+	P1.M.db.vendors[1475] = { p = 30, v = "Sam", z = "Here", t = 1 }
+	local each, from = Craft.Cost(1475)
+	eq(each, 30, "a material a vendor sells cheaper is counted at the vendor's price"); eq(from, "vendor", "and said so")
+	eq(Craft.Profit(7934).profit, 141, "which the profit goes by")
+	eq(select(2, Craft.Cost(2678)), "vendor", "the shipped vendor prices count too (Mild Spices)")
+	local enchant = Craft.Profit(7418)
+	eq(enchant.made, nil, "an enchantment: nothing made"); eq(enchant.profit, nil, "no profit"); check(Craft.ProfitText(enchant):find("-|r", 1, true), "a dash, not a question")
+	eq(Craft.Profit(999999999), nil, "no such recipe: nothing")
+	local tip = P1.env.GameTooltip
+	local was = tip.lines
+	tip.lines = {}
+	Craft.ProfitTip(tip, Craft.Profit(7934))
+	local text = table.concat(tip.lines, "|")
+	check(text:find("1x", 1, true) and text:find("(vendor)", 1, true) and text:find("Sells for (3 made", 1, true) and text:find("Profit", 1, true), "the sum, line by line, for a tooltip: " .. text)
+	tip.lines = was
+	-- the tab: every recipe, without any profession window opened
+	P1.DT.UI:Show("craft129")
+	local view = Craft.views[129]
+	check(#view.list >= 20, "First Aid lists its recipes from the shipped list: " .. #view.list)
+	local row
+	for _, d in ipairs(view.list) do if d.spell == 7934 then row = d end end
+	check(row and row[3] == P1.DT.Money(30) and row[4]:find("+", 1, true), "a row has its materials and its profit: " .. tostring(row and row[4]))
+	check(row[2]:find("|cffffff0080|r", 1, true), "its skill band"); eq(row[6], "|cff888888?|r", "and, the profession's window never opened, a question for whether I know it")
+	check(view.countText.text:find("Open your First Aid window", 1, true), "the tab says how to find out")
+	for _, d in ipairs(view.list) do check(d.kind ~= nil and d.sort[2] ~= nil, "(every row is whole)") break end
+	-- sorted by profit: the best first
+	view.heads[4].scripts.OnClick(view.heads[4])
+	eq(view.list[1].spell, 7934, "a click on Profit: the one that earns most first")
+	view.search:SetText("anti")
+	view.Refresh()
+	check(#view.list <= 2, "the search box narrows the list")
+	view.search:SetText("")
+	-- the profession's window: what this character has learned
+	P1.env.C_TradeSkillUI = { GetAllRecipeIDs = function() return { 7934, 3275, 2538 } end, GetRecipeInfo = function(id) return { learned = id ~= 3275 } end }
+	P1.fire("TRADE_SKILL_SHOW")
+	step(2)
+	local me = Craft.db.mine[Craft.me]
+	eq(me.ids[7934], true, "a recipe learned is kept"); eq(me.ids[3275], nil, "one not learned is not"); eq(me.ids[2538], nil, "Cooking's are the Food tab's, not kept here")
+	eq(me.lines[129], true, "the profession was read")
+	view.Refresh()
+	local known, missing
+	for _, d in ipairs(view.list) do
+		if d.spell == 7934 then known = d[6] elseif d.spell == 3275 then missing = d[6] end
+	end
+	eq(known, "|cff40ff40known|r", "known on its tab"); eq(missing, "|cffff4040missing|r", "what I lack, missing")
+	P1.DT.UI:Show("craft171")
+	eq(Craft.views[171].list[1][6], "|cff888888?|r", "another profession, never opened, still asks")
+	check(Craft.views[129].list[1] and Craft.Makers(7934)[1] == "|cff40ff40You|r", "I am named among who can make it")
+	-- the boxes beside the search box: what to list
+	local function tick(key, on) view.ticks[key].checked = on; click(view.ticks[key]) end
+	tick("known", true)
+	eq(#view.list, 1, "Known: only what this character knows")
+	tick("missing", true)
+	check(#view.list > 1, "Missing: only what it lacks"); eq(view.ticks.known.checked, false, "and Known is unticked: both cannot be")
+	for _, d in ipairs(view.list) do check(not d.known, "(none of them known)") break end
+	tick("missing", false)
+	tick("profit", true)
+	eq(#view.list, 1, "Profitable: only what earns something"); eq(view.list[1].spell, 7934, "the one that does")
+	tick("profit", false)
+	tick("mats", true)
+	eq(#view.list, 0, "Have mats: nothing while the bags hold none of the materials")
+	local wasInv = P1.env.DawnInventory
+	P1.env.DawnInventory = { API = { Count = function(id) return id == 1475 and 1 or 0, 0 end } }
+	view.stale = true
+	view.Refresh()
+	eq(#view.list, 1, "with the materials in the bags: listed"); eq(view.list[1].spell, 7934, "the one I can make")
+	P1.env.DawnInventory = wasInv
+	tick("mats", false)
+	-- sold to a vendor instead of on the auction house
+	local pv = Craft.Profit(7934)
+	eq(pv.vendorSells, nil, "(what a vendor pays is the game's figure: none known for this item here)"); check(Craft.ProfitText(pv, true):find("-|r", 1, true), "a dash where a vendor pays nothing")
+	local wasInfo = P1.env.C_Item.GetItemInfo
+	P1.env.C_Item.GetItemInfo = function(id) if id == 6452 then return "Anti-Venom", "[Anti-Venom]", 1, 1, 1, "", "", 20, "", 1, 50, 0, 0 end return wasInfo(id) end
+	pv = Craft.Profit(7934)
+	eq(pv.vendorSells, 150, "what a vendor pays for all that is made"); eq(pv.vendorProfit, 120, "less the materials: the profit at a vendor")
+	check(Craft.ProfitText(pv, true):find("|cff40ff40+", 1, true), "shown in its own column's colours")
+	P1.env.C_Item.GetItemInfo = wasInfo
+	-- the Campsite: what every profession makes for the camp, together, each with its profession
+	check(Craft.IsCamp(1229432) and Craft.IsCamp(1229737) and not Craft.IsCamp(7934), "a recipe for the camp is told from the rest (the tent, the campfire; not a potion)")
+	P1.DT.UI:Show("craftcamp")
+	local camp = Craft.views.camp
+	check(#camp.list >= 30, "the Campsite lists them all: " .. #camp.list)
+	local tent, fire
+	for _, d in ipairs(camp.list) do
+		if d.spell == 1229432 then tent = d elseif d.spell == 1229737 then fire = d end
+	end
+	eq(tent[2], "Leatherworking", "each with its profession, in a column of its own"); eq(fire[2], "Cooking", "Cooking's campfire among them")
+	check(tent[3]:find("|cffffff0020|r", 1, true), "then its skill band, and the rest as on the other tabs")
+	eq(tent[7], "|cff888888?|r", "a profession never opened on this character: a question")
+	for _, d in ipairs(Craft.views[129].list) do check(not Craft.IsCamp(d.spell), "(none of them on its profession's own tab)") end
+	local firstAidCamp = false
+	for _, d in ipairs(camp.list) do firstAidCamp = firstAidCamp or (d.spell == 1230117 and d[7] ~= "|cff888888?|r") end
+	eq(firstAidCamp, true, "one of a profession whose window was read says known or missing")
+	camp.heads[2].scripts.OnClick(camp.heads[2])
+	eq(camp.list[1][2], "Alchemy", "a click on Profession sorts by it")
+	check(camp.sideButtons[2] and camp.sideButtons[2].label.text:find("Alchemy", 1, true), "and the list on the left is by profession too")
+	-- a camp recipe of Cooking is read from the Cooking window by this module
+	P1.env.C_TradeSkillUI = { GetAllRecipeIDs = function() return { 1229737, 2538 } end, GetRecipeInfo = function() return { learned = true } end }
+	P1.fire("TRADE_SKILL_SHOW")
+	step(2)
+	eq(Craft.db.mine[Craft.me].ids[1229737], true, "Cooking's campfire, learned, is kept"); eq(Craft.db.mine[Craft.me].ids[2538], nil, "its food still is not")
+	-- the guild: under Cooking's switch
+	step(60)
+	eq(crafts("KNOWN", "Pat"), 0, "Cooking's sharing not agreed to: nothing is sent"); eq(P1.DT.modules.crafts.hello(), nil, "nor said in the hello")
+	P1.env.StaticPopupDialogs.DAWNTOOLS_FOOD_SHARE.OnAccept()
+	P2.env.StaticPopupDialogs.DAWNTOOLS_FOOD_SHARE.OnAccept()
+	check(P1.env.StaticPopupDialogs.DAWNTOOLS_FOOD_SHARE.text:find("its other professions", 1, true), "the question says the other professions are part of it")
+	step(5)
+	check(crafts("KNOWN", "Pat") >= 1, "agreed to: what I know goes out")
+	P1.DT.Comms:Hello(); P2.DT.Comms:Hello()
+	step(60)
+	local got = P2.DT.Craft.db.guild["Pat Smith"]
+	check(got and got.ids[7934], "a guild member hears which recipes my character knows")
+	eq(P2.DT.Craft.Makers(7934)[1], "Pat Smith", "and names it among who can make it")
+	P2.DT.UI:Show("craft129")
+	local theirs
+	for _, d in ipairs(P2.DT.Craft.views[129].list) do if d.spell == 7934 then theirs = d[7] end end
+	eq(theirs, "Pat Smith", "on the tab too")
+	inject(P2, "Pat-Forever", (packed("KNOWN", "Pat Smith;rubbish", nil):gsub("^market", "crafts")))
+	step(1)
+	check(P2.DT.Craft.db.guild["Pat Smith"].ids[7934], "a list that is no list is not taken")
+	-- Data Sync
+	local bars = P2.DT.modules.crafts.progress()
+	eq(bars[1][2], 2, "the bar: the recipes somebody can make (the potion and the campfire)"); check(bars[1][3] > 2000, "of all there are: " .. bars[1][3])
+	-- Cooking has the profit too, and its Level header fits
+	P1.DT.UI:Show("food")
+	local head
+	for _, w in ipairs(P1.widgets) do
+		if w.kind == "Button" and w.text and type(w.text) == "table" and w.text.text and w.text.text:find("Profit", 1, true) and w.shown ~= false then head = w end
+	end
+	check(head, "Cooking has a Profit column")
+	leave(P1); leave(P2)
+end)()
 V.vendorOnly = true
 V:Refresh()
 local sellers = {}
@@ -2038,26 +2201,29 @@ check(foodText(Fay, "3 foods, 2 of them known to this character"), "with a count
 check(foodText(Fay, "Stamina (1)") and foodText(Fay, "Spirit (1)") and foodText(Fay, "Health only (1)"), "grouped by what it gives, the first thing named")
 eq(foodRows(Fay)[1][5], "|cff40ff40known|r", "a recipe I have"); eq(foodRows(Fay)[3][5], "|cffff4040missing|r", "one I lack")
 eq(foodRows(Fay)[1][6], "|cff40ff40You|r", "I can cook it"); eq(foodRows(Fay)[3][6], "|cff888888nobody known|r", "nobody can cook the other")
-for _, w in ipairs(Fay.widgets) do
-	if w.kind == "Button" and w.text == "Hide missing" then w.scripts.OnClick(w) end
-end
-eq(#foodRows(Fay), 2, "missing recipes can be left out"); check(foodText(Fay, "All food (2)"), "from the counts too")
-for _, w in ipairs(Fay.widgets) do
-	if w.kind == "Button" and w.text == "Show missing" then w.scripts.OnClick(w) end
-end
+FF.ticks.known.checked = true
+click(FF.ticks.known)
+eq(#foodRows(Fay), 2, "Known ticked: missing recipes are left out"); check(foodText(Fay, "All food (2)"), "from the counts too")
+FF.ticks.missing.checked = true
+click(FF.ticks.missing)
+eq(#foodRows(Fay), 1, "Missing ticked: only what I lack"); eq(FF.ticks.known.checked, false, "which unticks Known: both cannot be")
+FF.ticks.missing.checked = false
+click(FF.ticks.missing)
+FF.ticks.known.checked = true
+click(FF.ticks.known)
+FF.ticks.known.checked = false
+click(FF.ticks.known)
 -- a character without Cooking (its window was never read) knows nothing: hiding the missing hides all
 local fay = FF.db.mine["Player-Fay"]
 local hadIds, hadT = fay.ids, fay.t
 fay.ids, fay.t = {}, nil
 FF.Refresh()
 eq(#foodRows(Fay), 3, "a character without Cooking: everything listed")
-for _, w in ipairs(Fay.widgets) do
-	if w.kind == "Button" and w.text == "Hide missing" then w.scripts.OnClick(w) end
-end
+FF.ticks.known.checked = true
+click(FF.ticks.known)
 eq(#foodRows(Fay), 0, "and all of it hidden with the missing"); check(foodText(Fay, "Nothing known on this character"), "with a word why")
-for _, w in ipairs(Fay.widgets) do
-	if w.kind == "Button" and w.text == "Show missing" then w.scripts.OnClick(w) end
-end
+FF.ticks.known.checked = false
+click(FF.ticks.known)
 fay.ids, fay.t = hadIds, hadT
 FF.Refresh()
 for _, w in ipairs(Fay.widgets) do
@@ -2679,6 +2845,47 @@ do
 		click(Quest.ticks.onlyLog)
 		check(q("Daily Bread"), "unticked: everything again")
 	end)()
+	;(function() -- a quest that can be repeated: done once is done, and says it can be done again
+		local run
+		for _, r in ipairs(Quest.Find("", {})) do if r.e.name == "Deadmines Run" then run = r.e end end
+		run.types.Repeatable = true
+		eq(Quest.Status(run) ~= "done", true, "(not done to begin with)")
+		B2.fire("QUEST_TURNED_IN", run.id, 100, 0)
+		step(1)
+		local status, why = Quest.Status(run)
+		eq(status, "done", "handed in once while the addon looked: done, though the game keeps no such quest among the completed")
+		eq(why, "done once (can be repeated)", "and it says it can be done again")
+		local listed = false
+		for _, r in ipairs(Quest.Find("", { hideDone = true })) do listed = listed or r.e == run end
+		eq(listed, false, "hidden with the done ones")
+		local guid = B2.env.UnitGUID("player")
+		eq(Quest.db.turned[guid][run.id], true, "kept for this character")
+		Quest.db.turned[guid][run.id] = nil
+		B2.fire("QUEST_ACCEPTED")
+		step(1)
+		qdone[run.id] = true
+		B2.fire("QUEST_ACCEPTED")
+		step(1)
+		eq(select(2, Quest.Status(run)), "done once (can be repeated)", "the same where the game itself says it was done")
+		run.types.Daily = true
+		eq(Quest.Status(run) ~= "done", true, "a daily is never done for good")
+		run.types.Daily, run.types.Repeatable, qdone[run.id] = nil, nil, nil
+		B2.fire("QUEST_ACCEPTED")
+		step(1)
+	end)()
+	;(function() -- a quest the game does not remember: marked as done by hand, with a right-click
+		local run
+		for _, r in ipairs(Quest.Find("", {})) do if r.e.name == "Deadmines Run" then run = r.e end end
+		eq(Quest.Mark(run), true, "marked: done"); eq(Quest.Status(run), "done", "and it counts as done")
+		eq(Quest.Mark(run), false, "marked again: not done after all"); eq(Quest.Status(run) ~= "done", true, "and it does not")
+		qdone[run.id] = true
+		B2.fire("QUEST_ACCEPTED")
+		step(1)
+		eq(Quest.Mark(run), nil, "one the game itself says is done is left as it is"); eq(Quest.Status(run), "done", "done")
+		qdone[run.id] = nil
+		B2.fire("QUEST_ACCEPTED")
+		step(1)
+	end)()
 	;(function() -- quests that shut each other out: one done is all of them done
 		local run
 		for _, r in ipairs(Quest.Find("", {})) do if r.e.name == "Deadmines Run" then run = r.e end end
@@ -2797,6 +3004,37 @@ do
 	click(chain.rows[4])
 	check(B2.printed[#B2.printed]:find("Side Catch: started by no NPC", 1, true) and #B2.printed > printed, "one that nobody gives says so")
 	eq(B2.DT.modules.quest.hello(), nil, "the module has nothing to say to the guild while sharing was not agreed to")
+	;(function() -- a quest no NPC gives: an object, an item, or (nothing known) whom it is handed in to
+		local lib = B2.env.LibQuestieDB
+		local wasObject, wasItemGet, wasQuestGet, wasPin, wasInfo = lib.Object, lib.Item and lib.Item.Get, lib.Quest.Get, B2.DT.Npc.Pin, B2.DT.Item.ShowInfo
+		lib.Object = { Get = function(id, key) return id == 77 and ({ name = "Wanted Poster", spawns = { [17] = { { 40.5, 60.1 } } } })[key] or nil end }
+		lib.Item = lib.Item or {}
+		lib.Item.Get = function(id, key) if id == 88 and key == "name" then return "Strange Letter" end return wasItemGet and wasItemGet(id, key) end
+		lib.Quest.Get = function(id, key)
+			if id == 9903 and key == "sourceItemId" then return 88 end
+			if id == 9904 and key == "finishedBy" then return { { 10 } } end
+			if id >= 9900 then return nil end
+			return wasQuestGet(id, key)
+		end
+		local function quest(id, starts) return { id = id, name = "Q" .. id, level = 10, min = 1, zone = 17, zoneName = "The Barrens", starts = starts or {}, types = {}, typeText = "" } end
+		local o = Quest.Origin(quest(9901, { nil, { 77 } }))
+		eq(o.kind, "object", "a quest an object gives: an object"); eq(o.text, "object: Wanted Poster", "by its name")
+		local pinned
+		B2.DT.Npc.Pin = function(area, x, y, title) pinned = { area, x, y, title } end
+		Quest.Waypoint(quest(9901, { nil, { 77 } }))
+		eq(pinned and pinned[1], 17, "its waypoint: the object's place"); eq(pinned[2], 40.5, "where it stands"); eq(pinned[4], "Wanted Poster (Q9901)", "named after both")
+		o = Quest.Origin(quest(9902, { nil, nil, { 88 } }))
+		eq(o.kind, "item", "a quest an item starts: an item"); eq(o.say, "Begins from an item: Strange Letter", "said in a sentence")
+		eq(Quest.Origin(quest(9903)).text, "item: Strange Letter", "no beginning listed, but an item it starts with: that item")
+		local shown
+		B2.DT.Item.ShowInfo = function(e) shown = e end
+		Quest.Waypoint(quest(9902, { nil, nil, { 88 } }))
+		eq(shown and shown.id, 88, "its click: the window of where that item comes from")
+		o = Quest.Origin(quest(9904))
+		eq(o.kind, "turnin", "nothing known of the beginning: whom it is handed in to"); check(o.say:find("Handed in to", 1, true), "and said so: " .. o.say)
+		eq(Quest.Origin(quest(9905)), nil, "nothing known at all: nothing")
+		lib.Object, lib.Item.Get, lib.Quest.Get, B2.DT.Npc.Pin, B2.DT.Item.ShowInfo = wasObject, wasItemGet, wasQuestGet, wasPin, wasInfo
+	end)()
 
 	-- Items: read from QuestieDB too; what only the game knows of an item is asked once and kept
 	do
@@ -4034,7 +4272,23 @@ do
 	eq(craft.subs[1].id .. " " .. craft.subs[2].id, "fish food", "Craft holds Fish and Food"); eq(world.subs[1].id .. " " .. world.subs[2].id, "npc quest", "World holds NPC and Quests")
 	A.slash("food")
 	eq(A.DT.db.lastTab, "craft", "/dt food opens Craft"); eq(craft.current, "food", "on the Food sub-tab")
-	eq(craft.buttons[1].text, "Fish", "with a row of its sub-tabs"); eq(craft.buttons[2].text, "Food", "both")
+	eq(craft.buttons[1].text, "Fishing", "with a row of its sub-tabs"); eq(craft.buttons[2].text, "Cooking", "both")
+	;(function() -- the professions: First Aid beside them, the rest behind a line
+		local titles = {}
+		for i, b in ipairs(craft.buttons) do titles[i] = b.text end
+		eq(table.concat(titles, ", "), "Fishing, Cooking, First Aid, Mining, Campsite, Alchemy, Blacksmithing, Enchanting, Engineering, Leatherworking, Tailoring", "then First Aid, Mining and the Campsite, and the crafting professions, in order")
+		eq(craft.buttons[3].row, 0, "First Aid stands with Fishing and Cooking, on the first row"); eq(craft.buttons[3].gap, 0, "with no line before it")
+		eq(craft.buttons[4].row, 0, "Mining on the first row too"); eq(craft.buttons[4].gap, 1, "behind a line"); check(craft.lines[1].shown, "which is drawn")
+		eq(craft.buttons[5].row, 0, "and the Campsite"); eq(craft.buttons[5].gap, 2, "behind another")
+		eq(craft.buttons[6].row, 1, "the crafting professions begin a row of their own"); eq(craft.buttons[6].x, 2, "at its left edge"); eq(craft.buttons[11].row, 1, "Tailoring on it too")
+		check(craft.buttons[7].x > craft.buttons[6].x, "each button after the last")
+		local was = craft.panel.w
+		craft.panel.w = 2000
+		craft.panel.scripts.OnSizeChanged(craft.panel)
+		eq(craft.buttons[6].row, 1, "however wide the window: still their own row"); eq(craft.buttons[11].row, 1, "and all of them on it"); eq(craft.buttons[5].row, 0, "the first row as it was")
+		craft.panel.w = was
+		craft.panel.scripts.OnSizeChanged(craft.panel)
+	end)()
 	click(craft.buttons[1])
 	eq(craft.current, "fish", "a click on a sub-tab shows it"); eq(craft.panels.food.shown, false, "and hides the other"); eq(craft.panels.fish.shown, true, "its own panel")
 	A.slash("market")
@@ -4282,7 +4536,7 @@ do
 	Pia.slash("settings")
 	local titles = {}
 	for i, b in ipairs(UI.sectionButtons) do titles[i] = (b.label.text:gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", "")) end
-	eq(table.concat(titles, " / "), "General / Profiles / Tabs & Modules / Built-ins / Market / Food / Quests / Data Sync", "the Settings tab lists its sections: the fixed ones, then one per module with switches, Data Sync at the bottom")
+	eq(table.concat(titles, " / "), "General / Profiles / Tabs & Modules / Built-ins / Market / Cooking / Quests / Data Sync", "the Settings tab lists its sections: the fixed ones, then one per module with switches, Data Sync at the bottom")
 	eq(db.settingsSection, "general", "General to begin with"); eq(UI.sectionPanels.general.shown, true, "its panel shown"); eq(UI.sectionPanels.profiles.shown, false, "the others not")
 	click(UI.sectionButtons[2])
 	eq(db.settingsSection, "profiles", "a click shows a section"); eq(UI.sectionPanels.profiles.shown, true, "its panel"); eq(UI.sectionPanels.general.shown, false, "the last one hidden")

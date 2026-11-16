@@ -97,7 +97,7 @@ end
 -- sub-tab there: the place is the button on the bar, with a row of its sub-tabs beneath, as the Tools tab has.
 -- A place is there while a module with a tab under it is switched on.
 local PLACES = {
-	craft = { title = "Craft", defaultOrder = 45 }, -- Fish, Food
+	craft = { title = "Craft", defaultOrder = 45 }, -- Fishing, Cooking, and a tab for each profession
 	world = { title = "World", defaultOrder = 55 }, -- NPC, Quests
 }
 local places = {} -- [id] = the tab that stands for the place: { id, title, defaultOrder, subs = { tab, ... }, place = true }
@@ -117,7 +117,9 @@ local function Place(id)
 		line:SetPoint("TOPLEFT", 0, -27)
 		line:SetPoint("TOPRIGHT", 0, -27)
 		line:SetHeight(1)
+		p.rule = line -- (moved down where the sub-tabs take more than one row)
 		p.panel = panel
+		panel:SetScript("OnSizeChanged", function() if p.current then ShowSub(p) end end) -- (a wider window: fewer rows)
 	end
 	p.onShow = function() ShowSub(p) end
 	p.onHide = function()
@@ -139,12 +141,17 @@ function ShowSub(p)
 		if not sub and s.id == last then sub = s end
 	end
 	sub = sub or p.subs[1]
+	-- A button a sub-tab, as wide as its title asks for. Where the group changes along the row (tab.group, 1 if
+	-- not given) there is a gap with a thin line in it, as between the groups of the bar above. What does not
+	-- fit the window's width goes on to a second row, and the sub-tab's own space begins below that.
+	p.lines = p.lines or {}
+	local x, lines, row = 2, 0, 0
+	local limit = p.panel.GetWidth and p.panel:GetWidth() or 0
+	if not limit or limit < 200 then limit = 900 end
 	for i = 1, math.max(#p.subs, #p.buttons) do
 		local s, b = p.subs[i], p.buttons[i]
 		if s and not b then
 			b = CreateFrame("Button", nil, p.panel, "UIPanelButtonTemplate")
-			b:SetSize(84, 22)
-			b:SetPoint("TOPLEFT", 2 + (i - 1) * 88, -2)
 			b:SetScript("OnClick", function(self)
 				p.want = self.sub
 				ShowSub(p)
@@ -154,11 +161,40 @@ function ShowSub(p)
 		if b then
 			b:SetShown(s ~= nil)
 			if s then
-				b.sub, b.id = s, s.id
+				local width = math.max(60, #s.title * 6 + 20)
+				local gap = i > 1 and (s.group or 1) ~= (p.subs[i - 1].group or 1)
+				-- (no room left on this row: the next one; a group's line is not drawn at a row's start)
+				if x > 2 and (s.row or x + (gap and 14 or 0) + width > limit) then x, row, gap = 2, row + 1, gap and "row" end -- (tab.row: it begins a row)
+				if gap then
+					lines = lines + 1
+					local line = p.lines[lines] or p.panel:CreateTexture(nil, "ARTWORK")
+					p.lines[lines] = line
+					line:SetColorTexture(1, 1, 1, 0.25)
+					line:ClearAllPoints()
+					line:SetPoint("TOPLEFT", x + 5, -4 - row * 24)
+					line:SetSize(1, 18)
+					line:SetShown(gap ~= "row")
+					if gap ~= "row" then x = x + 14 end
+				end
+				b.sub, b.id, b.x, b.gap, b.row = s, s.id, x, lines, row
+				b:ClearAllPoints()
+				b:SetSize(width, 22)
+				b:SetPoint("TOPLEFT", x, -2 - row * 24)
 				b:SetText(s.title)
+				x = x + width + 4
 				if s == sub then b:LockHighlight() else b:UnlockHighlight() end
 			end
 		end
+	end
+	for i = lines + 1, #p.lines do p.lines[i]:Hide() end
+	if p.rows ~= row then
+		p.rows = row
+		p.rule:ClearAllPoints()
+		p.rule:SetPoint("TOPLEFT", 0, -27 - row * 24)
+		p.rule:SetPoint("TOPRIGHT", 0, -27 - row * 24)
+		p.body:ClearAllPoints()
+		p.body:SetPoint("TOPLEFT", 0, -30 - row * 24)
+		p.body:SetPoint("BOTTOMRIGHT", 0, 0)
 	end
 	if not sub then return end
 	if p.current and p.current ~= sub.id and p.panels[p.current] then
@@ -189,13 +225,15 @@ function UI:TabList(all)
 	local list, listed, hidden = {}, {}, DT.db.tabs.hidden
 	for _, p in pairs(places) do p.subs = {} end
 	for _, mod in DT:Enabled() do
-		local tab = mod.tab
-		if tab and tab.under then
-			local p = Place(tab.under)
-			p.subs[#p.subs + 1] = tab
-			if not listed[p] and (all or not hidden[p.id]) then listed[p], list[#list + 1] = true, p end
-		elseif tab and (all or not hidden[tab.id]) then
-			list[#list + 1] = tab
+		-- (a module has one tab, or several: mod.tabs)
+		for _, tab in ipairs(mod.tabs or { mod.tab }) do
+			if tab.under then
+				local p = Place(tab.under)
+				p.subs[#p.subs + 1] = tab
+				if not listed[p] and (all or not hidden[p.id]) then listed[p], list[#list + 1] = true, p end
+			elseif all or not hidden[tab.id] then
+				list[#list + 1] = tab
+			end
 		end
 	end
 	for _, p in pairs(places) do
