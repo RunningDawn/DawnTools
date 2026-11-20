@@ -1,8 +1,8 @@
 -- DawnNpc
 -- Every NPC of the game, to search through and to set a waypoint to.
--- The data is not DawnTools' own: it is read, as the tab is used, from the QuestieDB addon through its public
--- API (LibQuestieDB.Npc). Nothing of it is copied or saved, and nothing here goes to the guild. Without
--- QuestieDB the tab says so and stays empty.
+-- The list is read, as the tab is used, from the QuestieDB addon through its public API where that is
+-- installed; without it from DawnTools' own game database (DT.DB.Lib: a guildmate's import of QuestieDB, come
+-- with the sync, and the NPCs the guild met itself). With neither the tab says so and stays empty.
 
 local _, DT = ...
 local N = {}
@@ -60,18 +60,15 @@ local TYPES = {
 local index = {}  -- every NPC: { id, name, nameL, sub, min, max, rank, zone, zoneName, side, types, typeText, hay, spots }
 local reading     -- the coroutine that fills it
 local ready, missing = false, false
+local fromStore, stale = false, false -- read from DawnTools' own database; which has changed since
 
 ---------------------------------------------------------------------------
--- Reading QuestieDB
+-- Reading QuestieDB (or the store, which answers the same way)
 ---------------------------------------------------------------------------
 
 local function Lib()
-	local lib = LibQuestieDB
+	local lib = DT.DB.Lib()
 	if not (lib and lib.Npc and lib.Npc.GetAllIds and lib.Npc.GetAll) then return end
-	if lib.RequireContract then
-		local ok, good = pcall(lib.RequireContract, 4)
-		if not (ok and good) then return end
-	end
 	return lib
 end
 
@@ -89,19 +86,45 @@ end
 local maps, areaMaps = {}, nil
 local function FromTable(area)
 	if areaMaps == nil then
-		local ok, t = pcall(function() return LibQuestieDB.Support.Get("ZoneDB").private.areaIdToUiMapId end)
+		local ok, t = pcall(function() return Lib().Support.Get("ZoneDB").private.areaIdToUiMapId end)
 		if ok and type(t) == "string" then ok, t = pcall(function() return (loadstring or load)(t)() end) end
 		areaMaps = ok and type(t) == "table" and t or nil -- (not there yet: asked again next time)
 	end
 	return areaMaps and areaMaps[area] or nil
 end
 
+-- A map by the name of its zone, as the game's own maps are called: for a place known by name only (an NPC
+-- written down in play), and where the table of maps is not there.
+-- ponytail: the first zone map of that name; two zones of one name are not told apart.
+local mapNames
+local function MapByName(name)
+	if not (name and name ~= "" and C_Map and C_Map.GetMapInfo and C_Map.GetMapChildrenInfo) then return nil end
+	if not mapNames then
+		local names = {}
+		local ok = pcall(function()
+			local top = C_Map.GetFallbackWorldMapID and C_Map.GetFallbackWorldMapID() or 947
+			for _ = 1, 8 do
+				local info = C_Map.GetMapInfo(top)
+				if not (info and info.parentMapID and info.parentMapID > 0) then break end
+				top = info.parentMapID
+			end
+			for _, info in ipairs(C_Map.GetMapChildrenInfo(top, nil, true) or {}) do
+				-- (a zone's own map before a cave or a floor of the same name)
+				if info.name and (not names[info.name] or (info.mapType == 3 and names[info.name].mapType ~= 3)) then names[info.name] = info end
+			end
+		end)
+		if not ok then return nil end
+		mapNames = names
+	end
+	return mapNames[name] and mapNames[name].mapID or nil
+end
+
 local function MapOf(area)
 	if maps[area] == nil then
 		local ok, map = pcall(function() return QuestieLoader:ImportModule("ZoneDB"):GetUiMapIdByAreaId(area) end)
 		if not ok then
-			map = FromTable(area)
-			if not areaMaps then return nil end -- (neither is ready yet: asked again, not held against the zone for good)
+			map = FromTable(area) or MapByName(ZoneName(area))
+			if not map and not areaMaps then return nil end -- (nothing is ready yet: asked again, not held against the zone for good)
 		end
 		map = type(map) == "number" and map > 0 and map or false
 		-- (Questie's table knows maps of other game versions too: one this game has not is no map)
@@ -133,7 +156,8 @@ local function Has(flags, bit) -- (no bit library in every Lua this runs in)
 	return bit and bit > 0 and math.floor(flags / bit) % 2 == 1
 end
 
-local function Entry(id, v, flagBits)
+-- seen: for an NPC written down in play (DT.DB.Sighting): its zone by name, and the one place it was met at
+local function Entry(id, v, flagBits, seen)
 	local e = { id = id, name = v[1], sub = v[7] or "", min = v[2] or 0, max = v[3] or 0, rank = v[4] or 0, side = v[6] or "", spots = 0 }
 	local zone = v[5]
 	for area, spots in pairs(type(v[9]) == "table" and v[9] or {}) do
@@ -144,6 +168,10 @@ local function Entry(id, v, flagBits)
 		if not zone or zone <= 0 then zone = area end
 	end
 	e.zone, e.zoneName = zone or 0, ZoneName(zone)
+	if seen then
+		e.zoneName = seen.zone or ""
+		if seen.x and seen.y then e.spots, e.pin = 1, seen end
+	end
 	local flags, title, names = v[8] or 0, e.sub:lower(), {}
 	e.types = {}
 	for _, t in ipairs(TYPES) do
@@ -163,9 +191,12 @@ local function ReadAll(lib)
 	local ids = lib.Npc.GetAllIds()
 	local flagBits = lib.Enum and lib.Enum.npcFlags or {}
 	local stop = debugprofilestop and debugprofilestop() + (N.budget or 8)
+	fromStore = lib.store == true
 	for i, id in ipairs(ids) do
 		local ok, v = pcall(lib.Npc.GetAll, id, FIELDS)
-		if ok and v and type(v[1]) == "string" then index[#index + 1] = Entry(id, v, flagBits) end
+		if ok and v and type(v[1]) == "string" and v[1] ~= "" then
+			index[#index + 1] = Entry(id, v, flagBits, fromStore and lib.Npc.Get(id, "seen") or nil)
+		end
 		N.progress = i / #ids
 		if (stop and debugprofilestop() > stop) or (not stop and i % N.BATCH == 0) then
 			coroutine.yield()
@@ -204,6 +235,16 @@ local function Fits(e, word, fuzzy)
 	if at then return e.nameL:sub(at - 1, at - 1) == " " and 90 or 80 end
 	at = e.hay:find(word, 1, true)
 	if at then return e.hay:sub(at - 1, at - 1) == " " and 70 or 60 end
+	-- Written without its apostrophes, hyphens and the like: "vehan" finds Ve'han, "zulfarrak" Zul'Farrak.
+	-- (e.bare: its words without them, worked out the first time it is needed; false where there are none)
+	if e.bare == nil then
+		local bare = e.hay:gsub("['`%-%.:,]", "")
+		e.bare = bare ~= e.hay and bare or false
+	end
+	if e.bare then
+		local plain = word:gsub("['`%-%.:,]", "")
+		if plain ~= "" and e.bare:find(plain, 1, true) then return 55 end
+	end
 	if not fuzzy or #word < 3 or word:find("[^%a%d]") then return end
 	-- the letters in order, in the name: "grk" for Gorak
 	if e.nameL:find((word:gsub(".", "%0.-"))) then return 40 end
@@ -270,6 +311,7 @@ end
 
 -- the spot to go to: the nearest on the map I am on, else the first on a map that can take a pin
 function N.Spot(e)
+	if e.pin then return { name = e.pin.zone, map = e.pin.map or MapByName(e.pin.zone), x = e.pin.x, y = e.pin.y } end
 	local lib = Lib()
 	local ok, spawns = pcall(function() return lib.Npc.Get(e.id, "spawns") end)
 	if not ok or type(spawns) ~= "table" then return end
@@ -298,20 +340,31 @@ function N.Spot(e)
 	return best or first or any
 end
 
+-- the pin itself: on a map, x and y on 0-100; where: the place in words
+local function Set(map, x, y, title, where)
+	if not map then return DT:Print("%s is at %s, but that map takes no waypoint.", title, where) end
+	if TomTom and TomTom.AddWaypoint then
+		TomTom:AddWaypoint(map, x / 100, y / 100, { title = title, from = "DawnTools" })
+	elseif C_Map and C_Map.SetUserWaypoint and UiMapPoint and (not C_Map.CanSetUserWaypointOnMap or C_Map.CanSetUserWaypointOnMap(map)) then
+		C_Map.SetUserWaypoint(UiMapPoint.CreateFromCoordinates(map, x / 100, y / 100))
+		if C_SuperTrack and C_SuperTrack.SetSuperTrackedUserWaypoint then C_SuperTrack.SetSuperTrackedUserWaypoint(true) end
+	else
+		return DT:Print("%s is at %s. (No waypoint: neither TomTom nor the game's own map pin is there.)", title, where)
+	end
+	DT:Print("Waypoint: %s, %s", title, where)
+end
+
 function N.Waypoint(e)
 	local spot = N.Spot(e)
 	if not spot then return DT:Print("%s: no known location.", e.name) end
-	local where = ("%s %.1f, %.1f"):format(ZoneName(spot.area), spot.x, spot.y) .. (spot.door and " (the door of the dungeon it is in)" or "")
-	if not spot.map then return DT:Print("%s is at %s, but that map takes no waypoint.", e.name, where) end
-	if TomTom and TomTom.AddWaypoint then
-		TomTom:AddWaypoint(spot.map, spot.x / 100, spot.y / 100, { title = e.name, from = "DawnTools" })
-	elseif C_Map and C_Map.SetUserWaypoint and UiMapPoint and (not C_Map.CanSetUserWaypointOnMap or C_Map.CanSetUserWaypointOnMap(spot.map)) then
-		C_Map.SetUserWaypoint(UiMapPoint.CreateFromCoordinates(spot.map, spot.x / 100, spot.y / 100))
-		if C_SuperTrack and C_SuperTrack.SetSuperTrackedUserWaypoint then C_SuperTrack.SetSuperTrackedUserWaypoint(true) end
-	else
-		return DT:Print("%s is at %s. (No waypoint: neither TomTom nor the game's own map pin is there.)", e.name, where)
-	end
-	DT:Print("Waypoint: %s, %s", e.name, where)
+	local where = ("%s %.1f, %.1f"):format(spot.name or ZoneName(spot.area), spot.x, spot.y) .. (spot.door and " (the door of the dungeon it is in)" or "")
+	Set(spot.map, spot.x, spot.y, e.name, where)
+end
+
+-- a waypoint at a place written down in play (DT.DB.Sighting: its zone by name, x, y, and the map where noted)
+function N.PinSeen(seen, title)
+	if not (seen and seen.x and seen.y) then return DT:Print("%s: no known location.", title) end
+	Set(seen.map or MapByName(seen.zone), seen.x, seen.y, title, ("%s %.1f, %.1f"):format(seen.zone or "?", seen.x, seen.y))
 end
 
 ---------------------------------------------------------------------------
@@ -462,7 +515,7 @@ local function Tooltip(self)
 	if starts + ends > 0 then GameTooltip:AddLine(("Starts %d quest%s, ends %d."):format(starts, starts == 1 and "" or "s", ends), 0.8, 0.8, 0.8) end
 	-- what DawnTools has itself seen it sell
 	local sells = {}
-	for id, v in pairs(DT.Market and DT.Market.db and DT.Market.db.vendors or {}) do
+	for id, v in pairs(DT.DB.Vendors()) do
 		if v.v == e.name and #sells < 6 then sells[#sells + 1] = (GetItemInfo and GetItemInfo(id)) or ("item " .. id) end
 	end
 	if sells[1] then GameTooltip:AddLine("Seen selling: " .. table.concat(sells, ", "), 0.5, 1, 0.5, true) end
@@ -552,7 +605,7 @@ function N.Refresh(scrolled)
 	zoneButton.label:SetText(N.db.zoneOnly and ("Zone: here (" .. here .. ")") or N.db.zone and ("Zone: " .. N.db.zone) or "Zone: any")
 	sideButton.label:SetText(SIDES[N.db.side == "noenemy" and 2 or N.db.side == "friendly" and 3 or N.db.side == "hostile" and 4 or 1][2])
 	if missing then
-		countText:SetText("|cffff8080Needs the QuestieDB addon (Questie itself is not needed): the list of NPCs is read from it.|r")
+		countText:SetText("|cffff8080" .. DT.DB.NEEDS .. "|r")
 	elseif not ready then
 		countText:SetText(("|cff888888Reading NPCs... %d%%|r"):format(math.floor((N.progress or 0) * 100)))
 	else
@@ -757,6 +810,8 @@ end
 -- The NPCs are read the first time the tab is looked at: not at login, when nobody may want them.
 -- Begins the reading, if it has not been done or begun. Says whether there is reading to do.
 function N.Start()
+	-- (read from the store, which has more now, or was empty: read anew)
+	if stale and not reading then index, ready, missing, stale, dirty = {}, false, false, false, true end
 	if not ready and not reading and not missing then
 		local lib = Lib()
 		if lib then
@@ -796,17 +851,7 @@ end
 function N.Pin(area, x, y, title)
 	local at, map, px, py = Pinnable(area, x, y)
 	if map then area, x, y = at, px, py end
-	local where = ("%s %.1f, %.1f"):format(ZoneName(area), x, y)
-	if not map then return DT:Print("%s is at %s, but that map takes no waypoint.", title, where) end
-	if TomTom and TomTom.AddWaypoint then
-		TomTom:AddWaypoint(map, x / 100, y / 100, { title = title, from = "DawnTools" })
-	elseif C_Map and C_Map.SetUserWaypoint and UiMapPoint and (not C_Map.CanSetUserWaypointOnMap or C_Map.CanSetUserWaypointOnMap(map)) then
-		C_Map.SetUserWaypoint(UiMapPoint.CreateFromCoordinates(map, x / 100, y / 100))
-		if C_SuperTrack and C_SuperTrack.SetSuperTrackedUserWaypoint then C_SuperTrack.SetSuperTrackedUserWaypoint(true) end
-	else
-		return DT:Print("%s is at %s. (No waypoint: neither TomTom nor the game's own map pin is there.)", title, where)
-	end
-	DT:Print("Waypoint: %s, %s", title, where)
+	Set(map, x, y, title, ("%s %.1f, %.1f"):format(ZoneName(area), x, y))
 end
 
 local function Show()
@@ -823,6 +868,7 @@ DT:RegisterModule("npc", {
 	onEnable = function(mod)
 		N.db = mod.db
 		N.db.favs, N.db.types = N.db.favs or {}, N.db.types or {}
+		DT:On("DT_DB_UPDATE", function() stale = fromStore or missing end)
 		DT:Background({ Start = N.Start, Step = N.Step })
 	end,
 	selfTest = function(_, Try)

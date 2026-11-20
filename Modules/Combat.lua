@@ -17,6 +17,7 @@ DT.Combat = C
 
 -- db: deaths = { { t, zone, sub, x, y, level, killer, player, with, amount, dmg, assists = { { name, dmg, player } } }, ... }
 --     kills  = { { t, zone, sub, x, y, name, player, with, blow = true when the killing blow was mine }, ... }
+-- (a record of a player also has what was seen of them: guild, class, cfile, race, lvl, last = their surname)
 -- newest last; x, y are map coordinates in percent, where the game gives them
 -- both may have hits = { { seconds before the death, name, spell, amount, crit, player, k, a, r, b, o, m, i }, ... }, oldest
 -- first (the named fields: see OnLog): on a death all that was done to me in the window, heals and attacks that did
@@ -94,6 +95,11 @@ local function See(unit)
 		local a = about[name] or {}
 		about[name] = a
 		a.guild = Text(GetGuildInfo and GetGuildInfo(unit)) or a.guild
+		-- (on Forever a character is "First Surname": the surname is what other clients give as the realm)
+		if UnitFullName then
+			local _, last = UnitFullName(unit)
+			a.last = Text(last) or a.last
+		end
 		if UnitClass then
 			local class, file = UnitClass(unit)
 			a.class, a.cfile = Text(class) or a.class, Text(file) or a.cfile
@@ -437,8 +443,10 @@ local onlyPlayers = false
 
 -- A name in the colour of its class, where the class is known: from the record (cfile), else from what was
 -- seen of them this session. Unknown: a player in red, anything else white.
-local function Who(name, player, cfile)
+local function Who(name, player, cfile, last)
 	cfile = cfile or (about[name] and about[name].cfile)
+	-- (the surname where the caller has it: in the lists and window titles; the hit-by-hit lines stay short)
+	if last then name = name .. " " .. last end
 	local col = cfile and RAID_CLASS_COLORS and RAID_CLASS_COLORS[cfile]
 	if col and col.colorStr then return "|c" .. col.colorStr .. name .. "|r" end
 	return (player and "|cffff4040" or "|cffffffff") .. name .. "|r"
@@ -446,7 +454,7 @@ end
 
 -- the name with the guild after it, where one was seen
 local function Tag(name, rec)
-	return Who(name, rec.player, rec.cfile) .. (rec.guild and (" |cff888888<" .. rec.guild .. ">|r") or "")
+	return Who(name, rec.player, rec.cfile, rec.last) .. (rec.guild and (" |cff888888<" .. rec.guild .. ">|r") or "")
 end
 
 local function Where(rec)

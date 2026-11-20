@@ -1,9 +1,9 @@
 -- DawnItem
 -- Every item of the game: to search through as in the auction house, to see where one comes from, and to
 -- filter gear by what is on it.
--- As with NPCs and quests the list is not DawnTools' own: it is read at runtime from the QuestieDB addon
--- (LibQuestieDB.Item): name, levels, kind, and the sources (who drops it, who sells it, which quest gives it).
--- Nothing of it is copied or saved, and nothing goes to the guild.
+-- As with NPCs and quests the list is read at runtime from the QuestieDB addon where that is installed, without
+-- it from DawnTools' own game database (DT.DB.Lib): name, levels, kind, and the sources (who drops it, who
+-- sells it, which quest gives it).
 --
 -- What QuestieDB does not have (quality, where it is worn, its stats, its Equip / Use lines) only the game
 -- knows, and only once it has loaded the item. Those facts never change, so each item is asked for once and
@@ -49,18 +49,16 @@ local index = {}
 I.rewards = {} -- [quest] = { item entry, ... }: what a quest gives, turned round from each item's "reward of"
 local reading
 local ready, missing = false, false
+local fromStore, stale = false, false -- read from DawnTools' own database; which has changed since
+local dirty = true
 
 ---------------------------------------------------------------------------
--- Reading QuestieDB
+-- Reading QuestieDB (or the store, which answers the same way)
 ---------------------------------------------------------------------------
 
 local function Lib()
-	local lib = LibQuestieDB
+	local lib = DT.DB.Lib()
 	if not (lib and lib.Item and lib.Item.GetAllIds and lib.Item.GetAll) then return end
-	if lib.RequireContract then
-		local ok, good = pcall(lib.RequireContract, 4)
-		if not (ok and good) then return end
-	end
 	return lib
 end
 
@@ -106,6 +104,7 @@ end
 local function ReadAll(lib)
 	local ids = lib.Item.GetAllIds()
 	local stop = debugprofilestop and debugprofilestop() + (I.budget or 8)
+	fromStore = lib.store == true
 	for i, id in ipairs(ids) do
 		local ok, v = pcall(lib.Item.GetAll, id, FIELDS)
 		if ok and v and type(v[1]) == "string" and v[1] ~= "" then
@@ -122,6 +121,11 @@ local function ReadAll(lib)
 end
 
 function I.Start()
+	-- (read from the store, which has more now, or was empty: read anew)
+	if stale and not reading then
+		index, I.rewards = {}, {}
+		ready, missing, stale, dirty = false, false, false, true
+	end
 	if not ready and not reading and not missing then
 		local lib = Lib()
 		if lib then
@@ -172,7 +176,6 @@ local function Kept(id)
 	end
 	return partial[id]
 end
-local dirty = true
 local redraw = false
 local function Later()
 	if redraw then return end
@@ -372,42 +375,46 @@ end
 local LISTED = 12
 -- lines for the detail window: { text =, npc = id / quest = id (what a click does) }, headed by kind
 function I.Sources(e)
-	local lib, out = Lib(), {}
-	if not lib then return out end
-	local function Get(entity, id, field)
-		local ok, v = pcall(function() return lib[entity].Get(id, field) end)
-		return ok and v or nil
-	end
+	local DBx, out = DT.DB, {}
+	if not Lib() then return out end
 	local function Zone(area)
 		return area and area > 0 and C_Map and C_Map.GetAreaInfo and C_Map.GetAreaInfo(area) or nil
 	end
-	local function Block(title, ids, line)
-		if type(ids) ~= "table" or not ids[1] then return end
-		out[#out + 1] = { head = ("%s (%d)"):format(title, #ids) }
-		for i = 1, math.min(LISTED, #ids) do out[#out + 1] = line(ids[i]) end
-		if #ids > LISTED then out[#out + 1] = { text = ("|cff888888and %d more|r"):format(#ids - LISTED) } end
+	-- (facts: what DT.DB says, see Core/DB.lua; line: a fact as a line of the window)
+	local function Block(title, facts, line)
+		if not facts[1] then return end
+		out[#out + 1] = { head = ("%s (%d)"):format(title, #facts) }
+		for i = 1, math.min(LISTED, #facts) do out[#out + 1] = line(facts[i]) end
+		if #facts > LISTED then out[#out + 1] = { text = ("|cff888888and %d more|r"):format(#facts - LISTED) } end
 	end
-	local function Npc(id)
-		local name, zone = Get("Npc", id, "name"), Zone(Get("Npc", id, "zoneID"))
-		local min, max = Get("Npc", id, "minLevel"), Get("Npc", id, "maxLevel")
+	local function Npc(fact)
+		local npc = DBx.Get("npc", fact.id) or {}
+		local zone, min, max = Zone(npc.zone), npc.min, npc.max
 		local level = max and max > 0 and (min == max and (" |cff888888level " .. max .. "|r") or (" |cff888888level " .. (min or max) .. "-" .. max .. "|r")) or ""
-		return { text = (name or ("NPC " .. id)) .. level .. (zone and ("  |cff6699cc" .. zone .. "|r") or ""), npc = id, name = name or ("NPC " .. id) }
+		local name = npc.name or ("NPC " .. fact.id)
+		return { text = name .. level .. (zone and ("  |cff6699cc" .. zone .. "|r") or ""), npc = fact.id, name = name }
 	end
-	Block("Dropped by", Get("Item", e.id, "npcDrops"), Npc)
-	Block("Sold by", Get("Item", e.id, "vendors"), Npc)
-	Block("Found in", Get("Item", e.id, "objectDrops"), function(id)
-		local name, zone = Get("Object", id, "name"), Zone(Get("Object", id, "zoneID"))
-		return { text = (name or ("object " .. id)) .. (zone and ("  |cff6699cc" .. zone .. "|r") or "") }
+	local drops = DBx.RelTo("drops", "item", e.id)
+	-- (a dungeon boss: with its chance, the stated one and what was seen)
+	Block("Dungeon bosses", DBx.Only(drops, "npc", "shipped"), function(fact)
+		local chance = DBx.ChanceText(fact)
+		return { text = ("%s  |cff6699cc%s|r%s"):format(fact.boss, fact.dungeon, chance ~= "" and ("  |cffffd100" .. chance .. "|r") or ""), npc = fact.id, name = fact.boss }
 	end)
-	Block("Inside", Get("Item", e.id, "itemDrops"), function(id)
-		return { text = Get("Item", id, "name") or ("item " .. id) }
+	Block("Dropped by", DBx.Only(drops, "npc", "questie"), Npc)
+	Block("Sold by", DBx.Only(DBx.RelTo("sells", "item", e.id), "npc", "questie"), Npc)
+	Block("Found in", DBx.Only(drops, "object", "questie"), function(fact)
+		local object = DBx.Get("object", fact.id) or {}
+		local zone = Zone(object.zone)
+		return { text = (object.name or ("object " .. fact.id)) .. (zone and ("  |cff6699cc" .. zone .. "|r") or "") }
 	end)
-	local function Quest(id)
-		return { text = Get("Quest", id, "name") or ("quest " .. id), quest = id }
+	Block("Inside", DBx.Only(drops, "item", "questie"), function(fact)
+		return { text = DBx.Q("item", fact.id, "name") or ("item " .. fact.id) }
+	end)
+	local function Quest(fact)
+		return { text = DBx.Q("quest", fact.id, "name") or ("quest " .. fact.id), quest = fact.id }
 	end
-	Block("Reward of the quest", Get("Item", e.id, "questRewards"), Quest)
-	local starts = Get("Item", e.id, "startQuest")
-	if type(starts) == "number" and starts > 0 then Block("Starts the quest", { starts }, Quest) end
+	Block("Reward of the quest", DBx.RelTo("rewards", "item", e.id), Quest)
+	Block("Starts the quest", DBx.Rel("starts", "item", e.id), Quest)
 	if e.src.Crafted then out[#out + 1] = { head = "Made with a profession (a recipe makes it)" } end
 	if e.teaches then out[#out + 1] = { head = "Teaches a recipe or spell" } end
 	if not out[1] then out[1] = { text = "|cff888888No source known: perhaps a quest item handed over, or not in the game any more.|r" } end
@@ -530,7 +537,7 @@ end
 ---------------------------------------------------------------------------
 
 local ROW_H, SIDE_W, TOP_H, SIDE_H = 18, 150, 50, 17
-local COLS = { { "Item", 230 }, { "Lvl", 34 }, { "iLvl", 38 }, { "Type", 110 }, { "Slot", 80 }, { "Source", 150 }, { "Auction", 0 } }
+local COLS = { { "Item", 230 }, { "Lvl", 34 }, { "iLvl", 38 }, { "Type", 110 }, { "Slot / size", 80 }, { "Source", 150 }, { "Auction", 0 } }
 local panel, side, search, countText, bar, minBox, maxBox, statBox, qualityButton, sourceButton, usableBox, learnButton
 local rows, heads, sideButtons, list, sections, offset, sideOffset = {}, {}, {}, {}, {}, 0, 0
 local sortCol, sortDesc
@@ -542,6 +549,27 @@ local function SlotName(k)
 	return _G[k.e] or k.e
 end
 
+-- How many slots a bag has: its tooltip's own line ("16 Slot Bag"). nil while the game has not loaded it, or for
+-- a container that says none. Kept for the session.
+local CONTAINER = 1 -- (the item class of bags, quivers and the like)
+local SLOTS_LINE = "^" .. ((CONTAINER_SLOTS or "%d Slot %s"):gsub("[%(%)%.%+%-%*%?%[%]%^%$]", "%%%0"):gsub("%%d", "(%%d+)"):gsub("%%s", ".+")) .. "$"
+local bagSlots = {}
+function I.BagSlots(id)
+	if bagSlots[id] ~= nil then return bagSlots[id] or nil end
+	if not (C_TooltipInfo and C_TooltipInfo.GetItemByID) then return nil end
+	local ok, data = pcall(C_TooltipInfo.GetItemByID, id)
+	local lines = ok and data and data.lines
+	if not lines or #lines < 2 then return nil end -- (not all there yet: asked again at the next look)
+	for _, line in ipairs(lines) do
+		local n = type(line.leftText) == "string" and tonumber(line.leftText:match(SLOTS_LINE))
+		if n then
+			bagSlots[id] = n
+			return n
+		end
+	end
+	bagSlots[id] = false
+end
+
 local function Rebuild()
 	local db, cat = I.db, Cat()
 	local found
@@ -549,7 +577,9 @@ local function Rebuild()
 	list = {}
 	for i, r in ipairs(found) do
 		local e = r.e
-		list[i] = { e = e, score = r.score, sort = { e.nameL, e.req, e.ilvl, e.s, "", e.srcText, 0 } }
+		list[i] = { e = e, score = r.score, sort = { e.nameL, e.req, e.ilvl, e.s,
+			-- (bags by how big they are: as text, so it sorts beside the empty cells of everything else)
+			e.c == CONTAINER and ("%03d"):format(I.BagSlots(e.id) or 0) or "", e.srcText, 0 } }
 	end
 	table.sort(list, function(a, b)
 		if sortCol then
@@ -640,6 +670,7 @@ local function MakeRow(i)
 		GameTooltip:SetHyperlink("item:" .. self.data.e.id)
 		GameTooltip:AddLine("Click: where it comes from. Shift-click: link in chat. Shift-right-click: its web page.", 0.5, 0.8, 1)
 		GameTooltip:AddLine("Hold Shift: compare with what you wear.", 0.5, 0.8, 1)
+		DT.Favs.Hint(GameTooltip, self.data.e.id)
 		GameTooltip:Show()
 		DT:CompareTip(self)
 	end)
@@ -647,7 +678,7 @@ local function MakeRow(i)
 	row:SetScript("OnMouseUp", function(self, button)
 		local d = self.data
 		if not d then return end
-		if DT:LinkClick(button, DT:GameItemLink(d.e.id, d.e.name), d.e.name, DT:ItemLink(d.e.id)) or button == "RightButton" then return end
+		if DT:LinkClick(button, DT:GameItemLink(d.e.id, d.e.name), d.e.name, DT:ItemLink(d.e.id), d.e.id) or button == "RightButton" then return end
 		I.ShowInfo(d.e)
 	end)
 	rows[i] = row
@@ -699,7 +730,10 @@ function I.Refresh(scrolled)
 				if not k and not GaveUp(e.id) then pending = true end
 				local price = DawnMarket and DawnMarket.API.GetLatest and DawnMarket.API.GetLatest(e.id)
 				local cells = { Colored(e), e.req > 0 and tostring(e.req) or "", e.ilvl > 0 and tostring(e.ilvl) or "",
-					cat.GroupLabel(e.c, (cat.Place({ c = e.c, s = e.s, e = "" }))) or "", SlotName(k), e.srcText, price and DT.Money(price) or "" }
+					cat.GroupLabel(e.c, (cat.Place({ c = e.c, s = e.s, e = "" }))) or "",
+					-- (a bag says how big it is where other things say where they are worn)
+					e.c == CONTAINER and I.BagSlots(e.id) and (I.BagSlots(e.id) .. " slots") or SlotName(k),
+					e.srcText, price and DT.Money(price) or "" }
 				for c, cell in ipairs(row.icols) do
 					cell:SetText(cells[c])
 					cell:ClearAllPoints()
@@ -771,7 +805,7 @@ function I.Refresh(scrolled)
 	sourceButton.label:SetText(db.source and ("From: " .. db.source) or "From: anywhere")
 	learnButton:SetShown(state.capped and true or false)
 	if missing then
-		countText:SetText("|cffff8080Needs the QuestieDB addon (Questie itself is not needed): the list of items is read from it.|r")
+		countText:SetText("|cffff8080" .. DT.DB.NEEDS .. "|r")
 	elseif not ready then
 		countText:SetText(("|cff888888Reading items... %d%%|r"):format(math.floor((I.progress or 0) * 100)))
 	elseif state.capped then
@@ -986,6 +1020,7 @@ DT:RegisterModule("item", {
 	onEnable = function(mod)
 		I.db = mod.db
 		I.db.known = I.db.known or {}
+		DT:On("DT_DB_UPDATE", function() stale = fromStore or missing end)
 		DT:Background({ Start = I.Start, Step = I.Step })
 		DT:On("GET_ITEM_INFO_RECEIVED", function(id)
 			if not waiting[id] then return end

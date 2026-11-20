@@ -24,6 +24,7 @@ local MAX_LEVEL = 65
 
 local zones, byName = {}, {}
 local built = false
+local from = {} -- the lists of NPCs and quests the zones were worked out from: read anew since, the zones are too
 
 ---------------------------------------------------------------------------
 -- The zones, from the NPCs and the quests
@@ -46,6 +47,7 @@ end
 
 function Z.Build()
 	zones, byName, built = {}, {}, true
+	from = { DT.Npc.All(), DT.Quest.All() }
 	for _, e in ipairs(DT.Npc.All()) do
 		if e.zoneName ~= "" then
 			local z = Add(e.zoneName, e.zone)
@@ -167,6 +169,8 @@ end
 
 -- For other tabs: the zones are worked out if they can be (the NPC and quest lists read). True when they are.
 function Z.Ensure()
+	-- (the lists were read anew, as rows of a guildmate's came into the game database: other lists now)
+	if built and (from[1] ~= DT.Npc.All() or from[2] ~= DT.Quest.All()) then built = false end
 	if not built and DT.Npc.Ready() and DT.Quest.Ready() then Z.Build() end
 	return built
 end
@@ -267,7 +271,7 @@ local function Sources(lib, id)
 end
 
 local function StartDrops(z)
-	local lib = LibQuestieDB
+	local lib = DT.DB.Lib()
 	local api = DawnMarket and DawnMarket.API
 	if not (lib and lib.Item and lib.Item.Get and api and api.Each) then
 		dropsFor[z.name] = {}
@@ -317,7 +321,7 @@ function Z.Lines(z)
 		out[#out + 1] = { head = text }
 	end
 	local function Line(text, click, item) out[#out + 1] = { text = text, click = click, item = item } end
-	local lib = LibQuestieDB
+	local lib = DT.DB.Lib()
 	local function NameOf(entity, id)
 		local ok, name = pcall(function() return lib[entity].Get(id, "name") end)
 		return ok and type(name) == "string" and name or nil
@@ -464,7 +468,9 @@ local function Rebuild()
 		list = {}
 		return
 	end
-	-- (built once; again, a few times at most, while Questie had no dungeons to tell of yet)
+	-- (built once; again, a few times at most, while Questie had no dungeons to tell of yet; and when the lists
+	-- of NPCs and quests were read anew)
+	if built and (from[1] ~= DT.Npc.All() or from[2] ~= DT.Quest.All()) then built = false end
 	if not built or (Z.noZdb and (Z.tries or 0) < 5) then
 		Z.tries = (Z.tries or 0) + 1
 		Z.Build()
@@ -652,8 +658,8 @@ function Z.Refresh(scrolled)
 	end
 	DrawRight()
 	if Waiting() then
-		countText:SetText(LibQuestieDB and "|cff888888Reading NPCs and quests...|r"
-			or "|cffff8080Needs the QuestieDB addon (Questie itself is not needed): the zones are worked out from its NPCs and quests.|r")
+		countText:SetText(DT.DB.Lib() and "|cff888888Reading NPCs and quests...|r"
+			or ("|cffff8080" .. DT.DB.NEEDS .. "|r"))
 	else
 		local all = 0
 		for _, zone in ipairs(zones) do

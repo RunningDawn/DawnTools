@@ -1,8 +1,8 @@
 -- DawnQuest
 -- Every quest of the game: to search through, to see which are still open to this character, and to follow a
 -- chain back to where it starts.
--- As with the NPC tab the data is not DawnTools' own: it is read, as the tab is used, from the QuestieDB addon
--- through its public API (LibQuestieDB.Quest). Nothing of it is copied or saved, and nothing goes to the guild.
+-- As with the NPC tab the list is read, as the tab is used, from the QuestieDB addon through its public API
+-- where that is installed; without it from DawnTools' own game database (DT.DB.Lib).
 
 local _, DT = ...
 local Q = {}
@@ -55,18 +55,15 @@ local index, byId = {}, {} -- every quest: see Entry; and by its number
 local followers = {}        -- [quest] = { the quests it opens }
 local reading
 local ready, missing = false, false
+local fromStore, stale = false, false -- read from DawnTools' own database; which has changed since
 
 ---------------------------------------------------------------------------
--- Reading QuestieDB
+-- Reading QuestieDB (or the store, which answers the same way)
 ---------------------------------------------------------------------------
 
 local function Lib()
-	local lib = LibQuestieDB
+	local lib = DT.DB.Lib()
 	if not (lib and lib.Quest and lib.Quest.GetAllIds and lib.Quest.GetAll) then return end
-	if lib.RequireContract then
-		local ok, good = pcall(lib.RequireContract, 4)
-		if not (ok and good) then return end
-	end
 	return lib
 end
 
@@ -149,7 +146,7 @@ end
 -- The area a quest's giver (or, failing that, whoever takes it back) stands in: an NPC's, else an object's.
 -- who: QuestieDB's startedBy / finishedBy = { { npcs }, { objects }, { items } }
 local function AreaOf(who)
-	local lib = LibQuestieDB
+	local lib = Lib()
 	for at, db in ipairs({ "Npc", "Object" }) do
 		for _, id in ipairs(type(who) == "table" and type(who[at]) == "table" and who[at] or {}) do
 			local ok, area = pcall(function() return lib[db].Get(id, "zoneID") end)
@@ -164,7 +161,7 @@ local function Entry(id, v)
 		starts = type(v[14]) == "table" and v[14] or {}, parent = v[15], rep = type(v[17]) == "table" and v[17] or nil, maxLevel = v[18], types = {} }
 	e.zoneName = ZoneName(e.zone)
 	if e.zone == 0 then
-		local lib = LibQuestieDB
+		local lib = Lib()
 		local okText, texts = pcall(function() return lib.Quest.Get(id, "objectivesText") end)
 		local okEnd, ends = pcall(function() return lib.Quest.Get(id, "finishedBy") end)
 		Q.Place(e, okText and texts or nil, AreaOf(e.starts) or AreaOf(okEnd and ends or nil))
@@ -239,12 +236,16 @@ local function ReadAll(lib)
 	ofa = nil -- (OneForAll's lists are asked for anew: it may not have been loaded the last time)
 	local ids = lib.Quest.GetAllIds()
 	local dropped, firstError = 0, nil
+	fromStore = lib.store == true
 	local stop = debugprofilestop and debugprofilestop() + (Q.budget or 8)
 	for i, id in ipairs(ids) do
 		local ok, v = pcall(lib.Quest.GetAll, id, FIELDS)
 		if ok and v and type(v[1]) == "string" and v[1] ~= "" then
 			local made, e = pcall(Entry, id, v) -- (one odd record is left out, not the end of the reading)
 			if made then
+				-- (a quest written down in play, as a giver offered it: of the zone it was offered in)
+				local seen = fromStore and lib.Quest.Get(id, "seen")
+				if seen and seen.zone and e.zoneName == "" then e.zoneName = seen.zone end
 				index[#index + 1], byId[id] = e, e
 			else
 				dropped, firstError = dropped + 1, firstError or (id .. ": " .. tostring(e))
@@ -278,7 +279,8 @@ local function Me()
 	if UnitRace then _, _, race = UnitRace("player") end
 	if UnitClass then _, _, class = UnitClass("player") end
 	-- (the data's own table of race bits where it has one: not every race's bit is two to its number)
-	local masks = LibQuestieDB and LibQuestieDB.Enum and LibQuestieDB.Enum.raceMaskById
+	local lib = Lib()
+	local masks = lib and lib.Enum and lib.Enum.raceMaskById
 	me.race, me.class = race and ((type(masks) == "table" and masks[race]) or 2 ^ (race - 1)), class and 2 ^ (class - 1)
 	local set
 	if C_QuestLog and C_QuestLog.GetAllCompletedQuestIDs then
@@ -390,7 +392,18 @@ function Q.Status(e)
 	return "open", "open to you"
 end
 
+-- Which side a quest is for: "A", "H", or "" (both, or not told): by the races it is open to.
+local ALLIANCE_BITS, HORDE_BITS = { 1, 4, 8, 64, 1024 }, { 2, 16, 32, 128, 512 }
+function Q.Side(e)
+	if not e.races or e.races == 0 then return "" end
+	local a, h = false, false
+	for _, bit in ipairs(ALLIANCE_BITS) do a = a or Has(e.races, bit) end
+	for _, bit in ipairs(HORDE_BITS) do h = h or Has(e.races, bit) end
+	return a and not h and "A" or h and not a and "H" or ""
+end
+
 -- the quests that fit the filters and the search, best first: { e = entry, score =, status =, why = }
+-- (f.side = "A" / "H": only that side's quests and those open to both; for the Dungeons tab)
 function Q.Find(text, f)
 	local words = {}
 	for word in text:lower():gmatch("%S+") do words[#words + 1] = word end
@@ -398,6 +411,7 @@ function Q.Find(text, f)
 	local pool, state = {}, {}
 	-- (the switches on what I have done and may do: every quest listed passes them, pulled in or not)
 	local function Take(e)
+		if f.side and Q.Side(e) ~= "" and Q.Side(e) ~= f.side then return end
 		local status, why = Q.Status(e)
 		-- ("mine only" also leaves out a quest shut while I carry its twin: that one is in the list already)
 		if not ((f.hideDone and status == "done") or (f.mine and status == "never" and (why:find("^other") or why:find("^shut")))
@@ -550,10 +564,16 @@ end
 
 local STATUS_COLOR = { done = "|cff40a040", log = "|cffffd100", open = "|cffffffff", later = "|cff999999", never = "|cff905050" }
 
--- Rewards seen: what the quest giver's window says the quest in it gives. Kept on this machine (db.seen), in the
--- shape of Data/QuestRewards.lua, which tools/harvest.js fills from it for the next release.
+-- Rewards seen: what the quest giver's window says the quest in it gives. A row of the game database, so that the
+-- guild shares it with the rest of it (settings.share): "qreward:<quest>" = copper, experience, the level it was
+-- seen at, what it gives { item, count, item, count, ... }, what to choose one of { item, count, ... }
+-- (DBLogic.Pack). A quest gives everybody the same, so one member's look at a quest giver fills it in for all;
+-- the level goes along because the experience shown depends on it. A row says nothing of who saw it; of two the
+-- newer stands. No player's name is in it.
 -- ponytail: experience is what it gave at the level it was seen at; at the level cap the game may turn it into
 -- money, which is then kept as the quest's money. Keep both per level if that ever matters.
+local DB, DBL = DT.DB, DT.DBLogic
+
 local function SeenItems(kind, n)
 	local out = {}
 	for i = 1, tonumber(n) or 0 do
@@ -566,75 +586,71 @@ local function SeenItems(kind, n)
 	return out
 end
 
--- Shared with the guild where the player agreed to (settings.share; asked once, when the tab is first looked
--- at): a quest gives everybody the same, so one member's look at a quest giver fills it in for all. Passed on
--- the shared way (Comms:Gossip). A record is "quest;copper;experience;level it was seen at;seen;given;choice",
--- the last two as "item:count,item:count". No player's name is in it. The level goes along because the
--- experience shown depends on it. What came from the guild is marked (g = when it came): not my sighting,
--- not sent on, and replaced by what I see myself.
-local function Wire(list)
+-- { { item, count }, ... } as the flat list a row holds ({ item, count, item, count }) and back; nil where a list
+-- is not one (a row from the wire is not believed)
+local function Flat(list)
 	local out = {}
-	for i, it in ipairs(list or {}) do out[i] = ("%d:%d"):format(it[1], it[2] or 1) end
-	return table.concat(out, ",")
-end
-
-local function Unwire(text)
-	local out = {}
-	for id, n in text:gmatch("(%d+):(%d+)") do
-		if #out < 10 then out[#out + 1] = { tonumber(id), tonumber(n) } end
+	for i, it in ipairs(list or {}) do
+		if i <= 10 and type(it) == "table" then out[#out + 1], out[#out + 2] = it[1], it[2] or 1 end
 	end
 	return out
 end
 
-local rewards = DT.Comms:Gossip("quest", {
-	on = function() return Q.db ~= nil and Q.db.settings.share == true end,
-	peers = function()
-		Q.db.rpeers = Q.db.rpeers or {}
-		return Q.db.rpeers
-	end,
-	own = function()
-		local out = {}
-		for id, s in pairs(Q.db.seen or {}) do
-			if not s.g then out[id] = s.t or 1 end -- (one from before the time was kept: old, but mine)
-		end
-		return out
-	end,
-	line = function(id)
-		local s = Q.db.seen and Q.db.seen[id]
-		return s and ("%d;%d;%d;%d;%d;%s;%s"):format(id, s.m or 0, s.x or 0, s.l or 0, s.t or 1, Wire(s.r), Wire(s.c))
-	end,
-	take = function(line, now)
-		local id, m, x, l, t, r, c = line:match("^(%d+);(%d+);(%d+);(%d+);(%d+);([%d:,]*);([%d:,]*)$")
-		id, m, x, l, t = tonumber(id), tonumber(m), tonumber(x), tonumber(l), math.min(tonumber(t) or 0, now)
-		if not (id and id > 0 and m < 1e9 and x < 1e9 and l <= 100) then return false end
-		Q.db.seen = Q.db.seen or {}
-		local old = Q.db.seen[id]
-		if old and (not old.g or t <= (old.t or 0)) then return false end -- (mine stands; of the guild's, the newest)
-		Q.db.seen[id] = { m = m, x = x, l = l, r = Unwire(r), c = Unwire(c), t = t, g = now }
-		return true
-	end,
-	taken = function() dirty = true end,
-})
-Q.Gossip = rewards
-
-local function SameItems(a, b)
-	return Wire(a) == Wire(b)
+local function Unflat(flat)
+	if flat == nil then return {} end
+	if type(flat) ~= "table" or #flat % 2 ~= 0 or #flat > 20 then return nil end
+	local out = {}
+	for i = 1, #flat, 2 do
+		if type(flat[i]) ~= "number" or type(flat[i + 1]) ~= "number" then return nil end
+		out[#out + 1] = { flat[i], flat[i + 1] }
+	end
+	return out
 end
+
+-- a row's values as { m = copper, x = experience, l = level, r = { { item, count } }, c = the same to choose }
+local function ParseSeen(text)
+	local v = DBL.Unpack(text)
+	if not v or type(v[1]) ~= "number" or type(v[2]) ~= "number" or type(v[3]) ~= "number" then return nil end
+	if v[1] < 0 or v[1] >= 1e9 or v[2] < 0 or v[2] >= 1e9 or v[3] < 0 or v[3] > 100 then return nil end
+	local r, c = Unflat(v[4]), Unflat(v[5])
+	if not (r and c) then return nil end
+	return { m = v[1], x = v[2], l = v[3], r = r, c = c }
+end
+
+-- every quest whose rewards are held, { [quest] = as ParseSeen gives it }
+function Q.SeenAll() return DB.Table("qreward", ParseSeen) end
 
 function Q.SeeRewards()
 	local id = GetQuestID and GetQuestID()
 	if type(id) ~= "number" or id <= 0 or not Q.db then return end
-	Q.db.seen = Q.db.seen or {}
-	local old = Q.db.seen[id]
-	local new = { m = tonumber(GetRewardMoney and GetRewardMoney()) or 0, x = tonumber(GetRewardXP and GetRewardXP()) or 0,
-		l = UnitLevel and UnitLevel("player") or 0,
-		r = GetQuestItemInfo and SeenItems("reward", GetNumQuestRewards and GetNumQuestRewards()) or {},
-		c = GetQuestItemInfo and SeenItems("choice", GetNumQuestChoices and GetNumQuestChoices()) or {},
-		t = DT.Now() }
-	-- (seen again and nothing changed: the first sighting stands, and nothing is told a second time)
-	if old and not old.g and old.m == new.m and old.x == new.x and old.l == new.l and SameItems(old.r, new.r) and SameItems(old.c, new.c) then return end
-	Q.db.seen[id] = new
-	rewards:Queue(id)
+	DB.Put("qreward:" .. id, DBL.Pack({
+		tonumber(GetRewardMoney and GetRewardMoney()) or 0, tonumber(GetRewardXP and GetRewardXP()) or 0, UnitLevel and UnitLevel("player") or 0,
+		Flat(GetQuestItemInfo and SeenItems("reward", GetNumQuestRewards and GetNumQuestRewards()) or {}),
+		Flat(GetQuestItemInfo and SeenItems("choice", GetNumQuestChoices and GetNumQuestChoices()) or {}) }, 5))
+end
+
+-- The rewards the quest giver showed (mine or a member's), or nil.
+local function SeenOf(id)
+	local row = DB.Row("qreward:" .. id)
+	return row and ParseSeen(row.v) or nil
+end
+
+-- The tab's own saved rewards moved into the game database (once; the saved file of before has db.seen[quest] =
+-- { m, x, l, r, c, t, g }). Each is kept where the store holds nothing newer for that quest, so that a second run,
+-- or one on a half-moved file, changes nothing; then the table goes (db.seen, db.rpeers: the sync of before).
+function Q.Migrate(db)
+	for id, s in pairs(type(db.seen) == "table" and db.seen or {}) do
+		id = tonumber(id)
+		if id and id > 0 and id == math.floor(id) and type(s) == "table" then
+			local r, c = Unflat(Flat(type(s.r) == "table" and s.r or {})), Unflat(Flat(type(s.c) == "table" and s.c or {}))
+			local m, x, l = tonumber(s.m) or 0, tonumber(s.x) or 0, tonumber(s.l) or 0
+			if r and c and m >= 0 and m < 1e9 and x >= 0 and x < 1e9 and l >= 0 and l <= 100 then
+				DB.Keep(("qreward:%d"):format(id), DBL.Pack({ m, x, l, Flat(r), Flat(c) }, 5), tonumber(s.t) or 1)
+			end
+		end
+	end
+	db.seen, db.rpeers = nil, nil
+	db.moved = true
 end
 
 -- What a quest gives. Nothing of it is ours: read where it lies, when asked.
@@ -642,12 +658,12 @@ end
 --   xpNow, money  the game's own answer, which it has for quests it knows the rewards of (those in my log)
 --   items         { { id, name, sell } }: from the Items tab's reading (each item's "reward of"); sell = what a vendor pays
 --   itemsRead     whether that reading is done
--- Where a quest giver has shown the quest (to me, or to whoever filled Data/QuestRewards.lua), that is believed
+-- Where a quest giver has shown the quest (to me, or to a member), that is believed
 -- instead: seen = true, money and items as shown, each item with count and choose (one of several).
 function Q.Rewards(e)
 	local r = { items = {} }
-	local seen = (Q.db and Q.db.seen and Q.db.seen[e.id]) or (DT.QuestRewards and DT.QuestRewards[e.id])
-	local ok, xp = pcall(function() return LibQuestieDB.Support.Get("QuestXP").db[e.id] end)
+	local seen = SeenOf(e.id)
+	local ok, xp = pcall(function() return Lib().Support.Get("QuestXP").db[e.id] end)
 	if ok and type(xp) == "table" then r.xpLevel, r.xp = tonumber(xp[1]), tonumber(xp[2]) end
 	local function Game(fn)
 		if not fn then return end
@@ -688,7 +704,7 @@ end
 local asks = {}
 function Q.Asks(e)
 	if asks[e.id] == nil then
-		local ok, texts = pcall(function() return LibQuestieDB.Quest.Get(e.id, "objectivesText") end)
+		local ok, texts = pcall(function() return Lib().Quest.Get(e.id, "objectivesText") end)
 		local parts = {}
 		for _, text in ipairs(ok and type(texts) == "table" and texts or {}) do
 			if type(text) == "string" and text ~= "" then parts[#parts + 1] = text end
@@ -770,13 +786,14 @@ local function ItemRow(i)
 	row:RegisterForClicks("LeftButtonUp", "RightButtonUp")
 	row:SetScript("OnClick", function(self, button)
 		local item = self.item
-		if item then DT:LinkClick(button, DT:GameItemLink(item.id, item.name), item.name, DT:ItemLink(item.id)) end
+		if item then DT:LinkClick(button, DT:GameItemLink(item.id, item.name), item.name, DT:ItemLink(item.id), item.id) end
 	end)
 	row:SetScript("OnEnter", function(self)
 		if not self.item then return end
 		GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
 		GameTooltip:SetHyperlink("item:" .. self.item.id)
 		GameTooltip:AddLine("Shift-click: link in chat. Shift-right-click: its web page. Hold Shift: compare.", 0.5, 0.8, 1)
+		DT.Favs.Hint(GameTooltip, self.item.id)
 		GameTooltip:Show()
 		DT:CompareTip(self)
 	end)
@@ -1075,6 +1092,18 @@ local function Nest(rowsOf)
 	return out
 end
 
+-- For other tabs (Dungeons): what Q.Find found, in nested order: each quest under the one that opens it.
+--   { e, depth, status, why }
+-- and the colours a quest's standing is written in (done green, in the log yellow, ...).
+function Q.Nested(found)
+	local rowsOf = {}
+	for _, r in ipairs(found) do
+		rowsOf[r.e] = { e = r.e, score = 0, depth = 0, status = r.status, why = r.why, sort = { r.e.nameL, r.e.level, "", "", 0 } }
+	end
+	return Nest(rowsOf)
+end
+Q.STATUS_COLOR = STATUS_COLOR
+
 local function Rebuild()
 	local found = ready and Q.Find(search:GetText() or "", Q.db) or {}
 	local rowsOf, mine = {}, Me().level
@@ -1265,7 +1294,7 @@ function Q.Refresh(scrolled)
 	local here = GetRealZoneText and GetRealZoneText() or "?"
 	zoneButton.label:SetText(Q.db.zoneOnly and ("Zone: here (" .. here .. ")") or Q.db.zone and ("Zone: " .. Q.db.zone) or "Zone: any")
 	if missing then
-		countText:SetText("|cffff8080Needs the QuestieDB addon (Questie itself is not needed): the list of quests is read from it.|r")
+		countText:SetText("|cffff8080" .. DT.DB.NEEDS .. "|r")
 	elseif not ready then
 		countText:SetText(("|cff888888Reading quests... %d%%|r"):format(math.floor((Q.progress or 0) * 100)))
 	else
@@ -1469,6 +1498,11 @@ end
 -- The quests are read the first time the tab is looked at: not at login, when nobody may want them.
 -- Begins the reading, if it has not been done or begun. Says whether there is reading to do.
 function Q.Start()
+	-- (read from the store, which has more now, or was empty: read anew)
+	if stale and not reading then
+		index, byId, followers, origins = {}, {}, {}, {}
+		ready, missing, stale, dirty, me = false, false, false, true, nil
+	end
 	if not ready and not reading and not missing then
 		local lib = Lib()
 		if lib then
@@ -1507,13 +1541,7 @@ function Q.Entry(id)
 	return ready and byId[id] or nil -- (half-read ones are not whole yet)
 end
 
-local asking
 local function Show()
-	-- asked once, the first time the tab is looked at
-	if Q.db.settings.share == nil and IsInGuild() and not asking then
-		asking = true
-		StaticPopup_Show("DAWNTOOLS_QUEST_SHARE")
-	end
 	Q.Start()
 	me = nil -- (what is done and in the log is read anew at each look)
 	Q.Refresh()
@@ -1524,23 +1552,14 @@ DT:RegisterModule("quest", {
 	title = "Quests",
 	version = 1,
 	slash = "/dtquest",
-	settings = {
-		{ key = "share", label = "Share what quests give with the guild (and receive what others saw)" },
-	},
 	held = function()
-		local n, guild = 0, 0
-		for _, s in pairs(Q.db.seen or {}) do n, guild = n + 1, guild + (s.g and 1 or 0) end
-		return ("what %d quests give, as seen at a quest giver; %d of them from the guild"):format(n, guild)
+		local n = 0
+		for _ in pairs(Q.SeenAll()) do n = n + 1 end
+		return ("what %d quests give, as seen at a quest giver, by you and the guild (in the game database)"):format(n)
 	end,
-	hello = function() return rewards:Hello() end,
-	onHello = function(_, sender, summary) rewards:OnHello(sender, summary) end,
-	onMessage = function(_, kind, payload, sender) rewards:OnMessage(kind, payload, sender) end,
 	progress = function()
-		local seen, n = {}, 0
-		for id in pairs(DT.QuestRewards or {}) do seen[id], n = true, n + 1 end
-		for id in pairs(Q.db and Q.db.seen or {}) do
-			if not seen[id] then n = n + 1 end
-		end
+		local n = 0
+		for _ in pairs(Q.SeenAll()) do n = n + 1 end
 		local note = "what you and (if you share them) the guild saw"
 		if Q.Ready() then return { { "Quest rewards seen at a quest giver", n, #Q.All(), note } } end
 		return { { "Quest rewards seen at a quest giver", n, nil, "open World, Quests once: it counts the quests" } }
@@ -1549,21 +1568,15 @@ DT:RegisterModule("quest", {
 	onEnable = function(mod)
 		Q.db = mod.db
 		local db = Q.db
+		DT:On("DT_DB_UPDATE", function(chunk)
+			-- (a member's rewards are on show at once; any other rows: the lists are read anew)
+			if chunk and chunk:find("^qreward:") then dirty = true else stale = fromStore or missing end
+		end)
+		if db.seen or db.rpeers then
+			local ok, err = pcall(Q.Migrate, db)
+			if not ok then geterrorhandler()(err) end -- (what was not moved is still there for the next login)
+		end
 		db.types = db.types or {}
-		StaticPopupDialogs.DAWNTOOLS_QUEST_SHARE = {
-			text = "DawnTools Quests: share what quests give with the guild?\n\n"
-				.. "Sent to guild members who use DawnTools: for a quest whose rewards a quest giver showed you, the quest, "
-				.. "its money, experience and items, and the level you were when you saw it. No names. In return you see "
-				.. "what others saw.\n\nNothing else is sent, and you can switch it off at any time: /dt settings.",
-			button1 = "Share", button2 = "Not now",
-			OnAccept = function() db.settings.share = true end,
-			-- (only a real no: a popup pushed aside by another one asks again next time)
-			OnCancel = function(_, _, reason)
-				if reason == "clicked" then db.settings.share = false end
-				asking = false
-			end,
-			timeout = 0, whileDead = true, hideOnEscape = true, preferredIndex = 3,
-		}
 		DT:Background({ Start = Q.Start, Step = Q.Step })
 		-- (done and not-mine are left out unless asked for; what cannot be taken yet stays in)
 		if db.hideDone == nil then db.hideDone = true end

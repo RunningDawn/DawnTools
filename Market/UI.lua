@@ -117,7 +117,7 @@ local SORT = {
 	med = function(_, item, now) return L.Median(item, 7, now) or 0 end,
 	trend = function(_, item, now) return L.Trend(item, now) or 0 end,
 	vendor = Vendor,
-	vbuy = function(id) return M.db.vendors[id] and M.db.vendors[id].p or 0 end,
+	vbuy = function(id) return DT.DB.Vendors()[id] and DT.DB.Vendors()[id].p or 0 end,
 	lvl = function(id) return select(5, C_Item.GetItemInfo(id)) or 0 end,
 	ilvl = function(id) return select(4, C_Item.GetItemInfo(id)) or 0 end,
 	o = function(_, item) return item.o or "" end,
@@ -125,7 +125,7 @@ local SORT = {
 
 -- "Sold by Kira, Booty Bay for 10c (limited stock)", or nil
 local function VendorText(id)
-	local v = M.db.vendors[id]
+	local v = DT.DB.Vendor(id)
 	return v and ("Sold by %s, %s for %s%s"):format(v.v, v.z, DT.Money(v.p), v.l and " (limited stock)" or "") or nil
 end
 
@@ -191,7 +191,7 @@ local WIELD = {
 	WARRIOR = Kinds { 0, 1, 2, 3, 4, 5, 6, 7, 8, 10, 13, 15, 16, 18 }, PALADIN = Kinds { 0, 1, 4, 5, 6, 7, 8 },
 	HUNTER = Kinds { 0, 1, 2, 3, 6, 7, 8, 10, 13, 15, 16, 18 }, ROGUE = Kinds { 2, 3, 4, 7, 13, 15, 16, 18 },
 	PRIEST = Kinds { 4, 10, 15, 19 }, SHAMAN = Kinds { 0, 1, 4, 5, 10, 13, 15 }, MAGE = Kinds { 7, 10, 15, 19 },
-	WARLOCK = Kinds { 7, 10, 15, 19 }, DRUID = Kinds { 4, 5, 10, 13, 15 },
+	WARLOCK = Kinds { 7, 10, 15, 19 }, DRUID = Kinds { 4, 5, 6, 10, 13, 15 },
 }
 local WEAPON_CLASS, ARMOR_CLASS, RECIPE_CLASS = 2, 4, 9
 
@@ -382,7 +382,7 @@ local function Filter(now)
 			if (not V.fav or favs[id]) and (not V.class or item.c == V.class)
 				and (V.group == nil or group == V.group) and (V.leaf == nil or leaf == V.leaf)
 				and (q == "" or (item.n or ""):lower():find(q, 1, true)) and (not filtering or Passes(id, item, myLevel, who))
-				and (not V.vendorOnly or M.db.vendors[id]) then
+				and (not V.vendorOnly or DT.DB.Vendors()[id]) then
 				list[#list + 1] = id
 			end
 		end
@@ -603,7 +603,7 @@ function V:Refresh(same)
 			cells.trend:SetText(TrendText(L.Trend(item, now)))
 			cells.vendor:SetText(sell > 0 and DT.Money(sell) or "")
 			-- gold where the auction price is above what the vendor asks; * = limited stock
-			local sold = M.db.vendors[id]
+			local sold = DT.DB.Vendors()[id]
 			cells.vbuy:SetText(sold and ((item.p > sold.p and "|cffffd100" or "") .. DT.Money(sold.p) .. (sold.l and "*" or "")
 				.. (item.p > sold.p and "|r" or "")) or "")
 			cells.o:SetText(item.o ~= "" and item.o or "guild")
@@ -1012,7 +1012,7 @@ local soldBy = {}
 local function SoldBy(id)
 	if soldBy[id] == nil then
 		soldBy[id] = false
-		local Q = LibQuestieDB
+		local Q = DT.DB.Lib()
 		local ok, vendors = pcall(function() return Q.Item.Get(id, "vendors") end)
 		if ok and type(vendors) == "table" and vendors[1] then
 			local okName, name = pcall(function() return Q.Npc.Get(vendors[1], "name") end)
@@ -1052,7 +1052,7 @@ local function OnTooltipItem(tip, data)
 	end
 	local text = id and V.TooltipText(id, n)
 	if text then tip:AddDoubleLine("Guild AH", text, 0.78, 0.68, 0.37, 1, 1, 1) end
-	local sold = id and M.db.vendors[id]
+	local sold = id and DT.DB.Vendor(id)
 	local band, profession = DT.CraftBand(id)
 	if band then tip:AddDoubleLine(profession, band, 0.78, 0.68, 0.37, 1, 1, 1) end
 	local unseen = id and not sold and V.VendorText(id, n)
@@ -1074,13 +1074,12 @@ DT:RegisterModule("market", {
 	title = "Market",
 	version = 1,
 	defaults = {
-		-- share: not set until the player has answered the question
+		-- (whether anything is shared at all is the one switch of the core: DT:Shares)
 		name = true,
 		auctionator = true,
 		tooltip = true,
 	},
 	settings = {
-		{ key = "share", label = "Share auction and vendor prices with the guild (and receive theirs)" },
 		{ key = "name", label = "Show my name as the observer" },
 		{ key = "auctionator", label = "Use Auctionator's price history (for me only)" },
 		{ key = "tooltip", label = "Price, vendor and crafting-skill lines on item tooltips" },
@@ -1094,6 +1093,8 @@ DT:RegisterModule("market", {
 		M:Enable(mod)
 		M.Sync:Enable()
 		DT:On("DT_MARKET_UPDATE", function() dirty = true end)
+		DT:On("DT_DB_UPDATE", function(chunk) if chunk and chunk:find("^vendor:") then M:Touch() end end) -- (a member's vendor prices are on show at once)
+		DT:On("DT_FAVS", function() dirty = true end) -- (a favourite made or unmade elsewhere: the stars are drawn anew)
 		if TooltipDataProcessor and TooltipDataProcessor.AddTooltipPostCall then
 			TooltipDataProcessor.AddTooltipPostCall(Enum.TooltipDataType.Item, OnTooltipItem)
 		elseif GameTooltip.HasScript and GameTooltip:HasScript("OnTooltipSetItem") then
@@ -1123,17 +1124,18 @@ DT:RegisterModule("market", {
 		local I = DT.Item
 		if I and I.Ready and I.Ready() then
 			local have, total, all = 0, 0, 0
+			local vendors = DT.DB.Vendors()
 			for _, e in ipairs(I.All()) do
 				if e.c ~= 12 and e.c ~= 13 then all = all + 1 end
 				if e.src and e.src.Vendor then
 					total = total + 1
-					if M.db.vendors[e.id] or (DT.VendorPrice and DT.VendorPrice[e.id]) then have = have + 1 end
+					if vendors[e.id] or (DT.VendorPrice and DT.VendorPrice[e.id]) then have = have + 1 end
 				end
 			end
 			rows[1][3], rows[1][4] = math.max(all, items), "of all items (those that bind when picked up too: it never fills)"
 			rows[2] = { "Vendor prices", have, total, "of what vendors sell (some of it not for money)" }
 		else
-			rows[2] = { "Vendor prices", (M.Sync:VendorCounts()), nil, "open World, Items once: it counts what vendors sell" }
+			rows[2] = { "Vendor prices", M.VendorCount(), nil, "open World, Items once: it counts what vendors sell" }
 		end
 		return rows
 	end,
@@ -1142,8 +1144,7 @@ DT:RegisterModule("market", {
 		for _, house in pairs(M.db.houses) do
 			for _ in pairs(house) do items = items + 1 end
 		end
-		local vendors, guild = M.Sync:VendorCounts()
-		return ("%d auction prices; %d vendor prices, %d of them from the guild"):format(items, vendors, guild)
+		return ("%d auction prices; %d vendor prices (in the game database, with those the guild saw)"):format(items, M.VendorCount())
 	end,
 	selfTest = function(_, Try)
 		local id = next(M.items)

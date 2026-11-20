@@ -122,6 +122,125 @@ do
 end
 
 ---------------------------------------------------------------------------
+-- 1b. BiS logic: what a tooltip is worth, what a set scores, the best set
+---------------------------------------------------------------------------
+
+do
+	local BL = assert(loadfile(DIR .. "Core/BisLogic.lua"))()
+	local s = BL.Stats({ ITEM_MOD_STAMINA_SHORT = 20, RESISTANCE0_NAME = 500, ITEM_MOD_HIT_RATING_SHORT = 10, ITEM_MOD_CRIT_RATING_SHORT = 28 }, {
+		"Helm of Tests", "Equip: Increased Defense +7.", "Equip: Improves your chance to hit by 1%.", "Equip: Increases your expertise rating by 13.",
+		"Use: Increases defense by 50 for 10 sec.", "Equip: Increases damage done by Shadow spells and effects by up to 20.", "38 Block",
+		"Equip: Improves your chance to get a critical strike with spells by 1%.", "Equip: Increases the block value of your shield by 12.",
+		"Equip: Increases damage and healing done by magical spells and effects by up to 9.", "Equip: +30 Attack Power.", "Equip: Restores 4 mana per 5 sec." })
+	eq(s.sta, 20, "the game's own numbers are taken"); eq(s.armor, 500, "armor too")
+	eq(s.hit, 1, "ten hit rating is a percent, and a stat the game gave is not read from the text again"); eq(s.crit, 2, "fourteen crit rating a percent")
+	eq(s.def, 7, "defense from its Equip line"); check(math.abs(s.exp - 1.3) < 1e-9, "expertise rating in percent")
+	eq(s.sp_shadow, 20, "the damage of one school"); eq(s.bv, 50, "a shield's block and what adds to it"); eq(s.scrit, 1, "a line that speaks of spells is the spell stat")
+	eq(s.sp, 9, "spell power"); eq(s.heal, 9, "which heals too"); eq(s.ap, 30, "attack power"); eq(s.mp5, 4, "mana per 5")
+	eq(BL.Stats(nil, { "Use: Increases defense by 50 for 10 sec.", "Chance on hit: Increases attack power by 100." }).def, nil, "a Use line is not a stat of the item")
+
+	local prof = { w = { sta = 1, def = 15, hit = 4, str = 0.5 }, caps = { def = { cap = 440, over = 0.2, hard = true }, hit = { cap = 8, over = 0 } }, hands = { "shield" } }
+	local score, short = BL.Score({ sta = 10, def = 20, hit = 2 }, { def = 425, hit = 7.5 }, prof)
+	eq(score, 10 + 15 * 15 + 0.2 * 5 + 4 * 0.5, "a capped stat is worth its weight up to the cap, counted from the character without gear"); eq(next(short), nil, "the hard cap is reached")
+	eq(select(2, BL.Score({ def = 5 }, { def = 425 }, prof)).def, 10, "or how far it is")
+
+	-- the solver against every combination tried one by one
+	local seed = 7
+	local function rnd(n) seed = (seed * 1103515245 + 12345) % 2147483648 return seed % n end
+	local function sum(list)
+		local g = {}
+		for _, it in ipairs(list) do BL.Add(g, it.s) end
+		local sc, sh = BL.Score(g, { def = 400, hit = 5 }, prof)
+		return sc - 1e7 * (sh.def or 0)
+	end
+	for round = 1, 12 do
+		local items, by = {}, {}
+		local function add(loc, n)
+			by[loc] = {}
+			for _ = 1, n do
+				local it = { id = #items + 1, loc = loc, s = { sta = rnd(30), def = rnd(4) == 0 and rnd(25) or 0, hit = rnd(3) == 0 and rnd(3) or 0, str = rnd(20) } }
+				items[#items + 1] = it
+				by[loc][#by[loc] + 1] = it
+			end
+			by[loc][#by[loc] + 1] = false
+		end
+		add("INVTYPE_HEAD", 3) add("INVTYPE_CHEST", 3) add("INVTYPE_LEGS", 2) add("INVTYPE_FINGER", 4) add("INVTYPE_WEAPON", 2) add("INVTYPE_SHIELD", 2)
+		add("INVTYPE_2HWEAPON", 1) -- (not for one who holds a shield)
+		items[#items].s.sta = 500
+		local best
+		for _, h in ipairs(by.INVTYPE_HEAD) do for _, c in ipairs(by.INVTYPE_CHEST) do for _, l in ipairs(by.INVTYPE_LEGS) do
+			for i, r1 in ipairs(by.INVTYPE_FINGER) do for j, r2 in ipairs(by.INVTYPE_FINGER) do
+				if j > i or not r2 then
+					for _, w in ipairs(by.INVTYPE_WEAPON) do for _, sh in ipairs(by.INVTYPE_SHIELD) do
+						local list = {}
+						for _, it in pairs({ h, c, l, r1, r2, w, sh }) do if it then list[#list + 1] = it end end
+						local v = sum(list)
+						if not best or v > best then best = v end
+					end end
+				end
+			end end
+		end end end
+		local slots = BL.Choices(items, prof)
+		local picks = BL.Solve(slots, { def = 400, hit = 5 }, prof)
+		local list, seen = {}, {}
+		for _, p in ipairs(picks) do
+			for _, id in ipairs(p.ids) do
+				check(not seen[id], "an item is worn once")
+				seen[id] = true
+				list[#list + 1] = items[id]
+				check(items[id].loc ~= "INVTYPE_2HWEAPON", "what the profile's hands do not hold is left out")
+			end
+		end
+		check(math.abs(sum(list) - best) < 1e-6, ("round %d: the solver finds the best set (%s, by trying all %s)"):format(round, sum(list), best))
+	end
+	-- two of the same ring only where there are two
+	local one = BL.Choices({ { id = 1, loc = "INVTYPE_FINGER", s = { sta = 5 }, n = 1 } }, prof)
+	eq(#BL.Solve(one, {}, prof)[11].ids, 1, "one ring is worn once")
+	local two = BL.Choices({ { id = 1, loc = "INVTYPE_FINGER", s = { sta = 5 }, n = 2 } }, prof)
+	eq(#BL.Solve(two, {}, prof)[11].ids, 2, "two of it, twice")
+end
+
+---------------------------------------------------------------------------
+-- 1c. DB logic: rows, chunks, hashes, and two copies becoming one
+---------------------------------------------------------------------------
+
+do
+	local D = assert(loadfile(DIR .. "Core/DBLogic.lua"))()
+	eq(D.ChunkOf("item:872"), "item:3", "a row lies in the chunk of its number"); eq(D.ChunkOf("drops:644:872"), "drops:2", "a relation by what it starts from")
+	eq(D.ChunkOf("item:0"), "item:0", "the first chunk"); eq(D.ChunkOf("item:255"), "item:0", "holds 256 numbers"); eq(D.ChunkOf("item:256"), "item:1", "then the next")
+	check(D.ChunkOf("catch:Durotar"):find("^catch:s%d+$"), "a key without a number lies by its letters"); eq(D.ChunkOf("catch:Durotar"), D.ChunkOf("catch:Durotar"), "always the same place")
+	local rows = { ["item:872"] = { t = 100, src = "own", v = "Rockhide Strongfish;35" }, ["item:870"] = { t = 90, src = "guild", v = "" } }
+	local text = D.Build(rows)
+	eq(text, "item:870\t90\tguild\t\nitem:872\t100\town\tRockhide Strongfish;35", "a chunk is its rows, a line each, in the order of their keys")
+	local back = D.Parse(text)
+	eq(back["item:872"].v, "Rockhide Strongfish;35", "and reads back"); eq(back["item:872"].t, 100, "with its time"); eq(back["item:870"].src, "guild", "and source")
+	eq(D.Build(back), text, "to the same text"); eq(next(D.Parse("rubbish\nmore of it")), nil, "what is no row is left out")
+	eq(D.Clean("a\tb\nc"), "a b c", "nothing in a row breaks its line")
+	eq(#D.Hash(text), 16, "a hash is 16 hex digits"); eq(D.Hash(text), D.Hash(D.Build(back)), "the same rows hash the same")
+	check(D.Hash(text) ~= D.Hash(text .. " "), "another text another hash"); check(D.Hash("ab") ~= D.Hash("ba"), "the order counts too")
+	eq(D.Roll({ a = "1", b = "2" }), D.Roll({ b = "2", a = "1" }), "the hash of many does not depend on the order they are named in")
+	-- which row wins
+	local now = 1000
+	eq(D.Wins({ t = 5, v = "x" }, nil, now), true, "a row I have none of is taken"); eq(D.Wins({ t = 6, v = "x" }, { t = 5, v = "y" }, now), true, "a newer one too")
+	eq(D.Wins({ t = 4, v = "x" }, { t = 5, v = "y" }, now), false, "an older one not"); eq(D.Wins({ t = now + 301, v = "x" }, nil, now), false, "nor one from the future")
+	eq(D.Wins({ t = 5, v = ("x"):rep(2001) }, nil, now), false, "nor one far too long"); eq(D.Wins({ t = 5 }, nil, now), false, "nor one that is no row")
+	eq(D.Wins({ t = 5, v = "b" }, { t = 5, v = "a" }, now), true, "of two of one second the later text"); eq(D.Wins({ t = 5, v = "a" }, { t = 5, v = "b" }, now), false, "on both sides the same")
+	-- two copies that each know what the other does not end the same
+	local mine = { ["npc:1"] = { t = 10, src = "own", v = "Wolf" }, ["npc:2"] = { t = 10, src = "own", v = "Boar" } }
+	local theirs = { ["npc:2"] = { t = 20, src = "own", v = "Big Boar" }, ["npc:3"] = { t = 5, src = "own", v = "Bat" } }
+	eq(D.Merge(mine, theirs, now), 2, "theirs laid into mine: two rows taken"); eq(D.Merge(theirs, mine, now), 1, "mine into theirs: one")
+	eq(D.Build(mine), D.Build(theirs), "and both hold the same"); eq(mine["npc:2"].v, "Big Boar", "the newer of what both had")
+	eq(D.Merge(mine, theirs, now), 0, "a second time nothing is taken")
+	eq(D.Merge({}, theirs, now, function(key) return key == "npc:3" end), 2, "a row may be refused")
+	eq(table.concat(D.Differ({ a = "1", b = "2", c = "3" }, { a = "1", b = "9", d = "4" }), ","), "b,c,d", "what two copies must exchange: the chunks that differ or that one lacks")
+	-- counters
+	eq(D.Counter(52, { [872] = 7, [5] = 60 }), "52;5:52,872:7", "a counter: looted, and each item seen (never more often than looted)")
+	local n, items = D.Counted("52;5:52,872:7")
+	eq(n, 52, "read back"); eq(items[872], 7, "with its items"); eq(select(1, D.Counted("rubbish")), 0, "rubbish counts nothing")
+	eq(select(2, D.Counted("3;9:50"))[9], 3, "a count above what was looted is cut down")
+end
+
+---------------------------------------------------------------------------
 -- 2. A fake game, one per guild member, on one clock and one guild channel
 ---------------------------------------------------------------------------
 
@@ -140,7 +259,8 @@ local LibDeflate = {
 		return (text:gsub("..", function(h) return string.char(tonumber(h, 16)) end))
 	end,
 }
-local FILES = { "Core/Logic.lua", "Core/Core.lua", "Core/Comms.lua", "Core/UI.lua", "Core/Builtins.lua", "Core/Profiles.lua", "Market/Capture.lua", "Market/Sync.lua", "Market/UI.lua", "Data/QuestRewards.lua", "Data/CraftSkill.lua", "Modules/Inventory.lua", "Modules/Fish.lua", "Modules/Food.lua", "Modules/Craft.lua", "Modules/Npc.lua", "Modules/Quest.lua", "Modules/Item.lua", "Modules/Zone.lua", "Modules/Combat.lua", "Tools/Tools.lua", "Tools/Range.lua", "Tools/Mp5.lua", "Tools/Tracker.lua", "Tools/Enemies.lua", "Tools/Carrot.lua", "Core/Changelog.lua", "Core/Home.lua" }
+-- ("../DawnTools_Seed/": the data files, kept out of the addon: see Core/DBSeed.lua)
+local FILES = { "Core/Logic.lua", "Core/BisLogic.lua", "Core/Core.lua", "Core/Comms.lua", "Core/UI.lua", "Core/Builtins.lua", "Core/Profiles.lua", "Core/DBLogic.lua", "Core/DB.lua", "Core/DBImport.lua", "Core/DBSeed.lua", "Market/Capture.lua", "Market/Sync.lua", "Market/UI.lua", "../DawnTools_Seed/CraftSkill.lua", "../DawnTools_Seed/Dungeons.lua", "../DawnTools_Seed/BisProfiles.lua", "Data/BisLists.lua", "Modules/Inventory.lua", "Modules/Fish.lua", "Modules/Food.lua", "Modules/Craft.lua", "Modules/Npc.lua", "Modules/Quest.lua", "Modules/Item.lua", "Modules/Zone.lua", "Modules/Dungeon.lua", "Modules/Favs.lua", "Modules/Finds.lua", "Modules/Combat.lua", "Modules/Bis.lua", "Tools/Tools.lua", "Tools/Range.lua", "Tools/Mp5.lua", "Tools/Tracker.lua", "Tools/Enemies.lua", "Tools/Carrot.lua", "Tools/ChatHistory.lua", "Core/DBSync.lua", "Core/Changelog.lua", "Core/Home.lua" }
 
 local function after(delay, fn, owner) timers[#timers + 1] = { at = now + delay, fn = fn, owner = owner } end
 local function Now() return BASE + math.floor(now) end
@@ -255,6 +375,7 @@ local function NewClient(name, opts)
 		end,
 		GetText = function(self) return self.text end,
 		SetEnabled = function(self, v) self.enabled = v and true or false end,
+		SetTexture = function(self, texture) self.texture = texture end,
 		SetChecked = function(self, v) self.checked = v and true or false end,
 		GetChecked = function(self) return self.checked end,
 		SetMinMaxValues = function(self, min, max) self.min, self.max = min, max end,
@@ -308,7 +429,10 @@ local function NewClient(name, opts)
 	env.SecureHandlerWrapScript = function(_, _, _, body) c.wrapBody = body end
 	env.UIParent, env.UISpecialFrames = Widget(), {}
 	env.GameTooltip, env.ItemRefTooltip = Widget("GameTooltip"), Widget("GameTooltip")
-	env.TooltipDataProcessor = { AddTooltipPostCall = function(_, fn) c.tooltipHook = fn end }
+	env.TooltipDataProcessor = { AddTooltipPostCall = function(_, fn)
+		local old = c.tooltipHook -- (every module that adds lines is heard, in the order they asked)
+		c.tooltipHook = old and function(...) old(...) fn(...) end or fn
+	end }
 	env.Enum = { TooltipDataType = { Item = 0 }, AuctionHouseSortOrder = { Price = 0 },
 		AuctionHouseFilter = setmetatable({}, { __index = function(_, k) return k end }) }
 	-- the auction house answers a list query, or a request for more, with its next page
@@ -412,17 +536,22 @@ local function NewClient(name, opts)
 
 	-- the guild channel: everyone in the guild hears a message, its sender too
 	local AceComm = { Embed = function(_, target)
-		target.RegisterComm = function(t, _, method)
-			c.hear = function(...) t[method](t, ...) end
+		-- (each prefix has its listener; a whisper reaches the one it is addressed to, the rest the whole guild)
+		target.RegisterComm = function(t, prefix, method)
+			c.hears = c.hears or {}
+			c.hears[prefix] = function(...) t[method](t, ...) end
+			c.hear = function(heard, ...)
+				if c.hears[heard] then c.hears[heard](heard, ...) end
+			end
 		end
-		target.SendCommMessage = function(_, prefix, text, distribution, _, prio, told)
+		target.SendCommMessage = function(_, prefix, text, distribution, to, prio, told)
 			assert(#prefix <= 16 and not text:find("%z"), "a message the game would refuse")
 			assert(not c.combat and not (c.instance and not c.DT.db.settings.instances), "sent where addon messages are restricted")
-			sent[#sent + 1] = { from = name, text = text, prio = prio }
+			sent[#sent + 1] = { from = name, text = text, prio = prio, prefix = prefix, distribution = distribution, to = to }
 			if told then told(nil, #text, #text, c.refuse or 0) end -- (the game's answer: 0 is "taken")
 			after(0.1, function()
 				for _, other in ipairs(clients) do
-					if other.guild and other.hear then other.hear(prefix, text, distribution, c.wire) end
+					if other.guild and other.hear and (distribution ~= "WHISPER" or other.wire == to) then other.hear(prefix, text, distribution, c.wire) end
 				end
 			end)
 		end
@@ -446,7 +575,15 @@ local function NewClient(name, opts)
 	local DT = {}
 	c.DT = DT
 	for _, file in ipairs(FILES) do
-		assert(loadfile(DIR .. file, "t", env))("DawnTools", DT)
+		-- (the recipes and dungeons are not in the addon: here they are put straight into its tables, as if the
+		-- store had been filled; a client made with noData starts without, as a new member does)
+		local SEED = "../DawnTools_Seed/"
+		local data = file:sub(1, #SEED) == SEED
+		if not (data and opts.noData) then
+			local chunk = loadfile(DIR .. file, "t", env)
+			if not chunk and data then error("the checks need the game data beside the addon: " .. SEED .. " (make it with tools/craftskill.js and tools/dungeons.js)") end
+			assert(chunk, file)("DawnTools", DT)
+		end
 	end
 	if opts.before then opts.before(DT) end
 	clients[#clients + 1] = c
@@ -468,10 +605,12 @@ local function leave(c)
 end
 
 -- messages on the channel of one kind (and from one member, if given)
-local function count(kind, from)
+local function count(kind, from, mod) -- (the Market's kinds are counted of the Market alone: other modules share under the same switch now)
 	local n = 0
+	mod = mod or ({ REQUEST = "market", DATA = "market", PUSH = "market" })[kind]
+	local what = (mod and mod or "") .. "	" .. kind .. "	"
 	for _, m in ipairs(sent) do
-		if m.text:find("\t" .. kind .. "\t", 1, true) and (not from or m.from == from) then n = n + 1 end
+		if m.text:find(what, 1, true) and (not from or m.from == from) then n = n + 1 end
 	end
 	return n
 end
@@ -492,8 +631,8 @@ local updates = 0
 A.env.DawnMarket.API.RegisterForUpdate(function() updates = updates + 1 end)
 eq(A.popups[1], nil, "the question waits a moment")
 step(6)
-eq(A.popups[1], "DAWNTOOLS_MARKET_SHARE", "first launch asks about sharing")
-eq(A.M.db.settings.share, nil, "and nothing is decided for the player")
+eq(A.popups[1], "DAWNTOOLS_SHARE", "first launch asks about sharing")
+eq(A.DT.db.settings.share, nil, "and nothing is decided for the player")
 
 A.searched[100] = { { 50, 10 }, { 100, 10 } }
 A.fire("COMMODITY_SEARCH_RESULTS_UPDATED", 100)
@@ -581,11 +720,11 @@ eq(A.M.Sync.queued, 0, "nothing is even queued")
 -- 4. Two members sharing: HELLO, REQUEST, DATA, PUSH
 ---------------------------------------------------------------------------
 
-A.env.StaticPopupDialogs.DAWNTOOLS_MARKET_SHARE.OnAccept()
-eq(A.M.db.settings.share, true, "Alice says yes")
+A.env.StaticPopupDialogs.DAWNTOOLS_SHARE.OnAccept()
+eq(A.DT.db.settings.share, true, "Alice says yes")
 
 local B = NewClient("Bob")
-B.env.StaticPopupDialogs.DAWNTOOLS_MARKET_SHARE.OnAccept()
+B.env.StaticPopupDialogs.DAWNTOOLS_SHARE.OnAccept()
 step(30)
 check(A.DT.Comms.peers["Bob-Forever"], "Alice heard Bob"); check(B.DT.Comms.peers["Alice-Forever"], "Bob heard Alice, who answered a newcomer")
 eq(B.DT.Comms.peers["Alice-Forever"].version, A.DT.VERSION, "with her version")
@@ -704,7 +843,6 @@ local B2 = NewClient("Bob", { db = saved, auctionator = auctionator, day0 = DAY0
 eq(B2.items()[100].p, 60, "prices are saved"); eq(B2.items()[100].n, "Copper Bar", "with their names")
 eq(B2.popups[1], nil, "the question is not asked twice")
 step(40)
-eq(B2.popups[1], nil, "really not")
 eq(count("REQUEST", "Bob"), requests, "nothing happened meanwhile: nothing for Bob to ask for")
 eq(count("REQUEST", "Alice"), 1, "Alice, who never caught up with anyone, asks Bob")
 eq(A.items()[7000] and A.items()[7000].p, 5, "and gets what Bob heard from others"); eq(A.M.Sync.done, true, "so she is in step too")
@@ -753,7 +891,7 @@ step(5)
 eq(count("DATA", "Alice"), answered, "a request for someone else is not mine to answer")
 
 -- sharing off: deaf and mute
-B3.M.db.settings.share = false
+B3.DT.db.settings.share = false
 local pushes, answers = count("PUSH", "Bob"), count("DATA", "Bob")
 B3.searched[600] = { { 12, 5 } }
 B3.fire("COMMODITY_SEARCH_RESULTS_UPDATED", 600)
@@ -788,16 +926,16 @@ end
 local UI = C.DT.UI
 eq(C.env.SLASH_DAWNTOOLS1, "/dawntools", "the long command"); eq(C.env.SLASH_DAWNTOOLS2, nil, "/dt is left to the addon that has it")
 eq(A.env.SLASH_DAWNTOOLS2, "/dt", "and taken when free"); eq(A.env.SLASH_DAWNTOOLS_MARKET1, "/dtmarket", "the module's short command")
-eq(ids(UI:TabList()), "home early market demo inventory craft world combat tools", "tabs in their default order")
+eq(ids(UI:TabList()), "home early market favs demo inventory craft world combat bis tools", "tabs in their default order")
 UI:MoveTab("demo", -1)
-eq(ids(UI:TabList()), "home early demo market inventory craft world combat tools", "a tab moved up")
+eq(ids(UI:TabList()), "home early market demo favs inventory craft world combat bis tools", "a tab moved up")
 UI:MoveTab("home", -1)
-eq(ids(UI:TabList()), "home early demo market inventory craft world combat tools", "the first cannot go higher")
+eq(ids(UI:TabList()), "home early market demo favs inventory craft world combat bis tools", "the first cannot go higher")
 UI:MoveTab("early", 1)
 UI:MoveTab("early", 1)
-eq(ids(UI:TabList()), "home demo market early inventory craft world combat tools", "moved down twice")
+eq(ids(UI:TabList()), "home market demo early favs inventory craft world combat bis tools", "moved down twice")
 C.DT.db.tabs.hidden.market = true
-eq(ids(UI:TabList()), "home demo early inventory craft world combat tools", "a hidden tab is off the bar"); eq(ids(UI:TabList(true)), "home demo market early inventory craft world combat tools", "but still there")
+eq(ids(UI:TabList()), "home demo early favs inventory craft world combat bis tools", "a hidden tab is off the bar"); eq(ids(UI:TabList(true)), "home market demo early favs inventory craft world combat bis tools", "but still there")
 C.searched[100] = { { 50, 10 } }
 C.fire("COMMODITY_SEARCH_RESULTS_UPDATED", 100)
 eq(C.items()[100].p, 50, "and its module keeps working")
@@ -816,7 +954,7 @@ do
 	eq(Home.log.rows[1].text, lines[1], "and is drawn, newest first")
 	local guide = {}
 	for _, b in ipairs(Home.guide) do if b.shown then guide[#guide + 1] = b.tab end end
-	eq(table.concat(guide, " "), "demo early inventory craft world combat tools settings", "where things are: the tabs on the bar, in order (hidden ones left out)")
+	eq(table.concat(guide, " "), "demo early favs inventory craft world combat bis tools settings", "where things are: the tabs on the bar, in order (hidden ones left out)")
 	local craftLine
 	for _, b in ipairs(Home.guide) do if b.tab == "craft" then craftLine = b end end
 	check(craftLine.label.text:find("(Fishing, Cooking, First Aid, Mining, Campsite, Alchemy, Blacksmithing, Enchanting, Engineering, Leatherworking, Tailoring)", 1, true), "a place names what is under it: " .. craftLine.label.text)
@@ -898,7 +1036,7 @@ end
 leave(C)
 local off = C.env.DawnToolsDB.modules
 off.market, off.inventory, off.fish, off.food, off.combat, off.npc, off.quest, off.tools, off.range, off.mp5, off.tracker, off.home, off.item, off.zone = false, false, false, false, false, false, false, false, false, false, false, false, false, false
-off.crafts = false
+off.crafts, off.dungeon, off.dungeonlist, off.favs, off.chathistory, off.carrot, off.enemies, off.bis, off.finds = false, false, false, false, false, false, false, false, false
 local D = NewClient("Carol", { db = C.env.DawnToolsDB })
 eq(ids(D.DT.UI:TabList(true)), "", "no tab for a module switched off")
 D.fire("COMMODITY_SEARCH_RESULTS_UPDATED", 100)
@@ -1182,6 +1320,50 @@ for _, w in ipairs(A.widgets) do
 	end
 end
 check(A.DT.db.size and A.DT.db.size[1] > 0, "the window's size is saved")
+;(function() -- the corner is pulled by a sum of our own: start size plus how far the mouse went, never a leap
+	local frame, grip = A.DT.UI.frame, A.DT.UI.grip
+	check(frame and grip, "(the window and its corner)")
+	local e = A.env
+	local mouse, down = { 500, 300 }, true
+	e.GetCursorPosition = function() return mouse[1], mouse[2] end
+	e.IsMouseButtonDown = function() return down end
+	local sized = 0
+	local wasSize, wasStart = frame.SetSize, frame.StartSizing
+	frame.SetSize = function(self, w, h) sized = sized + 1 self.w, self.h = w, h end
+	frame.GetWidth = function(self) return self.w or 1000 end
+	frame.GetHeight = function(self) return self.h or 600 end
+	frame.StartSizing = function() error("the game's own sizing is not used") end
+	frame.w, frame.h = 1000, 600
+	grip.scripts.OnMouseDown(grip)
+	eq(sized, 0, "taking the corner changes nothing by itself: no leap")
+	mouse = { 560, 260 } -- (60 to the right, 40 down: the screen's y grows upward)
+	grip.scripts.OnUpdate(grip, 0.02)
+	eq(frame.w, 1060, "the window is as much wider as the mouse went right"); eq(frame.h, 640, "and as much taller as it went down")
+	mouse = { 100, 900 }
+	grip.scripts.OnUpdate(grip, 0.02)
+	eq(frame.w, 900, "pulled far in: no smaller than the least"); eq(frame.h, 420, "either way")
+	mouse = { 99999, -99999 }
+	grip.scripts.OnUpdate(grip, 0.02)
+	eq(frame.w, 900 + 500 - 40, "pulled far out with the screen's size not known: a limit all the same, not as far as it is pulled"); eq(frame.h, 420 + 400 - 40, "both ways")
+	local up = e.UIParent
+	local wasW, wasH, wasGH = up.w, up.h, up.GetHeight
+	up.w, up.h = 1920, 1080
+	up.GetHeight = function(self) return self.h end
+	grip.scripts.OnUpdate(grip, 0.02)
+	eq(frame.w, 1880, "with the screen known: the screen less a margin"); eq(frame.h, 1040, "both ways")
+	up.w, up.h, up.GetHeight = wasW, wasH, wasGH
+	mouse = { 600, 250 }
+	grip.scripts.OnUpdate(grip, 0.02)
+	grip.scripts.OnMouseUp(grip)
+	eq(A.DT.db.size[1], 1100, "let go: the size is saved"); eq(A.DT.db.size[2], 650, "both ways"); eq(grip.scripts.OnUpdate, nil, "and the pulling is over")
+	-- let go where the corner did not hear of it
+	grip.scripts.OnMouseDown(grip)
+	down = false
+	grip.scripts.OnUpdate(grip, 0.02)
+	eq(grip.scripts.OnUpdate, nil, "the button let go elsewhere: the window is put down, not left hanging on the mouse")
+	frame.SetSize, frame.StartSizing, frame.GetWidth, frame.GetHeight = wasSize, wasStart, nil, nil
+	e.GetCursorPosition, e.IsMouseButtonDown = nil, nil
+end)()
 
 local firstRow
 for _, w in ipairs(A.widgets) do if w.cells and not firstRow then firstRow = w end end
@@ -1235,7 +1417,7 @@ search:SetText("")
 -- Every script of every widget is run (hover, click with both buttons, wheel, drag, typing), on every tab.
 -- Nothing may raise an error and no text may show a formatting accident.
 local function UseEverything(label)
-	for _, tab in ipairs({ "home", "market", "inventory", "fish", "food", "npc", "quest", "item", "zone", "combat", "tools", "settings" }) do
+	for _, tab in ipairs({ "home", "market", "inventory", "fish", "food", "npc", "quest", "item", "zone", "combat", "bis", "tools", "settings" }) do
 		A.slash(tab)
 		for _, w in ipairs(A.widgets) do
 			local s = w.scripts
@@ -1515,7 +1697,7 @@ A.fire("MERCHANT_SHOW")
 eq(GetVendor(100), 30, "a seller's own price is brought up to date")
 A.npcName = nil
 click(section("All items"))
-;(function() -- vendor prices go to the guild like the auction prices: under the same switch, what I saw myself only
+;(function() -- vendor prices are rows of the store: they go to the guild with it, under the same switch, and no name is in them
 	local V1, V2 = NewClient("Vera"), NewClient("Walt")
 	local function open(c, npc, goods)
 		c.env.GetMerchantNumItems = function() return #goods end
@@ -1527,61 +1709,65 @@ click(section("All items"))
 		c.fire("MERCHANT_SHOW")
 		c.npcName = nil
 	end
-	local function vend(who) return count("HAVE", who) end
+	local first = #sent + 1
+	local function whispers() -- (the store's sync: whispers of the game database since this block began)
+		local n = 0
+		for i = first, #sent do if sent[i].prefix == "DAWND" then n = n + 1 end end
+		return n
+	end
+	local d1, d2 = V1.DT.DB, V2.DT.DB
 	open(V1, "Grimtak", { { 7001, 40 }, { 7002, 500, 1 } })
-	step(100)
-	eq(vend("Vera"), 0, "sharing not agreed to: a vendor's prices stay here"); eq((V1.DT.Comms:Totals().mods.vendors or { o = 0 }).o, 0, "and nothing is counted as sent")
-	V1.env.StaticPopupDialogs.DAWNTOOLS_MARKET_SHARE.OnAccept()
-	V2.env.StaticPopupDialogs.DAWNTOOLS_MARKET_SHARE.OnAccept()
-	check(V1.env.StaticPopupDialogs.DAWNTOOLS_MARKET_SHARE.text:find("what vendors", 1, true), "the question says vendor prices are part of it")
-	V1.DT.Comms:Hello(); V2.DT.Comms:Hello()
-	step(100)
-	-- Walt had nothing: he asks Vera for what she saw, and gets it
-	check(count("WANT") >= 1, "a member who saw something at vendors is asked for it"); eq(vend("Vera"), 1, "and answers once, however many asked")
-	local got = V2.M.db.vendors[7001]
-	eq(got and got.p, 40, "the price arrives"); eq(got.v, "Grimtak", "with the vendor"); eq(got.z, "Razor Hill, Durotar", "and the place"); check(got.r, "marked as the guild's")
-	eq(V2.M.db.vendors[7002].l, true, "limited stock too")
-	eq(select(1, V2.env.DawnMarket.API.GetVendor(7001)), 40, "and it is used like one seen here")
-	eq(V2.M.db.vpeers["Vera"] ~= nil, true, "what I have of a member is remembered")
-	-- a new sighting goes out by itself; one only seen again does not
-	local n = vend("Vera")
-	open(V1, "Grimtak", { { 7001, 40 }, { 7003, 9 } })
-	step(100)
-	eq(vend("Vera"), n + 1, "something new at a vendor is told once"); eq(V2.M.db.vendors[7003].p, 9, "and taken in")
-	open(V1, "Grimtak", { { 7001, 40 }, { 7003, 9 } })
-	step(100)
-	eq(vend("Vera"), n + 1, "the same prices seen again: nothing sent")
-	-- what came from the guild is not passed on, and is not my own sighting
-	eq(V2.M.Sync:VendorHello(), "0,0", "what came from the guild does not count as seen by me")
-	local nW = vend("Walt")
-	V1.DT.Comms:Hello(); V2.DT.Comms:Hello()
 	step(700)
-	eq(vend("Walt"), nW, "so it is never sent on")
-	-- my own sighting stands against another's; a cheaper seller wins
-	open(V2, "Grimtak", { { 7001, 38 } }) -- (Walt's own price there: a discount, say)
+	eq(whispers(), 0, "sharing not agreed to: a vendor's prices stay here"); eq(d2.Vendor(7001), nil, "and none come in"); eq(V1.M.db.vendors, nil, "(there is no saved table of them beside the store)")
+	V1.env.StaticPopupDialogs.DAWNTOOLS_SHARE.OnAccept()
+	V2.env.StaticPopupDialogs.DAWNTOOLS_SHARE.OnAccept()
+	check(V1.env.StaticPopupDialogs.DAWNTOOLS_SHARE.text:find("what vendors", 1, true), "the question says vendor prices are part of it")
+	step(700)
+	-- Walt had nothing: the store's sync gives him what Vera saw
+	local got = d2.Vendor(7001)
+	eq(got and got.p, 40, "the price arrives"); eq(got.v, "Grimtak", "with the vendor"); eq(got.z, "Razor Hill, Durotar", "and the place")
+	eq(d2.Row("vendor:7001").src, "guild", "as a row of what the guild learned"); eq(d2.Vendor(7002).l, true, "limited stock too")
+	eq(select(1, V2.env.DawnMarket.API.GetVendor(7001)), 40, "and it is used like one seen here"); eq(d1.Root(), d2.Root(), "both hold the same")
+	check(whispers() > 0, "by whisper, as the store goes")
+	-- a new sighting travels by itself; one only seen again changes nothing
+	open(V1, "Grimtak", { { 7001, 40 }, { 7003, 9 } })
+	step(700)
+	eq(d2.Vendor(7003).p, 9, "something new at a vendor is taken in")
+	local root, t = d1.Root(), d1.Row("vendor:7001").t
 	step(100)
-	eq(V1.M.db.vendors[7001].p, 40, "what I saw myself at a vendor is not replaced by another member's price there")
+	open(V1, "Grimtak", { { 7001, 40 }, { 7003, 9 } })
+	eq(d1.Root(), root, "the same prices seen again: nothing changes"); eq(d1.Row("vendor:7001").t, t, "not even the time")
+	-- a cheaper seller is kept; a seller's own price is brought up to date; between members the newer sighting stands
 	open(V2, "Cheap Chad", { { 7003, 5 } })
-	step(100)
-	eq(V1.M.db.vendors[7003].p, 5, "a cheaper seller is taken"); eq(V1.M.db.vendors[7003].v, "Cheap Chad", "with its name")
-	-- nonsense is left out
-	local before = V1.M.db.vendors[7001]
-	local bad = packed("HAVE", "7001;0;0;5;X;Y\n-3;5;0;5;X;Y\n7009;7;0;5;;Y\n7010;7;2;5;X;Y\nrubbish\n7011;7;0;5;Good Name;Pla;ce\n7012;7;0;5;Hon|cffff0000est Hal;Here", nil):gsub("^market", "vendors")
-	inject(V1, "Walt-Forever", bad)
-	step(1)
-	eq(V1.M.db.vendors[7012] and V1.M.db.vendors[7012].p, 7, "(the message is read: its one good line is taken)")
-	eq(V1.M.db.vendors[7012].v, "Honcffff0000est Hal", "a name's colour code is taken apart"); eq(V1.M.db.vendors[7011], nil, "a line with a field too many is not taken")
-	eq(V1.M.db.vendors[7001], before, "a price of nothing is not taken"); eq(V1.M.db.vendors[7009], nil, "nor a line without a vendor"); eq(V1.M.db.vendors[7010], nil, "nor a malformed one")
-	-- the counts, kept for the Data Sync page
+	eq(d2.Vendor(7003).p, 5, "a cheaper seller is taken"); eq(d2.Vendor(7003).v, "Cheap Chad", "with its name")
+	open(V2, "Dear Dan", { { 7003, 50 } })
+	eq(d2.Vendor(7003).v, "Cheap Chad", "a dearer one is not")
+	open(V2, "Cheap Chad", { { 7003, 6 } })
+	eq(d2.Vendor(7003).p, 6, "the cheap one's own price is brought up to date")
+	step(700)
+	eq(d1.Vendor(7003).p, 6, "and the guild has it"); eq(d1.Root(), d2.Root(), "both hold the same")
+	-- a name of a player is in none of it
+	for chunk in pairs(d1.Hashes()) do
+		check(not d1.Text(chunk):find("Vera", 1, true) and not d1.Text(chunk):find("Walt", 1, true), "no player's name in a row of " .. chunk)
+	end
+	-- rows from the wire are read for what they are
+	local rows, at = {}, Now() + 100
+	for key, values in pairs({ [7009] = { 0, 0, "X", "Y" }, [7010] = { 7, 0 }, [7011] = { 7, 0, "Good Name", "Pla" }, [7012] = { 7, 0, "Hon|cffff0000est Hal", "Here" }, [7013] = { 7, 0, "", "Here" } }) do
+		rows[#rows + 1] = ("vendor:%d\t%d\tguild\t%s"):format(key, at, V1.DT.DBLogic.Pack(values, 4))
+	end
+	check(d1.Take("vendor:27", table.concat(rows, "\n")) == 5, "rows of any shape may come over the wire")
+	eq(d1.Vendor(7012).p, 7, "the good one is read"); eq(d1.Vendor(7012).v, "Honcffff0000est Hal", "a name's colour code is taken apart")
+	eq(d1.Vendor(7009), nil, "a price of nothing is not read"); eq(d1.Vendor(7010), nil, "nor a row without a vendor"); eq(d1.Vendor(7013), nil, "nor one with an empty name")
+	eq(d1.Vendor(7011).v, "Good Name", "one with less than the whole is read as far as it goes")
+	-- the counts, kept for the Data Sync page: the four old kinds are gone from it
 	local totals = V1.DT.Comms:Totals()
-	check(totals.mods.vendors.o >= 2 and totals.mods.vendors.ob > 0, "messages sent are counted by module, with their size"); check(totals.mods.vendors.i >= 1, "and those received")
-	check(totals.mods.core.i >= 1, "the hellos too")
+	eq(totals.mods.vendors, nil, "no message is counted as the vendors' own any more"); check(totals.mods.core.i >= 1, "the hellos are")
 	V1.slash("settings")
 	V1.DT.UI:ShowSection("sync")
 	local text = V1.DT.UI.syncText.text
-	check(text:find("Vendor price sharing|r  sent %d+ messages"), "the Data Sync page lists them by module: " .. text)
+	check(not text:find("Vendor price sharing", 1, true), "the Data Sync page has no line of their own: " .. text)
 	check(text:find("Total|r  sent", 1, true) and text:find("Who has the addon", 1, true), "with the hellos and a total")
-	check(text:find("vendor prices, %d+ of them from the guild"), "and what is held")
+	check(text:find("%d+ vendor prices"), "and what is held: " .. text)
 	-- how complete each kind of data is, as bars
 	local bars, by = V1.DT.UI.syncBars, {}
 	for _, b in ipairs(bars) do if b.shown then by[b.label.text] = b end end
@@ -1605,7 +1791,7 @@ click(section("All items"))
 	V1.DT.Item.Ready, V1.DT.Item.All = wasItem, wasAll
 	local sync, food
 	for _, b in ipairs(V1.DT.UI.sectionButtons) do
-		if b.id == "sync" then sync = b elseif b.id == "module:food" then food = b end
+		if b.id == "sync" then sync = b elseif b.id == "module:market" then food = b end
 	end
 	check(sync.gap > 0 and food.gap == 0 and V1.DT.UI.sectionLine, "a line and some room part Data Sync from the settings above it")
 	-- the other addons it reads, and whether they are there
@@ -1659,7 +1845,7 @@ click(section("All items"))
 	eq(next(V1.DT.Comms:Totals().mods), nil, "the counting can be started anew"); check(V1.DT.UI.syncText.text:find("Nothing sent or received yet", 1, true), "and the page says so")
 	leave(V1); leave(V2)
 end)()
-;(function() -- what quests give goes to the guild too, where agreed to: with the level it was seen at
+;(function() -- what quests give is a row of the store: it goes with it, where agreed to, with the level it was seen at
 	local Q1, Q2 = NewClient("Quinn"), NewClient("Rosa")
 	local function see(c, id, money, xp, level, given, choice)
 		local e = c.env
@@ -1675,37 +1861,453 @@ end)()
 		end
 		c.fire("QUEST_DETAIL")
 	end
-	local function have(who) return count("HAVE", who) end
+	local first = #sent + 1
+	local function whispers()
+		local n = 0
+		for i = first, #sent do if sent[i].prefix == "DAWND" then n = n + 1 end end
+		return n
+	end
+	local d1, d2, seen2 = Q1.DT.DB, Q2.DT.DB, Q2.DT.Quest.SeenAll
 	see(Q1, 501, 250, 900, 12, { { 6001, 1 } }, { { 6002, 1 }, { 6003, 5 } })
-	step(100)
-	eq(have("Quinn"), 0, "not agreed to: what a quest gives stays here")
-	check(Q1.env.StaticPopupDialogs.DAWNTOOLS_QUEST_SHARE.text:find("the level you were", 1, true), "the question says what is sent, the level too")
-	Q1.env.StaticPopupDialogs.DAWNTOOLS_QUEST_SHARE.OnAccept()
-	Q2.env.StaticPopupDialogs.DAWNTOOLS_QUEST_SHARE.OnAccept()
-	Q1.DT.Comms:Hello(); Q2.DT.Comms:Hello()
-	step(100)
-	local got = Q2.DT.Quest.db.seen[501]
-	check(got, "a member who saw a quest's rewards is asked, and what they saw arrives")
-	eq(got.m, 250, "its money"); eq(got.x, 900, "its experience"); eq(got.l, 12, "the level it was seen at"); check(got.g, "marked as the guild's")
+	step(700)
+	eq(whispers(), 0, "not agreed to: what a quest gives stays here"); eq(seen2()[501], nil, "and none comes in"); eq(Q1.DT.modules.quest.db.seen, nil, "(there is no saved table of them beside the store)")
+	check(Q1.env.StaticPopupDialogs.DAWNTOOLS_SHARE.text:find("the level you were", 1, true), "the question says what is sent, the level too")
+	Q1.env.StaticPopupDialogs.DAWNTOOLS_SHARE.OnAccept()
+	Q2.env.StaticPopupDialogs.DAWNTOOLS_SHARE.OnAccept()
+	step(700)
+	local got = seen2()[501]
+	check(got, "a member who saw a quest's rewards: what they saw arrives with the store")
+	eq(got.m, 250, "its money"); eq(got.x, 900, "its experience"); eq(got.l, 12, "the level it was seen at"); eq(d2.Row("qreward:501").src, "guild", "a row of what the guild learned")
 	eq(#got.r, 1, "what is given"); eq(got.r[1][1], 6001, "by item"); eq(#got.c, 2, "what there is to choose from"); eq(got.c[2][1], 6003, "by item"); eq(got.c[2][2], 5, "and how many")
-	-- a new sighting goes out by itself, one only seen again does not
-	local n = have("Quinn")
+	local r = Q2.DT.Quest.Rewards({ id = 501, name = "Q501", level = 12 })
+	eq(r.seen, true, "the tab knows it as seen"); eq(r.money, 250, "its money"); eq(#r.items, 3, "and items")
+	-- a new sighting goes out by itself, one only seen again changes nothing
 	see(Q1, 502, 0, 40, 12, {}, {})
-	step(100)
-	eq(have("Quinn"), n + 1, "a quest seen for the first time is told once"); eq(Q2.DT.Quest.db.seen[502].x, 40, "and taken in")
+	step(700)
+	eq(seen2()[502].x, 40, "a quest seen for the first time is taken in")
+	local root = d1.Root()
 	see(Q1, 502, 0, 40, 12, {}, {})
-	step(100)
-	eq(have("Quinn"), n + 1, "looked at again, nothing changed: nothing sent")
-	-- what I see myself stands against the guild's, and replaces it
+	eq(d1.Root(), root, "looked at again, nothing changed: nothing is written")
+	-- the newer look stands, on both machines
 	see(Q2, 501, 250, 700, 30, { { 6001, 1 } }, { { 6002, 1 }, { 6003, 5 } }) -- (Rosa is level 30: less experience)
-	step(100)
-	eq(Q2.DT.Quest.db.seen[501].x, 700, "my own look at the quest giver replaces what the guild said"); eq(Q2.DT.Quest.db.seen[501].g, nil, "and is mine")
-	eq(Q1.DT.Quest.db.seen[501].x, 900, "what I saw myself is not replaced by another member's")
-	check(Q2.DT.Quest.Gossip:Hello():find("^1,%d+$"), "what came from the guild does not count as seen by me: " .. Q2.DT.Quest.Gossip:Hello())
-	inject(Q2, "Quinn-Forever", (packed("HAVE", "777;5;5;200;5;;\n778;5;5;5;5;1:1,2:2;\nrubbish;;", nil):gsub("^market", "quest")))
-	step(1)
-	eq(Q2.DT.Quest.db.seen[777], nil, "a level that cannot be is not taken"); eq(Q2.DT.Quest.db.seen[778] and #Q2.DT.Quest.db.seen[778].r, 2, "(a good line of the same message is)")
+	eq(seen2()[501].x, 700, "my own later look at the quest giver replaces what the guild said")
+	step(700)
+	eq(Q1.DT.Quest.SeenAll()[501].x, 700, "and the guild has it"); eq(d1.Root(), d2.Root(), "both hold the same")
+	for chunk in pairs(d1.Hashes()) do
+		check(not d1.Text(chunk):find("Quinn", 1, true) and not d1.Text(chunk):find("Rosa", 1, true), "no player's name in a row of " .. chunk)
+	end
+	-- rows from the wire are read for what they are
+	local at, DL = Now() + 100, Q2.DT.DBLogic
+	local text = ("qreward:777\t%d\tguild\t%s\nqreward:778\t%d\tguild\t%s\nqreward:779\t%d\tguild\t%s"):format(at, DL.Pack({ 5, 5, 200, {}, {} }, 5), at, DL.Pack({ 5, 5, 5, { 1, 1, 2, 2 }, {} }, 5), at, DL.Pack({ 5, 5, 5, { 1 }, {} }, 5))
+	check(d2.Take("qreward:3", text) == 3, "rows of any shape may come over the wire")
+	Q2.DT.DBSeed.Rebuild()
+	eq(seen2()[777], nil, "a level that cannot be is not read"); eq(seen2()[778] and #seen2()[778].r, 2, "(a good row is)"); eq(seen2()[779], nil, "an odd list of items is not read either")
 	leave(Q1); leave(Q2)
+end)()
+;(function() -- Chat History: Up and Down in the chat line, and what was sent kept for the next login
+	local function Box()
+		local box = { alt = "untouched", history = {} }
+		box.SetAltArrowKeyMode = function(self, on) self.alt = on end
+		box.AddHistoryLine = function(self, text) self.history[#self.history + 1] = text end
+		return box
+	end
+	local X = NewClient("Hugo")
+	local H = X.DT.ChatHistory
+	local one, two = Box(), Box()
+	X.env._G.ChatFrame1EditBox, X.env._G.ChatFrame2EditBox = one, two
+	X.env.NUM_CHAT_WINDOWS = 3
+	X.fire("UPDATE_CHAT_WINDOWS")
+	eq(H.db.settings.on, false, "off to begin with"); eq(one.alt, true, "the chat line is left as the game has it: the arrows only with Alt")
+	X.DT.Tools.Open("chathistory")
+	local tab
+	for _, w in ipairs(X.DT.Tools.buttons) do if w.id == "chathistory" then tab = w end end
+	H.boxes.on.checked = true
+	click(H.boxes.on)
+	eq(one.alt, false, "ticked: the plain arrow keys reach the chat line"); eq(two.alt, false, "of every chat window"); eq(tab.text, "|cff40ff40Chat History|r", "and its sub-tab is green")
+	-- what the game adds to its history is kept
+	one:AddHistoryLine("hello there")
+	one:AddHistoryLine("hello there")
+	two:AddHistoryLine("/dance")
+	eq(#H.db.lines, 2, "a line sent is kept; the same twice running, once"); eq(H.db.lines[2], "/dance", "from whichever chat window")
+	check(H.boxes.on and X.DT.Tools.Show, "(the page)")
+	for i = 1, 60 do one:AddHistoryLine("line " .. i) end
+	eq(#H.db.lines, 50, "the last fifty are kept"); eq(H.db.lines[50], "line 60", "the newest last"); eq(H.db.lines[1], "line 11", "the oldest gone")
+	H.boxes.keep.checked = false
+	click(H.boxes.keep)
+	one:AddHistoryLine("not this one")
+	eq(H.db.lines[50], "line 60", "remembering switched off: nothing more is kept")
+	H.boxes.keep.checked = true
+	click(H.boxes.keep)
+	H.boxes.on.checked = false
+	click(H.boxes.on)
+	eq(one.alt, true, "unticked: back to the arrows with Alt")
+	H.boxes.on.checked = true
+	click(H.boxes.on)
+	-- the next login: the lines are handed back to the game's history, and not kept a second time
+	leave(X)
+	local Y = NewClient("Hugo", { db = X.env.DawnToolsDB })
+	local three = Box()
+	Y.env._G.ChatFrame1EditBox = three
+	Y.fire("UPDATE_CHAT_WINDOWS")
+	local Hy = Y.DT.ChatHistory
+	eq(three.alt, false, "the switch is remembered"); eq(#three.history, 50, "the lines kept are handed back to the chat line"); eq(three.history[1], "line 11", "oldest first")
+	eq(three.history[50], "line 60", "so that Up brings the newest back first"); eq(#Hy.db.lines, 50, "and they are not kept a second time")
+	Y.fire("UPDATE_CHAT_WINDOWS")
+	eq(#three.history, 50, "nor handed back twice")
+	Y.DT.Tools.Open("chathistory")
+	click(Hy.forget)
+	eq(#Hy.db.lines, 0, "Forget empties what was kept")
+	leave(Y)
+end)()
+;(function() -- Favourites: the tab with the star; an Alt-click anywhere makes an item one
+	local X = NewClient("Fern")
+	local Favs, e = X.DT.Favs, X.env
+	local tab
+	for _, tb in ipairs(X.DT.UI:TabList(true)) do if tb.id == "favs" then tab = tb end end
+	check(tab and tab.icon, "a tab of its own, with a picture for a name")
+	local order = {}
+	for i, tb in ipairs(X.DT.UI:TabList(true)) do order[tb.id] = i end
+	eq(order.favs, order.market + 1, "beside Market")
+	eq(Favs.Is(872), false, "nothing is a favourite to begin with")
+	local tip = e.GameTooltip
+	local was = tip.lines
+	tip.lines = {}
+	Favs.Hint(tip, 872)
+	check(tip.lines[1]:find("Alt-click: make it a favourite", 1, true), "an item's tooltip says what an Alt-click does")
+	Favs.Toggle(872)
+	tip.lines = {}
+	Favs.Hint(tip, 872)
+	check(tip.lines[1]:find("Alt-click: no longer a favourite", 1, true), "and the other way for one that is a favourite")
+	Favs.Toggle(872)
+	tip.lines = was
+	eq(Favs.Toggle(872, "Rockslicer"), true, "made one"); eq(Favs.Is(872), true, "and it is"); check(X.printed[#X.printed]:find("Rockslicer: a favourite now", 1, true), "said in chat")
+	eq(X.M.db.favs[872], true, "kept where the Market tab keeps its own: one list for both")
+	eq(Favs.Toggle(872), false, "and unmade")
+	-- Alt-click on an item row of ours
+	e.IsAltKeyDown = function() return true end
+	eq(X.DT:LinkClick("LeftButton", "[x]", "Rockslicer", "url", 872), true, "an Alt-click on an item row is dealt with"); eq(Favs.Is(872), true, "it makes the item a favourite")
+	eq(X.DT:LinkClick("LeftButton", "[q]", "A quest", "url"), false, "a row that is no item is left alone")
+	-- Alt-click anywhere in the game
+	X.DT.FavTab.OnModifiedClick("|cffffffff|Hitem:1475::::|h[Large Venom Sac]|h|r")
+	eq(Favs.Is(1475), true, "an Alt-click on an item anywhere in the game makes it one too")
+	e.IsShiftKeyDown = function() return true end
+	X.DT.FavTab.OnModifiedClick("|cffffffff|Hitem:2589::::|h[Linen Cloth]|h|r")
+	eq(Favs.Is(2589), false, "not with Shift held as well: that is the game's own click")
+	e.IsShiftKeyDown = nil
+	e.IsAltKeyDown = function() return false end
+	X.DT.FavTab.OnModifiedClick("|cffffffff|Hitem:2589::::|h[Linen Cloth]|h|r")
+	eq(Favs.Is(2589), false, "nor without Alt")
+	-- the tab
+	X.items()[872] = { p = 5000, q = 1, t = Now(), o = "", d = {} }
+	X.DT.UI:Show("favs")
+	local rows = {}
+	for _, w in ipairs(X.widgets) do if w.vcols and w.shown and w.data then rows[#rows + 1] = w end end
+	eq(#rows, 2, "the favourites are listed"); check(X.DT.FavTab.note.text:find("2 favourites", 1, true), "and counted")
+	local rock
+	for _, w in ipairs(rows) do if w.data.id == 872 then rock = w end end
+	check(rock.data[5]:find("Drop|r  Rhahk'Zor, The Deadmines", 1, true), "where it comes from: the dungeon boss that drops it: " .. rock.data[5])
+	eq(rock.data[6], X.DT.Money(5000), "its auction price")
+	check(X.DT.FavTab.Where(2679):find("Made|r  Cooking", 1, true), "one a profession makes says which: " .. X.DT.FavTab.Where(2679))
+	eq(X.DT.FavTab.Where(999999999), "", "one nothing is known of: nothing said")
+	X.DT.FavTab.heads[6].scripts.OnClick(X.DT.FavTab.heads[6])
+	rows = {}
+	for _, w in ipairs(X.widgets) do if w.vcols and w.shown and w.data then rows[#rows + 1] = w end end
+	eq(rows[1].data.id, 872, "a click on Auction: the dearest first")
+	X.DT.FavTab.search:SetText("deadmines")
+	X.DT.FavTab.Refresh()
+	rows = {}
+	for _, w in ipairs(X.widgets) do if w.vcols and w.shown and w.data then rows[#rows + 1] = w end end
+	eq(#rows, 1, "the search box finds by where it comes from too")
+	X.DT.FavTab.search:SetText("")
+	e.IsAltKeyDown = function() return true end
+	rows[1].scripts.OnMouseUp(rows[1], "LeftButton")
+	eq(Favs.Is(872), false, "an Alt-click on a row here: no longer a favourite")
+	e.IsAltKeyDown = nil
+	Favs.Toggle(1475)
+	X.DT.FavTab.Refresh()
+	check(X.DT.FavTab.note.text:find("No favourites yet", 1, true), "none left: the tab says how to make one")
+	leave(X)
+end)()
+;(function() -- World > Dungeons: the dungeons with their levels, the bosses of one and what they drop
+	local X = NewClient("Dana")
+	local Dg = X.DT.Dungeon
+	-- the shipped list: no other addon needed
+	local all = Dg.All()
+	eq(#all, 35, "the shipped list: every dungeon that has loot known, without any other addon")
+	local dm
+	for i, d in ipairs(all) do
+		if d.name == "The Deadmines" then dm = d end
+		if i > 1 then check((all[i - 1].lo or 999) <= (d.lo or 999), "(the lowest first)") end
+	end
+	eq(dm.lo, 17, "a dungeon's levels"); eq(dm.hi, 26, "to"); eq(dm.bosses[1].name, "Rhahk'Zor", "its bosses in their order"); eq(dm.bosses[1].npc, 644, "by NPC")
+	eq(dm.bosses[1].items[1], 872, "what a boss drops"); eq(dm.bosses[2].rare, true, "a rare one is marked"); eq(dm.bosses[#dm.bosses].name, "Trash", "and last what the other mobs drop")
+	eq(Dg.Key("The Deadmines"), "deadmines", "a name as a key: its letters, without the The"); eq(Dg.Key("|cffffffffDeadmines|TInterface\\x:18|t|r"), "deadmines", "nor colour codes or pictures")
+	X.DT.UI:Show("dungeon")
+	local side = {}
+	for _, w in ipairs(X.widgets) do if w.dungeon and w.shown then side[#side + 1] = w end end
+	check(#side >= 5, "the dungeons on the left"); eq(side[1].label.text, all[1].name, "by name"); check(side[1].levels.text:find(tostring(all[1].lo), 1, true), "with their levels")
+	eq(side[1].sel.shown, true, "the first is the one shown to begin with")
+	local function rows()
+		local out = {}
+		for _, w in ipairs(X.widgets) do if w.dcols and w.shown and w.data then out[#out + 1] = w end end
+		return out
+	end
+	Dg.db.picked = dm.key
+	Dg.Refresh()
+	local r = rows()
+	-- (the first line is about its quests: not read on this client, and it says so)
+	check(r[1].data[1]:find("Quests: open World", 1, true), "the picked dungeon: first a word on its quests")
+	table.remove(r, 1)
+	check(r[1].data.boss and r[1].data[1]:find("Rhahk'Zor", 1, true) and r[1].data[1]:find("[-]", 1, true), "then a boss, open"); eq(r[2].data.item, 872, "then what it drops")
+	eq(r[2].data[5], "|cff888888-|r", "never seen to drop: a dash")
+	-- a boss folds shut with a click, and that is remembered
+	r[1].scripts.OnMouseUp(r[1], "LeftButton")
+	eq(Dg.db.closed["644"], true, "a click on a boss folds it shut, and it is remembered")
+	r = rows()
+	table.remove(r, 1)
+	check(r[1].data[1]:find("[+]", 1, true) and r[2].data.boss and r[2].data.boss.name ~= "Rhahk'Zor", "its drops are put away: the next boss follows")
+	r[1].scripts.OnMouseUp(r[1], "LeftButton")
+	eq(Dg.db.closed["644"], nil, "another click opens it again")
+	-- the trash stands apart
+	local list = {}
+	for i = 1, 400 do local w = rows()[i] if not w then break end list[#list + 1] = w.data end
+	local allRows, trashAt = {}, nil
+	Dg.Refresh()
+	for _, w in ipairs(X.widgets) do if w.dcols and w.data then allRows[#allRows + 1] = w.data end end
+	check(#allRows > 0, "(rows)")
+	-- my level range only: the list on the left
+	local n = 0
+	for _, w in ipairs(X.widgets) do if w.dungeon and w.shown then n = n + 1 end end
+	Dg.mineBox.checked = true
+	click(Dg.mineBox)
+	local few = {}
+	for _, w in ipairs(X.widgets) do if w.dungeon and w.shown then few[#few + 1] = w.dungeon end end
+	check(#few > 0 and #few < 35, "My level range: only the dungeons about my level (10): " .. #few)
+	for _, dg in ipairs(few) do check(10 >= dg.lo - 3 and 10 <= dg.hi + 5, "(" .. dg.name .. " is about my level)") end
+	Dg.mineBox.checked = false
+	click(Dg.mineBox)
+	Dg.db.picked = dm.key
+	Dg.Refresh()
+	eq(Dg.db.hideDone, true, "done quests are hidden to begin with"); eq(Dg.doneBox.checked, true, "and the box shows it")
+	Dg.doneBox.checked = false
+	click(Dg.doneBox)
+	eq(Dg.db.hideDone, false, "unticked: they are listed")
+	Dg.doneBox.checked = true
+	click(Dg.doneBox)
+	-- whose quests
+	eq(Dg.db.side, "H", "the quests of my own side to begin with"); check(Dg.sideButton.text:find("Horde", 1, true), "the button says so")
+	click(Dg.sideButton)
+	eq(Dg.db.side, "A", "a click: the other side"); click(Dg.sideButton); eq(Dg.db.side, "B", "then both"); click(Dg.sideButton); eq(Dg.db.side, "H", "and round again")
+	r = rows()
+	table.remove(r, 1)
+	check(Dg.note.text:find("The Deadmines", 1, true) and Dg.note.text:find("bosses", 1, true), "the count says what is shown: " .. Dg.note.text)
+	local went
+	local wasWay = X.DT.Npc.Waypoint
+	X.DT.Npc.Waypoint = function(to) went = to end
+	r[1].scripts.OnMouseUp(r[1], "RightButton")
+	eq(went and went.id, 644, "a right-click on a boss: a waypoint to it")
+	X.DT.Npc.Waypoint = wasWay
+	local linked
+	local wasLink = X.env.GameTooltip.SetHyperlink
+	X.env.GameTooltip.SetHyperlink = function(_, link) linked = link end
+	r[2].scripts.OnEnter(r[2])
+	eq(linked, "item:872", "hovering a drop shows the item")
+	X.env.GameTooltip.SetHyperlink = wasLink
+	-- the loot window of a boss, in a dungeon: what was in it is counted, once a corpse
+	local e = X.env
+	local loot, corpse = { { 872, 3 }, { 2589, 1 } }, "Creature-0-1-2-3-644-00000001"
+	e.GetNumLootItems = function() return #loot end
+	e.GetLootSourceInfo = function() return corpse end
+	e.GetLootSlotLink = function(slot) return "|cffffffff|Hitem:" .. loot[slot][1] .. "::::|h[x]|h|r" end
+	e.GetLootSlotInfo = function(slot) return "icon", "x", 1, nil, loot[slot][2] end
+	X.fire("LOOT_OPENED")
+	local kills, seen = Dg.Seen(dm.bosses[1])
+	eq(kills, 1, "every corpse is counted (DB.Loot), a boss's too: it was looted once"); eq(seen[872], 1, "and its item seen once"); eq(seen[2589], nil, "a common thing is not counted")
+	X.instance = true
+	X.fire("LOOT_OPENED")
+	eq((Dg.Seen(dm.bosses[1])), 1, "in a dungeon the same corpse is not counted again: the tab's count and the store's are one")
+	X.fire("LOOT_READY")
+	eq((Dg.Seen(dm.bosses[1])), 1, "the same corpse told twice: once")
+	corpse, loot = "Creature-0-1-2-3-644-00000002", { { 7777, 4 } }
+	X.fire("LOOT_OPENED")
+	kills, seen = Dg.Seen(dm.bosses[1])
+	eq(kills, 2, "another kill: twice"); eq(seen[7777], 1, "with something the list does not know")
+	eq(X.DT.modules.dungeon.db.seen, nil, "(nothing is kept in the tab's own saved table)")
+	-- a group that rolls: inside a dungeon it is counted as the tab always did, outside one it is not (not all of it is seen)
+	e.IsInGroup, e.GetLootMethod = function() return true end, function() return "group" end
+	corpse, loot = "Creature-0-1-2-3-" .. dm.bosses[2].npc .. "-00000005", { { 874, 3 } }
+	X.fire("LOOT_OPENED")
+	eq((Dg.Seen(dm.bosses[2])), 1, "in a dungeon a group that rolls is counted too")
+	X.instance = false
+	corpse = "Creature-0-1-2-3-" .. dm.bosses[2].npc .. "-00000006"
+	X.fire("LOOT_OPENED")
+	eq((Dg.Seen(dm.bosses[2])), 1, "outside one it is not")
+	X.instance = true
+	e.IsInGroup, e.GetLootMethod = nil, nil
+	-- a boss with no NPC number in the list is told by its name
+	corpse, loot = "Creature-0-1-2-3-424242-00000004", { { 6641, 3 } }
+	e.UnitGUID = function(unit) return unit == "target" and corpse or "Player-Dana" end
+	local wasName = e.UnitName
+	e.UnitName = function(unit) if unit == "target" then return "Lordaeron Captain" end return wasName(unit) end
+	X.fire("LOOT_OPENED")
+	local captain = Dg.BossOf(nil, "Lordaeron Captain")
+	eq((Dg.Seen(captain)), 1, "one without a number: by its name, under its dungeon"); eq(captain.npc, nil, "(a boss the list gives no NPC number)")
+	eq((X.DT.DB.Looted("npc", 424242)), 1, "and, as every corpse, by the number the game gave it")
+	e.UnitName = wasName
+	X.instance = false
+	Dg.Refresh()
+	r = rows()
+	table.remove(r, 1)
+	check(r[1].data[5]:find("looted 2 times", 1, true), "the boss says how often it was looted: " .. r[1].data[5])
+	-- the trash stands apart: a line of room before it, and a heading of its own
+	local lines2 = {}
+	Dg.search:SetText("")
+	for i = 1, 60 do
+		Dg.Refresh()
+		for _, w in ipairs(rows()) do lines2[#lines2 + 1] = w.data end
+		break
+	end
+	local sawTrash = false
+	for _, dg in ipairs(Dg.All()) do
+		if dg.key == dm.key then sawTrash = dg.bosses[#dg.bosses].name == "Trash" end
+	end
+	eq(sawTrash, true, "(the Deadmines have trash loot)")
+	check(r[2].data[5]:find("1 of 2", 1, true) and r[2].data[5]:find("(50%)", 1, true), "an item how often it dropped: " .. r[2].data[5])
+	local extra
+	for _, w in ipairs(r) do if w.data.item == 7777 then extra = w.data end end
+	check(extra and extra[1]:find("seen by the guild", 1, true), "what was seen and is not in the list is listed after it, marked")
+	Dg.search:SetText("zzzz")
+	Dg.Refresh()
+	eq(#rows(), 0, "the search box leaves the drops it finds")
+	Dg.search:SetText("")
+	-- AtlasLoot, where installed: what the shipped list lacks, and its chances
+	local Y = NewClient("Yara")
+	local loaded = 0
+	local store
+	Y.env.LoadAddOn = function(name) if name == "AtlasLootClassic_DungeonsAndRaids" then loaded = loaded + 1 store = {
+		__atlaslootdata = {},
+		Deadmines = { name = "|cffffffffDeadmines|TInterface\\AddOns\\x:18:18|t|r", LevelRange = { 10, 17, 24 }, items = { { name = "Other Boss", npcID = 1, [1] = { { 1, 100 } } } } },
+		Raid = { name = "Big Raid|TInterface\\AddOns\\x:18:18|t", LevelRange = { 60, 60, 60 }, items = {
+			{ name = "Raid Boss", npcID = { 502, 503 }, [1] = { { 1, 100 }, { 16, "INV_Box_01", nil, "A heading" } }, [2] = { { 1, 100 }, { 2, 400 } } },
+			{ name = "Nothing Dropper", [1] = { { 1, "INV_Box_01" } } } } },
+	} end end
+	Y.env.AtlasLoot = { ItemDB = { Get = function(_, name) return name == "AtlasLootClassic_DungeonsAndRaids" and store or nil end },
+		Data = { Droprate = { GetData = function(_, npc, item) return npc == 644 and item == 872 and 12.5 or nil end } } }
+	local Yd = Y.DT.Dungeon
+	local both = Yd.All()
+	eq(loaded, 1, "AtlasLoot's dungeon part is loaded when first asked for"); eq(#both, 36, "a raid the shipped list lacks is added; a dungeon it has is not listed twice")
+	local raid, ydm
+	for _, d in ipairs(both) do
+		if d.name == "Big Raid" then raid = d elseif d.name == "The Deadmines" then ydm = d end
+	end
+	check(raid, "its name without AtlasLoot's badge"); eq(#raid.bosses, 1, "a boss that drops nothing is left out"); eq(raid.bosses[1].npc, 502, "a boss of several NPCs goes by the first")
+	eq(table.concat(raid.bosses[1].items, ","), "100,400", "every list of its, each item once, headings left out")
+	eq(ydm.bosses[1].name, "Rhahk'Zor", "the shipped dungeon stays as shipped")
+	eq(Yd.Chance(ydm.bosses[1], 872), 12.5, "a chance the shipped list has not is AtlasLoot's"); eq(Dg.Chance(dm.bosses[1], 872), nil, "none without it")
+	-- the guild: what was seen to drop is the store's counters: they pass with it, where agreed to
+	local first = #sent + 1
+	local function whispers()
+		local n = 0
+		for i = first, #sent do if sent[i].prefix == "DAWND" then n = n + 1 end end
+		return n
+	end
+	step(700)
+	eq(whispers(), 0, "not agreed to: what was seen stays here"); eq((Yd.Seen(ydm.bosses[1])), 0, "and none comes in")
+	check(e.StaticPopupDialogs.DAWNTOOLS_SHARE.text:find("how often you looted it", 1, true), "the question says what is sent")
+	e.StaticPopupDialogs.DAWNTOOLS_SHARE.OnAccept()
+	Y.env.StaticPopupDialogs.DAWNTOOLS_SHARE.OnAccept()
+	step(700)
+	local kills, items = Yd.Seen(ydm.bosses[1])
+	eq(kills, 2, "a member who looted bosses: what they counted arrives with the store"); eq(items[872], 1, "which items"); eq(items[7777], 1, "all of them")
+	eq((Yd.Seen(Yd.BossOf(nil, "Lordaeron Captain"))), 1, "one known by its name too")
+	for chunk in pairs(Y.DT.DB.Hashes()) do
+		check(not Y.DT.DB.Text(chunk):find("Dana", 1, true) and not Y.DT.DB.Text(chunk):find("Yara", 1, true), "no player's name in a row of " .. chunk)
+	end
+	-- my own kill of the same boss adds to theirs, and is theirs in turn
+	Y.env.GetNumLootItems = function() return 1 end
+	Y.env.GetLootSourceInfo = function() return "Creature-0-1-2-3-644-00000009" end
+	Y.env.GetLootSlotLink = function() return "|Hitem:872::::|h[x]|h" end
+	Y.env.GetLootSlotInfo = function() return "icon", "x", 1, nil, 3 end
+	Y.instance = true
+	Y.fire("LOOT_OPENED")
+	Y.instance = false
+	kills, items = Yd.Seen(ydm.bosses[1])
+	eq(kills, 3, "my own kill adds to the guild's"); eq(items[872], 2, "and its item")
+	step(700)
+	eq((Dg.Seen(dm.bosses[1])), 3, "so both of us see the same sum")
+	local at = Now() + 100
+	check(Y.DT.DB.Take("loot:2", ("loot:645:aaaaaa\t%d\tguild\t3;1:9"):format(at)) == 1, "a counter may come over the wire")
+	local n645, seen645 = Y.DT.DB.Looted("npc", 645)
+	eq(n645, 3, "its count"); eq(seen645[1], 3, "an item is never seen more often than the boss was looted")
+	local bars = Y.DT.modules.dungeon.progress()
+	check(bars[1][2] >= 2 and bars[1][3] > 250, "the bar: bosses whose loot was seen, of all: " .. bars[1][2] .. " / " .. bars[1][3])
+	leave(Y)
+	leave(X)
+end)()
+;(function() -- an installed OneForAll is a source of the dungeon list, as QuestieDB is of the NPCs: its rows go into the store, the later version stands, whole
+	local function oneforall(version)
+		return function(env)
+			env.GetAddOnMetadata = function(addon, field) return addon == "OneForAll" and field == "Version" and version or nil end
+			env.OneForAll = {
+				DUNGEONS = {
+					{ name = "The Deadmines", level = "17-26", bosses = {
+						{ name = "Rhahk'Zor", npcID = 644, loot = { { id = 872 }, { id = 888001 } } },       -- one drop more than the seed has
+						{ name = "Brand New Boss", npcID = 888500, rare = true, loot = { { id = 888002 } } }, -- a boss more
+					}, trashLoot = { { id = 888004 } } },
+					{ name = "Fresh Dungeon", level = "30-35", bosses = { { name = "Fresh Boss", loot = { { id = 888003 } } } } },
+				},
+				DUNGEON_DROP_CHANCE = { ["The Deadmines"] = { ["Rhahk'Zor"] = { [888001] = 7.5 } } },
+			}
+		end
+	end
+	local function seed(env)
+		env.DawnToolsSeed = { OneForAllVersion = "7.0", Dungeons = { { "Hall of Tests", 13, 20, { { "First Boss", 9001, 0, { 872, 3.9 } } } } } }
+	end
+	local Z = NewClient("Zed", { globals = oneforall("6.2.12"), noData = true })
+	local d, T = Z.DT.DB, Z.DT
+	eq(d.Base("oneforall"), "6.2.12/4", "an installed OneForAll is written into the store, once per version"); eq(d.Row("base:oneforall").v, "6.2.12;4", "marked with its version and how many bosses it has")
+	eq(d.Row("boss:1").v, "\"The Deadmines\",17,26,\"Rhahk'Zor\",644,0,{872,0,888001,7.5}", "a boss with its dungeon and what it drops, as the seed's rows are")
+	eq(d.Row("boss:2").v, "\"The Deadmines\",17,26,\"Brand New Boss\",888500,1,{888002,0}", "a rare one"); eq(d.Row("boss:3").v, "\"The Deadmines\",17,26,\"Trash\",0,0,{888004,0}", "the trash last")
+	eq(d.Row("boss:4").v, "\"Fresh Dungeon\",30,35,\"Fresh Boss\",0,0,{888003,0}", "a dungeon of its own, a boss with no number")
+	eq(d.Row("boss:1").src, "oneforall", "of its source"); eq(d.Row("boss:1").t, 760212040, "of a time that is its version"); check(d.Row("fp:oneforall:boss:0"), "with the fingerprint of the chunk")
+	eq(#T.Dungeons, 2, "the dungeon list is put together from them"); eq(T.Dungeon.DropOf(888003).name, "Fresh Boss", "the Dungeons tab has the new dungeon")
+	local boss = T.Dungeon.DropOf(888001)
+	eq(boss.name, "Rhahk'Zor", "a drop the seed has not, on its boss"); eq(T.Dungeon.Chance(boss, 888001), 7.5, "with its chance"); eq(T.Dungeon.DropOf(888004).name, "Trash", "and the trash")
+	eq(T.modules.dungeonlist, nil, "the list sharing of before is gone"); eq(T.Dungeon.PutLine, nil, "and its lines"); eq(T.Dungeon.Additions, nil, "and its sync")
+	local root = d.Root()
+	leave(Z)
+	local Z2 = NewClient("Zed", { db = Z.env.DawnToolsDB, noData = true, globals = oneforall("6.2.12") })
+	eq(Z2.DT.DB.Root(), root, "the same version at the next login: nothing is written again")
+	-- it passes to a member who has no OneForAll, with the rest of the store
+	Z2.DT.db.settings.share = true
+	local M1 = NewClient("Mo2", { noData = true })
+	M1.DT.db.settings.share = true
+	step(700)
+	eq(M1.DT.DB.Root(), Z2.DT.DB.Root(), "shared: both hold the same"); check(M1.DT.Dungeon.DropOf(888003), "a member without OneForAll has the new dungeon")
+	eq(M1.DT.Dungeon.Chance(M1.DT.Dungeon.DropOf(888001), 888001), 7.5, "with the chance")
+	-- a row of its version that says something else is not taken by a member without it: it does not add up to the fingerprint
+	local right, t0 = Z2.DT.DB.Row("boss:1").v, Z2.DT.DB.Row("boss:1").t
+	eq(M1.DT.DB.Take("boss:0", ("boss:1\t%d\toneforall\tZZ Wrong"):format(t0)), 0, "rows that do not add up to the fingerprint are not taken"); eq(M1.DT.DB.Row("boss:1").v, right, "its own stand")
+	leave(M1)
+	leave(Z2)
+	-- the seed holds 7.0, OneForAll 6.2.12: the later one is written whole, the other not at all: no mix
+	local S1 = NewClient("Sid2", { globals = function(env) seed(env) oneforall("6.2.12")(env) end, noData = true })
+	eq(S1.DT.DB.Row("base:oneforall").v, "7.0;1", "the seed is the later version: it is written"); eq(#S1.DT.Dungeons, 1, "alone"); eq(S1.DT.Dungeons[1][1], "Hall of Tests", "its dungeon")
+	eq(S1.DT.Dungeon.DropOf(888003), nil, "nothing of the installed one's")
+	leave(S1)
+	-- the seed holds 7.0, OneForAll 7.1: the installed one is the later: it stands, and nothing of the seed with it
+	local S2 = NewClient("Sid3", { globals = function(env) seed(env) oneforall("7.1")(env) end, noData = true })
+	eq(S2.DT.DB.Row("base:oneforall").v, "7.1;4", "OneForAll is the later version: it is written"); eq(#S2.DT.Dungeons, 2, "alone"); eq(S2.DT.Dungeons[1][1], "The Deadmines", "its dungeons")
+	eq(S2.DT.Dungeon.DropOf(872).name, "Rhahk'Zor", "and none of the seed's: no mix"); check(S2.DT.DB.Row("boss:1").v:find("The Deadmines", 1, true) and not S2.DT.DB.Row("boss:1").v:find("Hall of Tests", 1, true), "the first row is its own")
+	-- and a seed that is the later one at last stands over the old rows
+	leave(S2)
+	local S3 = NewClient("Sid3", { db = S2.env.DawnToolsDB, globals = function(env)
+		seed(env)
+		env.DawnToolsSeed.OneForAllVersion = "7.2"
+		oneforall("7.1")(env)
+	end, noData = true })
+	eq(S3.DT.DB.Row("base:oneforall").v, "7.2;1", "the next seed, the later again, replaces them"); eq(#S3.DT.Dungeons, 1, "and a shorter list leaves none of the old behind")
+	leave(S3)
 end)()
 ;(function() -- the profession tabs: every recipe from the shipped list, what it costs and earns, who knows it
 	local P1, P2 = NewClient("Pat"), NewClient("Rex")
@@ -1736,7 +2338,7 @@ end)()
 	check(Craft.ProfitText(p):find("|cff40ff40+", 1, true), "in green"); eq(Craft.MatsText(p), P1.DT.Money(100), "the materials as money")
 	price(P1, 1475, 400)
 	check(Craft.ProfitText(Craft.Profit(7934)):find("|cffff4040-", 1, true), "a loss in red")
-	P1.M.db.vendors[1475] = { p = 30, v = "Sam", z = "Here", t = 1 }
+	P1.DT.DB.Put("vendor:1475", P1.DT.DB.VendorText(30, false, "Sam", "Here"))
 	local each, from = Craft.Cost(1475)
 	eq(each, 30, "a material a vendor sells cheaper is counted at the vendor's price"); eq(from, "vendor", "and said so")
 	eq(Craft.Profit(7934).profit, 141, "which the profit goes by")
@@ -1840,9 +2442,9 @@ end)()
 	-- the guild: under Cooking's switch
 	step(60)
 	eq(crafts("KNOWN", "Pat"), 0, "Cooking's sharing not agreed to: nothing is sent"); eq(P1.DT.modules.crafts.hello(), nil, "nor said in the hello")
-	P1.env.StaticPopupDialogs.DAWNTOOLS_FOOD_SHARE.OnAccept()
-	P2.env.StaticPopupDialogs.DAWNTOOLS_FOOD_SHARE.OnAccept()
-	check(P1.env.StaticPopupDialogs.DAWNTOOLS_FOOD_SHARE.text:find("its other professions", 1, true), "the question says the other professions are part of it")
+	P1.env.StaticPopupDialogs.DAWNTOOLS_SHARE.OnAccept()
+	P2.env.StaticPopupDialogs.DAWNTOOLS_SHARE.OnAccept()
+	check(P1.env.StaticPopupDialogs.DAWNTOOLS_SHARE.text:find("its other professions", 1, true), "the question says the other professions are part of it")
 	step(5)
 	check(crafts("KNOWN", "Pat") >= 1, "agreed to: what I know goes out")
 	P1.DT.Comms:Hello(); P2.DT.Comms:Hello()
@@ -1898,7 +2500,7 @@ step(1)
 eq(M.at, "X", "an auctioneer of no faction is the cross-faction house"); eq(M.view, "X", "and its prices are shown")
 eq(A.env.DawnMarket.API.GetHouse(), "X", "the other tabs can ask which house that is"); eq(select(2, A.env.DawnMarket.API.GetHouse()), "X-Faction", "and its name")
 eq(A.items()[100], nil, "which are not my faction's"); eq(Latest(100), nil, "for the other tabs neither")
-M.db.settings.share = true
+A.DT.db.settings.share = true
 A.searched[100] = { { hordePrice + 7, 3 } }
 A.fire("COMMODITY_SEARCH_RESULTS_UPDATED", 100)
 eq(Latest(100), hordePrice + 7, "a price seen here is filed here"); eq(M:House("H")[100].p, hordePrice, "and my faction's stays what it was")
@@ -1920,7 +2522,7 @@ check(M:House("X")[7001] and M:House("X")[7001].p == 5 and not M:House("H")[7001
 M.Sync:OnMessage("PUSH", ob(7002, 5), "Zed-Forever")
 M.Sync:OnMessage("PUSH", "Q|" .. ob(7002, 5), "Zed-Forever")
 check(not M:House("X")[7002] and not M:House("H")[7002], "one that names none, or an unknown one, is dropped")
-M.db.settings.share = nil
+A.DT.db.settings.share = nil
 -- putting the house right by hand
 step(1)
 local hereB = find("Button", "Wrong house?")
@@ -1994,12 +2596,13 @@ A.env.GetProfessions = function() return nil, nil, nil, 7 end
 A.env.GetProfessionInfo = function() return "Fishing", nil, 140 end
 A.fire("LOOT_READY")
 A.fire("LOOT_OPENED")
-local pier = Fish.db.catches["Testwater, Pier"]
-eq(pier.casts, 1, "one loot window is one cast, however often it is announced"); eq(pier.items[6359], 2, "with what was in it")
-eq(pier.skill, 140, "and the fishing skill it was caught at")
+local function pier() return Fish.Catches()["Testwater, Pier"] end -- (the catches are rows of the store: added up from every origin)
+eq(Fish.db.catches, nil, "(none are kept in the module's own saved table)")
+eq(pier().casts, 1, "one loot window is one cast, however often it is announced"); eq(pier().items[6359], 2, "with what was in it"); eq(pier().mine, 1, "all of it mine")
+eq(pier().skill, 140, "and the fishing skill it was caught at")
 A.fire("LOOT_CLOSED")
 A.fire("LOOT_OPENED")
-eq(pier.casts, 2, "the next cast"); eq(pier.items[600], 2, "junk counts too")
+eq(pier().casts, 2, "the next cast"); eq(pier().items[600], 2, "junk counts too")
 -- a game with the older skill list instead of the profession list
 do
 	local professions, info = A.env.GetProfessions, A.env.GetProfessionInfo
@@ -2009,25 +2612,27 @@ do
 		if i == 1 then return "Secondary Skills", true end
 		return "Fishing", false, false, 90, 0, 25
 	end
-	A.env.GetSubZoneText = function() return "Jetty" end
+	A.env.GetRealZoneText, A.env.GetSubZoneText = function() return "Jetty Lake" end, function() return "" end
+	local wasLoot = loot
+	loot = { { 6362, 1 } } -- (not what the Pier gives: that spot's own numbers are looked at below)
 	A.fire("LOOT_CLOSED")
 	A.fire("LOOT_OPENED")
-	eq(Fish.db.catches["Testwater, Jetty"].skill, 90, "the fishing skill is read from the skill list where that is what the game has")
-	Fish.db.catches["Testwater, Jetty"] = nil
-	A.env.GetSubZoneText = function() return "Pier" end
+	loot = wasLoot
+	eq(Fish.Catches()["Jetty Lake"].skill, 90, "the fishing skill is read from the skill list where that is what the game has")
+	A.env.GetRealZoneText, A.env.GetSubZoneText = function() return "Testwater" end, function() return "Pier" end
 	A.env.GetNumSkillLines, A.env.GetSkillLineInfo = nil, nil
 	A.env.GetProfessions, A.env.GetProfessionInfo = professions, info
 end
 A.fire("LOOT_CLOSED")
 fishing = false
 A.fire("LOOT_OPENED")
-eq(pier.casts, 2, "loot that is not fished is not a cast")
+eq(pier().casts, 2, "loot that is not fished is not a cast")
 A.fire("LOOT_CLOSED")
 Fish.Refresh()
 check(text("Testwater, Pier"), "my own spot is listed")
 local perCast = L.Money((4 * 500 + 2 * (Latest(600) or 100)) / 2) -- 4 snappers at 5s and 2 fangs at their price, over 2 casts
 check(text("|cff888888~|r" .. perCast), "per cast: what was caught at today's prices over the casts, still marked a guess")
-pier.casts, pier.items[6359], pier.items[600] = 20, 40, 20
+A.DT.DB.Put(Fish.Key("Testwater, Pier"), A.DT.DBLogic.Pack({ 20, { 600, 20, 6359, 40 }, 140, "Testwater, Pier" }, 4)) -- (twenty casts of mine, as the store holds them)
 Fish.Refresh()
 check(text("Firefin Snapper 200%"), "what bites, per cast"); check(not text("|cff888888~|r" .. perCast) and text(perCast), "believed from 20 casts on")
 -- the Fish table
@@ -2177,7 +2782,7 @@ end
 local Fay, Gus = NewClient("Fay"), NewClient("Gus")
 local FF, GF = Fay.DT.Food, Gus.DT.Food
 Fay.slash("food")
-eq(Fay.popups[#Fay.popups], "DAWNTOOLS_FOOD_SHARE", "the first look at the tab asks about sharing")
+eq(Fay.popups[#Fay.popups], nil, "the tab asks nothing itself: sharing is one question, a little after login")
 local foodSent = count("KNOWN")
 kitchen(Fay, { [1] = true, [3] = true })
 eq(FF.db.mine["Player-Fay"].ids[5001], true, "what I can cook is recorded"); eq(FF.db.mine["Player-Fay"].ids[5002], nil, "what I cannot is not")
@@ -2286,7 +2891,7 @@ eq(foodRows(Fay)[1].id, 5003, "and back by level")
 		check(cell:find("Buy|r |cff888888price ?|r  Kira Cook", 1, true) and cell:find("Booty Bay", 1, true) and cell:find("(+1)", 1, true), "the cell: buy, from whom, where; the price not seen yet: " .. cell)
 		check(by[5003].data[8]:find("Drop|r  Murloc Cook", 1, true) and by[5003].data[8]:find("Westfall", 1, true), "a drop: the mob and its zone: " .. by[5003].data[8])
 		eq(by[5001].where.shown, true, "the cell can be clicked"); eq(by[5002].where.shown, false, "one with nothing to go to cannot")
-		Fay.M.db.vendors[7701] = { p = 40, v = "Kira Cook", z = "Booty Bay", t = 1 }
+		Fay.DT.DB.Put("vendor:7701", Fay.DT.DB.VendorText(40, false, "Kira Cook", "Booty Bay"))
 		FoodM.Refresh()
 		check(by[5001].data[8]:find("Buy|r " .. Fay.DT.Money(40), 1, true), "with the price once it is known: " .. by[5001].data[8])
 		local went
@@ -2298,7 +2903,6 @@ eq(foodRows(Fay)[1].id, 5003, "and back by level")
 		check(tip:find("Sold by (2)", 1, true) and tip:find("Ally Al", 1, true), "hovering lists every source: " .. tip)
 		foodHead("Where to get it").scripts.OnClick(foodHead("Where to get it"))
 		eq(foodRows(Fay)[1].id, 5001, "sorted by where: what is bought first")
-		Fay.M.db.vendors[7701] = nil
 		CS[5001][6], CS[5003][6] = nil, nil
 		e.LibQuestieDB, e.C_Map, Fay.DT.Npc.Waypoint = wasLib, wasMap, wasWay
 		foodHead("Cooking skill").scripts.OnClick(foodHead("Cooking skill"))
@@ -2352,7 +2956,7 @@ eq(foodRows(Fay)[1].id, 5003, "and back by level")
 	foodHead("Level").scripts.OnClick(foodHead("Level"))
 end)()
 -- the guild
-FF.db.settings.share, GF.db.settings.share = true, true
+Fay.DT.db.settings.share, Gus.DT.db.settings.share = true, true
 kitchen(Fay, { [1] = true, [2] = true, [3] = true })
 step(2)
 eq(count("KNOWN", "Fay"), 1, "learning a recipe tells the guild, once agreed")
@@ -2367,18 +2971,18 @@ eq(gusRows[2][5], "|cffff4040missing|r", "and that I lack it")
 check(FF.db.guild["Gus Smith"] and FF.db.guild["Gus Smith"].ids[5003] and not FF.db.guild["Gus Smith"].ids[5001], "it goes both ways")
 -- someone who comes later asks for the lists
 local Hal = NewClient("Hal")
-Hal.DT.Food.db.settings.share = true
+Hal.DT.db.settings.share = true
 step(700)
 check(Hal.DT.Food.db.guild["Fay Smith"] and Hal.DT.Food.db.guild["Gus Smith"], "a member who joins later asks, and is told")
 local known = count("KNOWN")
 step(1300)
 eq(count("KNOWN"), known, "and nobody goes on repeating what is known")
 -- not believed
-GF.db.settings.share = false
+Gus.DT.db.settings.share = false
 kitchen(Fay, { [1] = true })
 step(2)
 check(GF.db.guild["Fay Smith"].ids[5002], "with sharing off nothing comes in")
-GF.db.settings.share = true
+Gus.DT.db.settings.share = true
 local function foodMsg(payload) return table.concat({ "food", "KNOWN", 1, "z", LibDeflate:EncodeForWoWAddonChannel(LibDeflate:CompressDeflate(payload)) }, "\t") end
 inject(Gus, "Mallory-Forever", foodMsg("Gus Smith;5001,5002"))
 check(not GF.db.guild["Gus Smith"], "nobody else speaks for my own characters")
@@ -2391,7 +2995,7 @@ leave(Fay) leave(Gus) leave(Hal)
 do
 	local Npc = A.DT.Npc
 	A.slash("npc")
-	check(text("Needs the QuestieDB addon"), "without QuestieDB the tab says what it needs")
+	check(text("Install the QuestieDB addon"), "without QuestieDB the tab says what it needs")
 	eq(#Npc.Find("anything", {}), 0, "and lists nothing")
 end
 do
@@ -2662,6 +3266,38 @@ do
 		Quest.chain:Hide()
 		lib.Quest.Get = was
 	end)()
+	;(function() -- a name is found without its apostrophes and hyphens
+		local Match = B2.DT.Npc.Match
+		local horn = { nameL = "horn of ve'han", hay = "horn of ve'han" }
+		local zul = { nameL = "zul'farrak", hay = "zul'farrak tanaris" }
+		local plain = { nameL = "plain horn", hay = "plain horn" }
+		local pool = { horn, zul, plain }
+		local function found(...)
+			local out = {}
+			for _, r in ipairs(Match(pool, { ... })) do out[#out + 1] = r.e.nameL end
+			table.sort(out)
+			return table.concat(out, ", ")
+		end
+		eq(found("horn", "of", "vehan"), "horn of ve'han", "\"vehan\" finds Ve'han, among several words too")
+		eq(found("zulfarrak"), "zul'farrak", "\"zulfarrak\" finds Zul'Farrak"); eq(found("ve'han"), "horn of ve'han", "and written with it, as before")
+		eq(found("horn"), "horn of ve'han, plain horn", "a name without any is found as ever")
+		eq(found("vexhan"), "", "what is no part of it still is not found (three letters apart is no misspelling)")
+	end)()
+	;(function() -- a bag says how big it is
+		local e, Item2 = B2.env, B2.DT.Item
+		local was = e.C_TooltipInfo
+		e.C_TooltipInfo = { GetItemByID = function(id)
+			if id == 4496 then return { lines = { { leftText = "Small Brown Pouch" }, { leftText = "6 Slot Bag" } } } end
+			if id == 4497 then return { lines = { { leftText = "Odd Box" }, { leftText = "Unique" } } } end
+			if id == 4498 then return { lines = { { leftText = "Loading" } } } end
+			return nil
+		end }
+		eq(Item2.BagSlots(4496), 6, "a bag's size is read from its tooltip"); eq(Item2.BagSlots(4497), nil, "a container that names none has none")
+		eq(Item2.BagSlots(4498), nil, "one not loaded yet: not known")
+		e.C_TooltipInfo = { GetItemByID = function() return { lines = { { leftText = "x" }, { leftText = "16 Slot Bag" } } } end }
+		eq(Item2.BagSlots(4496), 6, "(kept for the session)"); eq(Item2.BagSlots(4498), 16, "and asked again where it was not known")
+		e.C_TooltipInfo = was
+	end)()
 	;(function() -- Shift-click: the link into the chat; Shift-right-click: the page to read up on it
 		local e, shown
 		for _, r in ipairs(Quest.Find("", {})) do if r.e.name == "Daily Bread" then e = r.e end end
@@ -2845,6 +3481,26 @@ do
 		click(Quest.ticks.onlyLog)
 		check(q("Daily Bread"), "unticked: everything again")
 	end)()
+	;(function() -- for the Dungeons tab: quests in nested order, with where each stands
+		local found = Quest.Find("", {})
+		local nested = Quest.Nested(found)
+		eq(#nested, #found, "every quest found is in it")
+		local at = {}
+		for i, r in ipairs(nested) do at[r.e.name] = { i, r.depth, r.status } end
+		check(at["More Fish"] and at["The Big One"] and at["The Big One"][1] > at["More Fish"][1], "a quest stands after the one that opens it")
+		check(at["The Big One"][2] > at["More Fish"][2], "one step deeper"); check(at["The Big One"][3] ~= nil, "with where it stands")
+		eq(Quest.STATUS_COLOR.done, "|cff40a040", "done is green"); eq(Quest.STATUS_COLOR.log, "|cffffd100", "in the log is yellow")
+	end)()
+	;(function() -- which side a quest is for, and the filter by it (for the Dungeons tab)
+		local alliance, both
+		for _, r in ipairs(Quest.Find("", {})) do
+			if r.e.name == "Alliance Errand" then alliance = r.e elseif r.e.name == "Daily Bread" then both = r.e end
+		end
+		eq(alliance and Quest.Side(alliance), "A", "a quest open to an Alliance race only is Alliance's"); eq(Quest.Side(both), "", "one open to all is nobody's alone")
+		local function has(f, name) for _, r in ipairs(Quest.Find("", f)) do if r.e.name == name then return true end end return false end
+		eq(has({ side = "H" }, "Alliance Errand"), false, "the Horde's quests: an Alliance one is left out"); eq(has({ side = "A" }, "Alliance Errand"), true, "the Alliance's: it is there")
+		eq(has({ side = "H" }, "Daily Bread"), true, "one open to both is on either list")
+	end)()
 	;(function() -- a quest that can be repeated: done once is done, and says it can be done again
 		local run
 		for _, r in ipairs(Quest.Find("", {})) do if r.e.name == "Deadmines Run" then run = r.e end end
@@ -3003,7 +3659,7 @@ do
 	local printed = #B2.printed
 	click(chain.rows[4])
 	check(B2.printed[#B2.printed]:find("Side Catch: started by no NPC", 1, true) and #B2.printed > printed, "one that nobody gives says so")
-	eq(B2.DT.modules.quest.hello(), nil, "the module has nothing to say to the guild while sharing was not agreed to")
+	eq(B2.DT.modules.quest.hello, nil, "the module has nothing to say on the guild channel: its rows go with the store")
 	;(function() -- a quest no NPC gives: an object, an item, or (nothing known) whom it is handed in to
 		local lib = B2.env.LibQuestieDB
 		local wasObject, wasItemGet, wasQuestGet, wasPin, wasInfo = lib.Object, lib.Item and lib.Item.Get, lib.Quest.Get, B2.DT.Npc.Pin, B2.DT.Item.ShowInfo
@@ -3092,6 +3748,28 @@ do
 		B2.slash("item")
 		check(btext("Reading items..."), "the reading says how far it is")
 		step(1)
+		;(function() -- DT.DB: one way to ask, whatever knows the answer
+			local D = B2.DT.DB
+			for rel, def in pairs(D.RELS) do
+				local kinds = {}
+				for _, kind in ipairs(D.KINDS) do kinds[kind] = true end
+				check(kinds[def[2]], "the model: " .. rel .. " points at a kind there is")
+				for _, from in ipairs(def[1]) do check(kinds[from], "the model: " .. rel .. " starts from a kind there is") end
+			end
+			local sword = D.Get("item", 400)
+			eq(sword.name, "Sword", "an item by its number"); eq(sword.level, 20, "with its level"); eq(sword.src, "questie", "and where that is from")
+			eq(D.Get("item", 424242), nil, "one nobody knows: nothing"); eq(D.Name("npc", 424242), "npc 424242", "or its number for a name")
+			local drops = D.RelTo("drops", "item", 400)
+			eq(#drops, 1, "who drops an item"); eq(drops[1].kind .. drops[1].id, "npc12", "an NPC"); eq(drops[1].src, "questie", "says QuestieDB")
+			eq(D.RelTo("drops", "item", 100)[1].kind, "object", "an object in the world"); eq(D.RelTo("drops", "item", 820)[1].kind, "item", "or another item it is inside")
+			eq(D.RelTo("sells", "item", 500)[1].id, 10, "who sells it"); eq(D.RelTo("rewards", "item", 400)[1].id, 102, "which quest gives it")
+			eq(D.Rel("starts", "item", 820)[1].id, 107, "which quest it starts"); eq(#D.Rel("starts", "item", 400), 0, "or none")
+			eq(#D.RelTo("no such relation", "item", 400), 0, "a relation not answered yet: no facts, no error")
+			eq(D.ChanceText({ chance = 12 }), "12%", "a chance a source states")
+			eq(D.ChanceText({ chance = 12, n = 5, k = 1 }), "12%, seen 1 of 5 looted (20%)", "beside what we saw")
+			eq(D.ChanceText({ chance = 12, n = 52, k = 7 }), "7 of 52 looted (13%), stated 12%", "ours first once enough was looted")
+			eq(D.ChanceText({}), "", "nothing known: nothing said")
+		end)()
 		eq(ireads, 6, "every item is read once"); check(btext("6 of 6 items"), "then they are all listed")
 		local function inames(text, f)
 			local found, state = Item.Find(text, f or {})
@@ -3237,7 +3915,7 @@ do
 		e.GetQuestItemInfo = function(kind, i) return "x", 1, kind == "reward" and 5 or 1, 1, true, kind == "reward" and 100 or (i == 1 and 400 or nil) end
 		e.GetQuestItemLink = function(kind, i) return kind == "choice" and i == 2 and "|cffffffff|Hitem:500::::|h[Bid Only Axe]|h|r" or nil end
 		B2.fire("QUEST_DETAIL")
-		local seen = B2.DT.modules.quest.db.seen[103]
+		local seen = B2.DT.Quest.SeenAll()[103]
 		eq(seen.m, 250, "the money a quest giver showed is kept"); eq(seen.x, 880, "the experience"); eq(seen.l, 10, "at my level")
 		eq(seen.r[1][1], 100, "what is given"); eq(seen.r[1][2], 5, "how many"); eq(seen.c[1][1], 400, "what there is to choose from"); eq(seen.c[2][1], 500, "told by its link where the number is not given")
 		local got = Quest.Rewards({ id = 103, name = "Q103", level = 10 })
@@ -3301,11 +3979,10 @@ do
 		Quest.ShowChain(Quest.Entry(101) or Quest.Find("", {})[1].e)
 		eq(raised, 1, "another quest clicked while the window is open: it is brought to the front")
 		Quest.chain.Raise = nil
-		-- what ships with the addon counts the same, for a quest I never saw
-		B2.DT.QuestRewards[104] = { m = 0, x = 0, l = 5, r = { { 600, 1 } }, c = {} }
+		-- what a member saw counts the same, for a quest I never saw (a row of the store)
+		B2.DT.DB.Put("qreward:104", B2.DT.DBLogic.Pack({ 0, 0, 5, { 600, 1 }, {} }, 5))
 		local shipped = Quest.Rewards({ id = 104, name = "Q104", level = 5 })
-		eq(shipped.seen, true, "a quest in the shipped table is known"); eq(shipped.money, 0, "no money is an answer too"); eq(shipped.items[1].id, 600, "its item")
-		B2.DT.QuestRewards[104] = nil
+		eq(shipped.seen, true, "a quest in the store is known"); eq(shipped.money, 0, "no money is an answer too"); eq(shipped.items[1].id, 600, "its item")
 		e.GetQuestID = nil
 		end)()
 		eq(B2.DT.modules.item.hello, nil, "the module has nothing to say to the guild")
@@ -4004,7 +4681,7 @@ eq(death.hits[2][5], nil, "a plain swing is not")
 	A.fire("PARTY_KILL", ME_GUID, "Player-Enemy")
 	eq(#Combat.db.kills, kills + 1, "a killing blow of mine on a player is a kill, without the combat log")
 	local k = Combat.db.kills[#Combat.db.kills]
-	eq(k.name, "Gankalot", "named as I saw them"); eq(k.guild, "Running Dawn", "with the guild I saw under the name"); eq(k.blow, true, "the blow was mine"); eq(k.player, true, "a player"); eq(k.zone, "Stranglethorn Vale", "where")
+	eq(k.name, "Gankalot", "named as I saw them"); eq(k.last, "Smith", "with their surname"); eq(k.guild, "Running Dawn", "with the guild I saw under the name"); eq(k.blow, true, "the blow was mine"); eq(k.player, true, "a player"); eq(k.zone, "Stranglethorn Vale", "where")
 	A.fire("PARTY_KILL", ME_GUID, "Player-Enemy")
 	A.fire("CHAT_MSG_COMBAT_HONOR_GAIN", "Gankalot dies, honorable kill Rank: Scout (12 Honor Points)")
 	eq(#Combat.db.kills, kills + 1, "told three times: one kill")
@@ -4013,10 +4690,10 @@ eq(death.hits[2][5], nil, "a plain swing is not")
 	check(Combat.Recap(k, false)[2].text:find("12 honor", 1, true), "shown in the kill's window")
 	;(function() -- a name is in the colour of its class where that is known
 		local was = RAID_CLASS_COLORS
-		eq(Combat.Recap(k, false).title:find("|cffff4040Gankalot|r", 1, true) ~= nil, true, "no class colours to be had: a player in red")
+		eq(Combat.Recap(k, false).title:find("|cffff4040Gankalot Smith|r", 1, true) ~= nil, true, "no class colours to be had: a player in red")
 		RAID_CLASS_COLORS = { [k.cfile or "WARRIOR"] = { colorStr = "ffc79c6e" } }
 		k.cfile = k.cfile or "WARRIOR"
-		check(Combat.Recap(k, false).title:find("|cffc79c6eGankalot|r", 1, true), "the class's colour: " .. Combat.Recap(k, false).title)
+		check(Combat.Recap(k, false).title:find("|cffc79c6eGankalot Smith|r", 1, true), "the class's colour: " .. Combat.Recap(k, false).title)
 		RAID_CLASS_COLORS = was
 	end)()
 	A.fire("PARTY_KILL", "Player-Bob", "Player-Elsewhere")
@@ -4261,7 +4938,7 @@ local tabX = {}
 for _, w in ipairs(A.widgets) do
 	if w.kind == "Button" and w.id and w.x and w.shown then tabX[w.id] = w.x end
 end
-eq(tabX.world - tabX.craft, 88, "tabs of one group stand side by side"); eq(tabX.combat - tabX.world, 102, "a new group stands apart"); eq(tabX.tools - tabX.combat, 102, "and Tools behind a separator of its own")
+eq(tabX.world - tabX.craft, 88, "tabs of one group stand side by side"); eq(tabX.combat - tabX.world, 102, "a new group stands apart"); eq(tabX.bis - tabX.combat, 88, "BiS beside it, in its group"); eq(tabX.tools - tabX.bis, 102, "and Tools behind a separator of its own")
 
 -- places: Fish and Food are sub-tabs of Craft, NPC and Quests of World
 do
@@ -4536,7 +5213,7 @@ do
 	Pia.slash("settings")
 	local titles = {}
 	for i, b in ipairs(UI.sectionButtons) do titles[i] = (b.label.text:gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", "")) end
-	eq(table.concat(titles, " / "), "General / Profiles / Tabs & Modules / Built-ins / Market / Cooking / Quests / Data Sync", "the Settings tab lists its sections: the fixed ones, then one per module with switches, Data Sync at the bottom")
+	eq(table.concat(titles, " / "), "General / Profiles / Tabs & Modules / Built-ins / Market / BiS / Data Sync", "the Settings tab lists its sections: the fixed ones, then one per module with switches, Data Sync at the bottom")
 	eq(db.settingsSection, "general", "General to begin with"); eq(UI.sectionPanels.general.shown, true, "its panel shown"); eq(UI.sectionPanels.profiles.shown, false, "the others not")
 	click(UI.sectionButtons[2])
 	eq(db.settingsSection, "profiles", "a click shows a section"); eq(UI.sectionPanels.profiles.shown, true, "its panel"); eq(UI.sectionPanels.general.shown, false, "the last one hidden")
@@ -4608,11 +5285,13 @@ do
 	eq(w.mods.range.settings.on, true, "a module's switches are taken"); eq(w.mods.range.settings.size, nil, "what is no switch is not")
 	eq(w.mods.range.keys.pos, nil, "a module's own key of the wrong kind is left out"); eq(w.mods.range.keys.size, nil, "likewise")
 	eq(w.mods.market.settings.share, nil, "sharing with the guild is never switched on by somebody's text"); eq(w.mods.market.settings.tooltip, false, "other switches are")
+	eq(P.Import(pack("{s1:vn1;s3:top{s8:settings{s5:shareTs5:coinsF}}s4:mods{}}"), "Sharer"), "Sharer", "a text whose own settings say to share is read")
+	eq(db.profiles.Sharer.top.settings.share, nil, "but the one switch of sharing is not taken from it"); eq(db.profiles.Sharer.top.settings.coins, false, "its other settings are")
 	-- the section itself
 	UI:ShowSection("profiles")
 	local shown = {}
 	for _, row in ipairs(P.rows) do if row.shown then shown[#shown + 1] = (row.label.text:gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", "")) end end
-	eq(table.concat(shown, ","), "> Default,   Bare,   Imported,   Imported 2,   Odd,   Wrong", "the section lists the profiles, the one in use marked")
+	eq(table.concat(shown, ","), "> Default,   Bare,   Imported,   Imported 2,   Odd,   Sharer,   Wrong", "the section lists the profiles, the one in use marked")
 	eq(P.rows[1].use.enabled, false, "the one in use cannot be 'used'"); eq(P.rows[1].delete.enabled, false, "nor Default deleted"); eq(P.rows[2].delete.enabled, true, "another can")
 	click(P.rows[2].use)
 	eq(Pia.popups[#Pia.popups], "DAWNTOOLS_PROFILE_USE", "Use asks first, as the interface reloads")
@@ -4637,4 +5316,1158 @@ do
 	leave(Quin)
 end
 
+;(function() -- BiS: the tab right of Combat, the tooltip line, the roll line
+	local GEAR = { -- name, where worn, the game's stats, a tooltip line
+		[9001] = { "Old Helm", "INVTYPE_HEAD", { ITEM_MOD_STAMINA_SHORT = 10 } },
+		[9002] = { "Warding Helm", "INVTYPE_HEAD", { ITEM_MOD_STAMINA_SHORT = 5 }, "Equip: Increased Defense +10." },
+		[9003] = { "Helm of the List", "INVTYPE_HEAD", { ITEM_MOD_STAMINA_SHORT = 40 }, "Equip: Increased Defense +10." },
+		[9004] = { "Band of Aim", "INVTYPE_FINGER", {}, "Equip: Improves your chance to hit by 1%." },
+		[9005] = { "Listed Legs", "INVTYPE_LEGS", { ITEM_MOD_STAMINA_SHORT = 12 } },
+		[9006] = { "Mage Hat", "INVTYPE_HEAD", { ITEM_MOD_STAMINA_SHORT = 99 }, "Classes: Mage" },
+		[9007] = { "Worn Legs", "INVTYPE_LEGS", { ITEM_MOD_STAMINA_SHORT = 20 } },
+		[9010] = { "Quest Helm", "INVTYPE_HEAD", { ITEM_MOD_STAMINA_SHORT = 25 } },
+		[9011] = { "Crafted Helm", "INVTYPE_HEAD", { ITEM_MOD_STAMINA_SHORT = 18 } },
+		[9012] = { "World Helm", "INVTYPE_HEAD", { ITEM_MOD_STAMINA_SHORT = 22 }, "Binds when equipped" },
+		[9013] = { "Bound Helm", "INVTYPE_HEAD", { ITEM_MOD_STAMINA_SHORT = 50 } },
+		[9014] = { "Dungeon Helm", "INVTYPE_HEAD", { ITEM_MOD_STAMINA_SHORT = 28 } },
+	}
+	for id, g in pairs(GEAR) do ITEMS[id] = { g[1], 2, 1, 100, false, 4, 0, slot = g[2] } end
+	local worn = { [1] = 9001, [7] = 9007 }
+	local X = NewClient("Bis", { globals = function(env)
+		env.GetInventoryItemID = function(_, slot) return worn[slot] end
+		env.GetItemStats = function(link)
+			local g = GEAR[tonumber(link:match("item:(%d+)"))]
+			return g and g[3] or {}
+		end
+		env.C_TooltipInfo = { GetItemByID = function(id)
+			local g = GEAR[id]
+			return { lines = { { leftText = ITEMS[id][1] }, g and g[4] and { leftText = g[4] } or nil } }
+		end }
+		-- the sheet: 60 defense without gear (level 10 gives 50), 2% hit from talents
+		env.UnitDefense = function()
+			local def = 60
+			for _, id in pairs(worn) do if GEAR[id][4] and GEAR[id][4]:find("Defense") then def = def + 10 end end
+			return def, 0
+		end
+		env.GetHitModifier = function() return 2 end
+		env.GetLootRollItemLink = function(roll) return roll == 1 and "|cff1eff00|Hitem:9003::::|h[Helm of the List]|h|r" or "|Hitem:100::::|h[Copper Bar]|h" end
+	end })
+	local B, e = X.DT.Bis, X.env
+	local order = {}
+	for i, tb in ipairs(X.DT.UI:TabList(true)) do order[tb.id] = i end
+	eq(order.bis, order.combat + 1, "the BiS tab is right of Combat")
+	eq(#X.DT.BisProfiles, 40, "a profile for every spec"); eq(#B.Mine(), 3, "three of them a warrior's")
+	for _, p in ipairs(X.DT.BisProfiles) do
+		check(#p.src > 0 and p.src[1]:find("^https://"), p.id .. " says where its values are from")
+		for word in pairs(p.w) do check(B.LABEL[word], p.id .. ": a stat we have a word for (" .. word .. ")") end
+		for word, cap in pairs(p.caps) do check(p.w[word] and cap.cap > 0, p.id .. ": a cap on a weighted stat") end
+	end
+	B.db.pick[B.me] = "warrior-protection"
+	eq(B.Profile().caps.def.cap, 440 - 50 * 5, "below the last level the defense cap is lower, five a level"); eq(B.Profile().caps.def.hard, nil, "and not to be reached before all else")
+	B.MAX_LEVEL = 10 -- (from here: a character of the last level)
+	X.fire("PLAYER_LEVEL_UP")
+	local prot = B.Profile()
+	eq(prot.id, "warrior-protection", "the spec picked"); eq(prot.caps.def.cap, 440, "defense 440"); eq(prot.caps.def.hard, true, "before anything else")
+	eq(prot.caps.hit.cap, 8, "hit 8%"); eq(prot.caps.exp.cap, 6.5, "expertise 6.5%")
+	X.DT.BisLists["warrior-protection"] = { [9003] = "quest", [9005] = "crafted", [9006] = "quest" }
+	X.bags = { 9002, 9004, 100 }
+	X.fire("BAG_UPDATE_DELAYED")
+	B.Edit("def", "cap", 70) -- (a cap within reach of level 10)
+	eq(B.Profile().caps.def.cap, 70, "a cap changed by hand"); eq(B.Profile().caps.def.hard, true, "stays what it was otherwise")
+	eq(B.Compute(), true, "worked out")
+	local s = B.State()
+	eq(s.cur[1], 9001, "what I wear"); eq(s.base.def, 60, "defense without gear: the sheet less the gear"); eq(s.base.hit, 2, "hit from talents")
+	eq(s.curShort.def, 10, "ten short of the cap as I stand")
+	eq(s.best.rows[1], 9002, "the best I own gives up stamina for the cap"); eq(s.best.short.def, nil, "which it reaches")
+	eq(s.best.rows[11], 9004, "a ring from the bags is put on"); eq(s.best.rows[9], 9007, "what is best already stays")
+	eq(s.bis.rows[1], 9003, "the best of the list"); eq(s.bis.rows[9], 9005, "slot by slot")
+	-- what an item would gain
+	local g = B.Gain(9003)
+	eq(g.d, 35, "the listed helm: 35 stamina more than the best I own"); eq(table.concat(g.slots, ","), "Head", "and the slot it changes")
+	eq(B.Gain(9002).best, true, "an item of my best set says so"); eq(B.Gain(9001).best, false, "one that is not, too")
+	eq(B.Gain(9006).no, true, "another class's is not for me"); eq(B.Gain(100), nil, "what is not gear has nothing to say")
+	local tip = e.GameTooltip
+	tip.lines = {}
+	X.tooltipHook(tip, { id = 9003 })
+	local line
+	for _, l in ipairs(tip.lines) do if l:find("BiS", 1, true) then line = l end end
+	check(line and line:find("+35.0", 1, true) and line:find("Head", 1, true) and line:find("Protection", 1, true), "the tooltip says the gain and the slot: " .. tostring(line))
+	tip.lines = {}
+	X.tooltipHook(tip, { id = 100 })
+	for _, l in ipairs(tip.lines) do check(not l:find("BiS", 1, true), "nothing on what is not gear") end
+	B.db.settings.tooltip = false
+	tip.lines = {}
+	X.tooltipHook(tip, { id = 9003 })
+	for _, l in ipairs(tip.lines) do check(not l:find("BiS", 1, true), "nor with the line switched off") end
+	B.db.settings.tooltip = true
+	-- the list's items I do not own, in order
+	step(1)
+	s = B.State()
+	eq(#s.upg, 1, "the legs on the list are worse than mine: one upgrade"); eq(s.upg[1].id, 9003, "the helm"); eq(s.rank[9003], 1, "numbered")
+	tip.lines = {}
+	X.tooltipHook(tip, { id = 9003 })
+	check(tip.lines[#tip.lines]:find("#1 upgrade", 1, true), "and the tooltip says which upgrade it is")
+	-- rolled for
+	local before = #X.printed
+	X.fire("START_LOOT_ROLL", 1)
+	check(#X.printed == before + 1 and X.printed[#X.printed]:find("+35.0", 1, true), "a roll: a line in the chat")
+	X.fire("START_LOOT_ROLL", 2)
+	eq(#X.printed, before + 1, "none for what is not gear")
+	-- what there is to get: the item list (QuestieDB's as the Items tab reads it; here a stand-in), then the game's facts
+	local Item = X.DT.Item
+	Item.Start, Item.Ready = function() return false end, function() return true end
+	Item.All = function() return {
+		{ id = 9010, req = 1, c = 4, s = 0, src = { ["Quest reward"] = true } },
+		{ id = 9011, req = 1, c = 4, s = 0, src = { Crafted = true } },
+		{ id = 9012, req = 1, c = 4, s = 0, src = { Drop = true } },
+		{ id = 9013, req = 1, c = 4, s = 0, src = { Drop = true } },
+		{ id = 9014, req = 1, c = 4, s = 0, src = { Drop = true } },
+		{ id = 9015, req = 40, c = 4, s = 0, src = { ["Quest reward"] = true } },
+	} end
+	X.DT.CraftSkill = {}
+	local hall = X.DT.Dungeon.All()[1]
+	hall.lo = 5
+	hall.bosses[1].has[9014] = true
+	B.Sift()
+	local kinds = {}
+	for _, c in ipairs(B.finder.got) do kinds[#kinds + 1] = c.id .. c.kind end
+	table.sort(kinds)
+	eq(table.concat(kinds, ","), "9010quest,9011crafted,9012boe,9014dungeon", "gear of my level, by where it is from: a drop that binds when picked up is no world drop, a level 40 helm not for level 10")
+	local top = B.Top(1, "quest", 5)
+	eq(#top, 1, "the best quest rewards for the head"); eq(top[1].worth, 25, "with what it would add in the worn helm's place"); eq(top[1].gain, 15, "and how much more that is")
+	eq(#B.Top(9, "quest", 5), 0, "none of them are legs")
+	-- the tab: what I wear down the left, the stats along the top, what there is to get on the right
+	X.DT.UI:Show("bis")
+	local G = B.gear
+	check(G.progress.text.text:find("%% of the best pre%-raid set"), "the bar says how far along: " .. G.progress.text.text)
+	local capText = {}
+	for _, bar in ipairs(G.caps) do if bar.shown then capText[#capText + 1] = bar.text.text end end
+	eq(#capText, 3, "a bar for each cap"); check(capText[1]:find("Defense 60 / 70", 1, true) and capText[1]:find("owned: 70", 1, true), "defense as it stands, and with the best I own: " .. capText[1])
+	check(capText[3]:find("Hit %% 2 / 8"), "hit: " .. capText[3])
+	check(G.stats.text:find("Score 30", 1, true) and G.stats.text:find("Stamina |cffffffff30|r", 1, true), "the stats that count, along the top: " .. G.stats.text)
+	local head = G.slots[1]
+	eq(head.icon.texture, 1000 + 9001, "a slot shows the picture of what is worn"); check(head.name.text:find("Old Helm", 1, true), "and its name")
+	check(head.name.text:find("|cff40ff40>|r", 1, true), "marked where I own something better"); check(not G.slots[9].name.text:find("|cff40ff40>|r", 1, true), "and not where I do not")
+	check(head.score.text:find("^10 ") and head.score.text:find("5%%"), "its worth, and how that stands against the list's item: " .. head.score.text)
+	check(G.slots[2].name.text:find("nothing worn", 1, true), "an empty slot says so"); eq(G.slots[2].icon.texture, "Interface\\PaperDoll\\UI-Backpack-EmptySlot", "with the empty picture")
+	eq(#G.slots, 17, "every slot is on the left")
+	head.scripts.OnEnter(head)
+	eq(tip.lines[#tip.lines], "item:9001", "a slot shows its item's tooltip")
+	-- the right side: the slot clicked
+	eq(G.head.text, "Head", "the head slot to begin with")
+	check(G.own.text.text:find("Warding Helm", 1, true), "the best I own for it"); check(G.list.text.text:find("Helm of the List", 1, true), "and the list's pick")
+	local L = G.lines
+	check(L[1].head.text:find("Quest rewards", 1, true) and L[2].item.text.text:find("Quest Helm", 1, true), "then the best quest rewards")
+	check(L[2].gain.text:find("+15.0", 1, true) and L[2].worth.text == "25" and L[2].lvl.text == "1", "each with its level, worth and gain over the worn one")
+	eq(L[2].from.text, "quest reward", "and where it is from")
+	-- (with the quests read: who gives the quest and where, first; a click on the line is a waypoint there)
+	local way
+	X.DT.Quest.Entry = function(id) return id == 77 and { id = 77, name = "A Helm for the Brave", zoneName = "Durotar" } or nil end
+	X.DT.Quest.Origin = function() return { kind = "npc", id = 5, name = "Gar'Thok", text = "Gar'Thok" } end
+	X.DT.Quest.Waypoint = function(e) way = e.id end
+	e.LibQuestieDB = { Item = { Get = function(id, key) return id == 9010 and key == "questRewards" and { 77 } or nil end } }
+	B.wheres = {}
+	B.Refresh()
+	check(L[2].from.text:find("Gar'Thok|r, Durotar", 1, true) and L[2].from.text:find("A Helm for the Brave", 1, true), "a quest reward says who gives the quest, and where: " .. L[2].from.text)
+	click(L[2].item)
+	eq(way, 77, "a click on it: a waypoint to where the quest is picked up")
+	e.LibQuestieDB = nil; eq(L[2].icon.texture, 1000 + 9010, "and its picture")
+	check(L[7].head.text:find("Dungeon drops", 1, true) and L[8].item.text.text:find("Dungeon Helm", 1, true), "the best dungeon drops")
+	check(L[13].head.text:find("Crafted", 1, true) and L[14].item.text.text:find("Crafted Helm", 1, true), "the best crafted")
+	check(L[19].head.text:find("World drops", 1, true) and L[20].item.text.text:find("World Helm", 1, true), "and the best world drops")
+	eq(L[20].from.text, "world drop", "a world drop not seen on the auction house says so"); eq(L[3].item.shown, false, "a line with nothing is empty")
+	L[8].item.scripts.OnEnter(L[8].item)
+	eq(tip.lines[#tip.lines], "item:9014", "a line shows its item's tooltip")
+	click(G.slots[9])
+	eq(G.head.text, "Legs", "a click on a slot shows that slot"); eq(G.slots[9].sel.shown, true, "and marks it")
+	check(L[1].head.text:find("nothing for this slot", 1, true), "a kind with nothing for it says so")
+	click(G.slots[1])
+	step(3) -- (the set is worked out again as items come in; its gains take a moment)
+	B.Show("up")
+	check(B.up.rows[1].item.text.text:find("Helm of the List", 1, true) and B.up.rows[1].gain.text:find("+35.0", 1, true), "Upgrades lists what to get next")
+	eq(B.up.rows[1].icon.texture, 1000 + 9003, "with its picture")
+	B.Show("check")
+	local text = B.check.text.text
+	check(text:find("Old Helm", 1, true) and text:find("Stamina 10", 1, true), "Check shows what was read of each item worn")
+	check(text:find("Defense 60", 1, true) and text:find("so 10 comes from talents", 1, true), "and what is left without gear")
+	B.Show("weights")
+	eq(B.weights.rows.def.cap.text, "70", "Weights shows the cap"); eq(B.weights.rows.sta.w.text, "1", "and what a point is worth")
+	check(B.weights.note.text:find("mythicsim.com", 1, true) and B.weights.note.text:find("1.60.1", 1, true) and B.weights.note.text:find("changed by you", 1, true), "with where the values are from, for which client")
+	local box = B.weights.rows.sta.w
+	box.text = "0"
+	box.scripts.OnEnterPressed(box)
+	eq(B.Profile().w.sta, 0, "a weight typed in is taken"); eq(B.Gain(9003).up, false, "and counts at once: stamina worth nothing, the helm gains nothing")
+	click(B.weights.reset)
+	eq(B.Profile().w.sta, 1, "the profile's own values are put back"); eq(B.Profile().caps.def.cap, 440, "the cap too")
+	-- the classes and their specs, as pictures
+	local nClass = 0
+	for _ in pairs(B.classButtons) do nClass = nClass + 1 end
+	eq(nClass, 9, "a button for every class"); eq(B.classButtons.WARRIOR.sel.shown, true, "mine marked"); eq(B.classButtons.MAGE.sel.shown, false, "the others not")
+	local specs = {}
+	for _, b in ipairs(B.specButtons) do if b.shown then specs[#specs + 1] = b.label.text end end
+	eq(table.concat(specs, ","), "Arms,Fury,Protection", "under them the specs of the class picked")
+	eq(B.specButtons[3].sel.shown, true, "the one in use marked"); eq(B.specButtons[3].icon.texture, "Interface\\Icons\\Ability_Warrior_DefensiveStance", "each with its picture")
+	click(B.specButtons[2])
+	eq(B.Raw().id, "warrior-fury", "a click on a spec picks it"); eq(B.db.pick[B.me], "warrior-fury", "and it is kept")
+	B.Show("gear")
+	check(G.progress.text.text:find("no pre-raid list", 1, true), "a spec without a list says so")
+	-- another class: its specs, its weights, none of my gear
+	click(B.classButtons.MAGE)
+	eq(B.Raw().class, "MAGE", "a click on a class goes to it"); eq(B.State().foreign, true, "which is not mine")
+	specs = {}
+	for _, b in ipairs(B.specButtons) do if b.shown then specs[#specs + 1] = b.label.text end end
+	eq(table.concat(specs, ","), "Arcane,Arcane Fire,Fire,Frost,Frostfire", "with its specs")
+	check(G.slots[1].name.text:find("nothing worn", 1, true), "my helm is not a mage's"); check(B.status.text:find("Not your class", 1, true), "and the tab says why")
+	tip.lines = {}
+	X.tooltipHook(tip, { id = 9003 })
+	for _, l in ipairs(tip.lines) do check(not l:find("BiS", 1, true), "tooltips say nothing while another class is looked at") end
+	click(B.specButtons[3])
+	eq(B.Raw().id, "mage-fire", "its spec picked")
+	click(B.classButtons.WARRIOR)
+	eq(B.Raw().id, "warrior-fury", "back to my class: the spec looked at last")
+	click(B.specButtons[3])
+	eq(B.Raw().id, "warrior-protection", "and to Protection")
+	-- in a fight nothing is worked out
+	X.combat = true
+	worn[1] = 9002
+	X.fire("PLAYER_EQUIPMENT_CHANGED")
+	eq(B.Compute(), false, "not in a fight"); eq(B.State().cur[1], 9001, "the state is as it was")
+	X.combat = false
+	eq(B.State().cur[1], 9002, "and worked out anew after"); eq(B.State().base.def, 60, "defense without gear did not move with the helm")
+	leave(X)
+	for id in pairs(GEAR) do ITEMS[id] = nil end
+end)()
+
+;(function() -- BiS, refined: the defaults, who may wear what, every spec has output, gear found for any class, the tooltip line
+	local GEAR = { -- name, where worn, the game's stats, class, subclass, a tooltip line
+		[9101] = { "Mage Cowl", "INVTYPE_HEAD", { ITEM_MOD_SPELL_POWER_SHORT = 20 }, 4, 1 },
+		[9102] = { "Plate Helm of Power", "INVTYPE_HEAD", { ITEM_MOD_SPELL_POWER_SHORT = 50 }, 4, 4 },
+		[9103] = { "Vendor Cowl", "INVTYPE_HEAD", { ITEM_MOD_SPELL_POWER_SHORT = 30 }, 4, 1 },
+		[9110] = { "Mail Helm of Rage", "INVTYPE_HEAD", { ITEM_MOD_STRENGTH_SHORT = 30 }, 4, 3 },
+		[9111] = { "Sold Mail Helm", "INVTYPE_HEAD", { ITEM_MOD_STRENGTH_SHORT = 20 }, 4, 3 },
+		[9130] = { "Worn Ring", "INVTYPE_FINGER", { ITEM_MOD_STRENGTH_SHORT = 5 }, 4, 0 },
+		[9131] = { "Better Ring", "INVTYPE_FINGER", { ITEM_MOD_STRENGTH_SHORT = 9 }, 4, 0 },
+		[9140] = { "Worn Sword", "INVTYPE_WEAPON", { ITEM_MOD_STRENGTH_SHORT = 10 }, 2, 7 },
+		[9141] = { "Offhand Sword", "INVTYPE_WEAPONOFFHAND", { ITEM_MOD_STRENGTH_SHORT = 12 }, 2, 7 },
+		[9142] = { "Great Sword", "INVTYPE_2HWEAPON", { ITEM_MOD_STRENGTH_SHORT = 40 }, 2, 8 },
+		[9150] = { "Mage Only Hat", "INVTYPE_HEAD", { ITEM_MOD_STRENGTH_SHORT = 99 }, 4, 3, "Classes: Mage" },
+		[9160] = { "Unseen Helm", "INVTYPE_HEAD", { ITEM_MOD_STRENGTH_SHORT = 99 }, 4, 3 },
+	}
+	for i = 1, 8 do GEAR[9200 + i] = { "Cowl " .. i, "INVTYPE_HEAD", { ITEM_MOD_SPELL_POWER_SHORT = 20 + i }, 4, 1 } end
+	for id, g in pairs(GEAR) do ITEMS[id] = { g[1], 2, 1, 100, false, g[4], g[5], slot = g[2] } end
+	local worn = { [11] = 9130, [16] = 9140 }
+	local X = NewClient("BisMore", { globals = function(env)
+		env.GetInventoryItemID = function(_, slot) return worn[slot] end
+		env.GetItemStats = function(link)
+			local g = GEAR[tonumber(link:match("item:(%d+)"))]
+			return g and g[3] or {}
+		end
+		env.C_TooltipInfo = { GetItemByID = function(id)
+			local g = GEAR[id]
+			return { lines = { { leftText = ITEMS[id][1] }, g and g[6] and { leftText = g[6] } or nil } }
+		end }
+		env.UnitDefense = function() return 60, 0 end
+	end })
+	local B, e, BL, V = X.DT.Bis, X.env, X.DT.BisLogic, X.DT.Market.View
+	B.MAX_LEVEL = e.UnitLevel("player")
+	-- what a fresh user gets is what is shipped, for every spec; a change is the profile's own, and is put back
+	for _, raw in ipairs(X.DT.BisProfiles) do
+		B.Pick(raw.id)
+		local p = B.Profile()
+		local same = true
+		for word, n in pairs(raw.w) do same = same and p.w[word] == n end
+		for word, n in pairs(p.w) do same = same and (raw.w[word] == n or (raw.caps[word] and n == 0)) end
+		for word, cap in pairs(raw.caps) do
+			local at = p.caps[word]
+			same = same and at and at.cap == cap.cap and (at.over or 0) == (cap.over or 0) and at.hard == cap.hard
+		end
+		for word in pairs(p.caps) do same = same and raw.caps[word] ~= nil end
+		check(same and B.db.edit[raw.id] == nil, raw.id .. ": with nothing changed, the weights and caps are the shipped ones")
+		check(p.hands and #p.hands > 0, raw.id .. ": says what the hands may hold")
+	end
+	B.Pick("paladin-shockadin")
+	local dw = false
+	for _, h in ipairs(B.Profile().hands) do dw = dw or h == "dw" end
+	eq(dw, false, "a paladin spec that does not say what the hands hold does not wield two weapons")
+	B.Pick("hunter-beastmastery")
+	B.Edit("crit", "w", 99); B.Edit("hit", "cap", 5); B.Edit("hit", "over", 2)
+	eq(B.Profile().w.crit, 99, "a weight typed in"); eq(B.Profile().caps.hit.cap, 5, "a cap typed in"); check(B.db.edit["hunter-beastmastery"], "kept for that profile")
+	B.Pick("hunter-marksmanship"); eq(B.Profile().w.crit, 11.76, "another spec is not touched by it")
+	B.Pick("hunter-beastmastery")
+	B.Edit("crit", "w", nil); B.Edit("hit", "cap", nil)
+	eq(B.Profile().caps.hit.cap, 8, "a cap emptied is the default again"); eq(B.db.edit["hunter-beastmastery"], nil, "and with nothing else changed nothing is kept")
+	B.ResetEdits()
+	eq(B.Profile().w.crit, 12.74, "reset to default: the weight"); eq(B.Profile().caps.hit.cap, 8, "the cap"); eq(B.Profile().caps.hit.over, 0, "and past the cap")
+	B.Edit("crit", "w", 99); B.Edit("crit", "w", nil)
+	eq(B.db.edit["hunter-beastmastery"], nil, "a change put back by hand leaves nothing kept")
+	B.Edit("sta", "over", 3)
+	eq(B.db.edit["hunter-beastmastery"], nil, "a past-the-cap value for a stat with no cap changes nothing")
+	-- the game's one spell power is healing for a healer too
+	eq(BL.Stats({ ITEM_MOD_SPELL_POWER_SHORT = 30 }).heal, 30, "spell power counts as healing")
+	eq(BL.Stats({ ITEM_MOD_SPELL_DAMAGE_DONE_SHORT = 30 }).heal, nil, "damage alone does not")
+	eq(BL.Stats({ ITEM_MOD_SPELL_POWER_SHORT = 30, ITEM_MOD_SPELL_HEALING_DONE_SHORT = 40 }).heal, 40, "nor over what the game says of healing")
+	-- who may wear and wield what at the last level, by class
+	local ALL = { "WARRIOR", "PALADIN", "HUNTER", "ROGUE", "PRIEST", "SHAMAN", "MAGE", "WARLOCK", "DRUID" }
+	local MAY = { -- class, subclass, the classes that may
+		{ 4, 1, "WARRIOR PALADIN HUNTER ROGUE PRIEST SHAMAN MAGE WARLOCK DRUID" }, { 4, 2, "WARRIOR PALADIN HUNTER ROGUE SHAMAN DRUID" },
+		{ 4, 3, "WARRIOR PALADIN HUNTER SHAMAN" }, { 4, 4, "WARRIOR PALADIN" }, { 4, 6, "WARRIOR PALADIN SHAMAN" },
+		{ 4, 7, "PALADIN" }, { 4, 8, "DRUID" }, { 4, 9, "SHAMAN" }, { 4, 0, "WARRIOR PALADIN HUNTER ROGUE PRIEST SHAMAN MAGE WARLOCK DRUID" },
+		{ 2, 0, "WARRIOR PALADIN HUNTER SHAMAN" }, { 2, 1, "WARRIOR PALADIN HUNTER SHAMAN" }, { 2, 4, "WARRIOR PALADIN ROGUE PRIEST SHAMAN DRUID" },
+		{ 2, 5, "WARRIOR PALADIN SHAMAN DRUID" }, { 2, 6, "WARRIOR PALADIN HUNTER DRUID" }, { 2, 7, "WARRIOR PALADIN HUNTER ROGUE MAGE WARLOCK" },
+		{ 2, 8, "WARRIOR PALADIN HUNTER" }, { 2, 10, "WARRIOR HUNTER PRIEST SHAMAN MAGE WARLOCK DRUID" },
+		{ 2, 13, "WARRIOR HUNTER ROGUE SHAMAN DRUID" }, { 2, 15, "WARRIOR HUNTER ROGUE PRIEST SHAMAN MAGE WARLOCK DRUID" },
+		{ 2, 2, "WARRIOR HUNTER ROGUE" }, { 2, 3, "WARRIOR HUNTER ROGUE" }, { 2, 18, "WARRIOR HUNTER ROGUE" }, { 2, 16, "WARRIOR HUNTER ROGUE" },
+		{ 2, 19, "PRIEST MAGE WARLOCK" },
+	}
+	for _, m in ipairs(MAY) do
+		local want, got = {}, {}
+		for class in m[3]:gmatch("%S+") do want[#want + 1] = class end
+		for _, class in ipairs(ALL) do
+			if V.MayUse(m[1], m[2], { me = class, level = 60, trained = false }) then got[#got + 1] = class end
+		end
+		table.sort(want); table.sort(got)
+		eq(table.concat(got, " "), table.concat(want, " "), ("who may use item class %d, subclass %d"):format(m[1], m[2]))
+	end
+	eq(V.MayUse(4, 4, { me = "WARRIOR", level = 30, trained = false }), false, "plate is for level 40 and up"); eq(V.MayUse(4, 3, { me = "WARRIOR", level = 30, trained = false }), true, "mail before")
+	-- every spec has output: a set to the last slot, scored, wearing only what the class may
+	local cat, n = {}, 0
+	local function Add(loc, class, sub, extra)
+		n = n + 1
+		local s = { sta = 5, str = 5, agi = 5, int = 5, spi = 5, sp = 5, heal = 5, mp5 = 2, ap = 10, rap = 10, fap = 10, dps = 20, crit = 1, scrit = 1, haste = 1 }
+		for k, v in pairs(extra or {}) do s[k] = v end
+		cat[n] = { id = n, loc = loc, class = class, sub = sub, s = s }
+	end
+	for _, loc in ipairs({ "INVTYPE_HEAD", "INVTYPE_SHOULDER", "INVTYPE_CHEST", "INVTYPE_WRIST", "INVTYPE_HAND", "INVTYPE_WAIST", "INVTYPE_LEGS", "INVTYPE_FEET" }) do
+		for sub = 1, 4 do Add(loc, 4, sub) end
+	end
+	Add("INVTYPE_CLOAK", 4, 1, { def = 5, exp = 1 }); Add("INVTYPE_NECK", 4, 0, { hit = 1, shit = 1 })
+	Add("INVTYPE_FINGER", 4, 0, { hit = 1 }); Add("INVTYPE_FINGER", 4, 0, { shit = 1 }); Add("INVTYPE_TRINKET", 4, 0); Add("INVTYPE_TRINKET", 4, 0)
+	for _, sub in ipairs({ 0, 4, 7, 13, 15 }) do Add("INVTYPE_WEAPON", 2, sub); Add("INVTYPE_WEAPONOFFHAND", 2, sub) end
+	for _, sub in ipairs({ 1, 5, 6, 8, 10 }) do Add("INVTYPE_2HWEAPON", 2, sub) end
+	Add("INVTYPE_SHIELD", 4, 6, { def = 20, bv = 5 }); Add("INVTYPE_HOLDABLE", 4, 0)
+	Add("INVTYPE_RANGED", 2, 2); Add("INVTYPE_RANGEDRIGHT", 2, 3); Add("INVTYPE_RANGEDRIGHT", 2, 18); Add("INVTYPE_RANGEDRIGHT", 2, 19); Add("INVTYPE_THROWN", 2, 16)
+	for _, sub in ipairs({ 7, 8, 9 }) do Add("INVTYPE_RELIC", 4, sub) end
+	local DUAL = { WARRIOR = true, ROGUE = true, HUNTER = true, SHAMAN = true }
+	for _, raw in ipairs(X.DT.BisProfiles) do
+		B.Pick(raw.id)
+		local prof, who, list = B.Profile(), { me = raw.class, level = 60, trained = false }, {}
+		for _, it in ipairs(cat) do
+			if V.MayUse(it.class, it.sub, who) then list[#list + 1] = { id = it.id, loc = it.loc, s = it.s, n = 1 } end
+		end
+		local picks, _, score = BL.Solve(BL.Choices(list, prof), {}, prof)
+		local empty = {}
+		for i = 1, 10 do if #picks[i].ids ~= 1 then empty[#empty + 1] = BL.SLOTS[i][1] end end
+		if #picks[11].ids ~= 2 then empty[#empty + 1] = "Rings" end
+		if #picks[12].ids ~= 2 then empty[#empty + 1] = "Trinkets" end
+		if #picks[13].ids < 1 then empty[#empty + 1] = "Weapons" end
+		if #picks[14].ids < 1 then empty[#empty + 1] = "Ranged" end
+		check(#empty == 0 and score > 0, raw.id .. ": every slot filled and a score (empty: " .. table.concat(empty, ",") .. "; score " .. tostring(score) .. ")")
+		local rule = true
+		for _, pick in ipairs(picks) do
+			for _, id in ipairs(pick.ids) do rule = rule and V.MayUse(cat[id].class, cat[id].sub, who) end
+		end
+		local hands = picks[13].ids
+		if #hands == 2 and (cat[hands[2]].loc == "INVTYPE_WEAPON" or cat[hands[2]].loc == "INVTYPE_WEAPONOFFHAND") then rule = rule and DUAL[raw.class] end
+		check(rule, raw.id .. ": wears and wields only what its class may")
+	end
+	-- gear found for a class that is not mine, by what that class may wear; the best few of a place to wear go in its set
+	local Item = X.DT.Item
+	Item.Start, Item.Ready = function() return false end, function() return true end
+	local ENTRIES = {}
+	for id, g in pairs(GEAR) do if id ~= 9160 then ENTRIES[#ENTRIES + 1] = { id = id, req = 1, c = g[4], s = g[5], src = { [(id == 9103 or id == 9111) and "Vendor" or "Quest reward"] = true } } end end
+	Item.All = function() return ENTRIES end
+	X.DT.CraftSkill = {}
+	local function Look() for _ = 1, 400 do B.Sift(); step(0.2) end end
+	B.Pick("mage-fire")
+	Look()
+	step(3) -- (what was found goes into the set by itself, once all are looked at)
+	local s = B.State()
+	eq(s.foreign, true, "a mage's spec looked at")
+	local got = {}
+	for _, c in ipairs(B.finder.got) do got[c.id] = c.kind end
+	eq(got[9102], nil, "plate is not found for a mage"); eq(got[9103], "vendor", "a vendor's cowl is"); eq(got[9110], nil, "nor a warrior's mail")
+	local heads = 0
+	for _, c in ipairs(s.all) do if c.loc == "INVTYPE_HEAD" then heads = heads + 1 end end
+	eq(heads, 6, "of ten cowls the best six go into the set"); eq(s.bis.rows[1], 9103, "the best of them is its head")
+	check(s.bis.score > 0, "a set for a class that has no list of its own")
+	-- my own class: the same, and what I do not own is an upgrade
+	B.Pick("warrior-fury")
+	Look()
+	step(5)
+	s = B.State()
+	eq(s.foreign, false, "my own class"); eq(s.bis.rows[1], 9110, "the best set found has the best helm"); eq(B.Where(9111, "vendor"), "sold by a vendor", "a vendor's item says so")
+	local top = B.Top(1, "vendor", 5)
+	eq(#top, 2, "vendors are a place to look too"); eq(top[1].id, 9111, "the mail helm first")
+	eq(s.upg[1] and s.upg[1].id, 9110, "upgrades without a list: the helm gains the most"); eq(s.rank[9110], 1, "numbered")
+	-- the tooltip: where the item goes
+	local tip = e.GameTooltip
+	local function Line(id)
+		tip.lines = {}
+		X.tooltipHook(tip, { id = id })
+		for _, l in ipairs(tip.lines) do if l:find("BiS", 1, true) then return l end end
+	end
+	check(Line(9110):find("+30.0", 1, true) and Line(9110):find("Head", 1, true), "an item I can use: what it gains, and where")
+	check(Line(9131):find("Ring", 1, true) and not Line(9131):find("Rings", 1, true), "a ring takes one ring's place")
+	check(Line(9141):find("Off hand", 1, true), "an off-hand weapon says so")
+	eq(Line(9150), nil, "an item only a mage may wear: nothing is said")
+	eq(B.Gain(9150).no, true, "though it is known not to be for me")
+	B.Pick("warrior-arms")
+	B.Compute()
+	check(Line(9142):find("Two-hand", 1, true), "a two-hander says so")
+	B.Pick("warrior-fury")
+	B.Compute()
+	-- in a fight: nothing is asked of the game, nothing said of an item not seen
+	local asks = 0
+	local real = e.C_Item.RequestLoadItemDataByID
+	e.C_Item.RequestLoadItemDataByID = function() asks = asks + 1 end
+	X.uncached[9160] = true
+	X.combat = true
+	eq(Line(9160), nil, "no line for an unseen item in a fight"); eq(asks, 0, "and the game is not asked about it")
+	X.combat = false
+	-- an item the game is slow to give: asked again and again, not on every look, and then left alone
+	asks = 0
+	B.Item(9160); B.Item(9160)
+	eq(asks, 1, "asked once for two looks")
+	for _ = 1, 8 do step(5); B.Item(9160) end
+	eq(asks, 6, "asked again every few seconds, six times"); step(5); eq(B.Gone(9160), true, "and then known to be gone")
+	e.C_Item.RequestLoadItemDataByID, X.uncached[9160] = real, nil
+	leave(X)
+	for id in pairs(GEAR) do ITEMS[id] = nil end
+end)()
+;(function() -- BiS, fast: how many items a spec asks the game for, the best first, shown as they come, and nothing asked twice
+	local LOADED = {} -- the best of the list: loaded at once, as if kept from an earlier session
+	local function Client(name)
+		local X = NewClient(name, { globals = function(env)
+			env.UnitLevel = function() return 60 end
+			env.GetItemStats = function(link) return LOADED[tonumber(link:match("item:(%d+)"))] and { ITEM_MOD_STRENGTH_SHORT = 40 } or {} end
+			env.C_TooltipInfo = { GetItemByID = function(id) return { lines = { { leftText = "x" } } } end }
+		end })
+		X.DT.Bis.MAX_LEVEL = 60
+		return X
+	end
+	-- a stand-in item list the size of Classic's gear: 9000 pieces, a tenth of them needing no level
+	local ENTRIES, byId = {}, {}
+	for i = 1, 9000 do
+		local req = i % 10 == 0 and 0 or 20 + (i * 7) % 41
+		ENTRIES[i] = { id = 40000 + i, req = req, ilvl = req + (i * 3) % 17, c = i % 5 == 0 and 2 or 4, s = i % 5 == 0 and (i % 3) * 4 or i % 5,
+			src = { [({ "Quest reward", "Drop", "Vendor", "Crafted" })[i % 4 + 1]] = true } }
+	end
+	for i = 1, 12 do -- (plate helms of the highest item level, a quest reward each)
+		local id = 49000 + i
+		ENTRIES[#ENTRIES + 1] = { id = id, req = 60, ilvl = 300 + i, c = 4, s = 4, src = { ["Quest reward"] = true } }
+		ITEMS[id], LOADED[id] = { "Helm " .. i, 3, 1, 100, false, 4, 4, slot = "INVTYPE_HEAD", lvl = 60 }, true
+	end
+	local DG = Client("BisFast").DT.Dungeon -- (the item list knows what the bosses drop, as the real one does)
+	for _, d in ipairs(DG.All()) do
+		for _, boss in ipairs(d.bosses) do
+			for id in pairs(boss.has) do ENTRIES[#ENTRIES + 1] = { id = id, req = 50, ilvl = 60 + id % 20, c = 4, s = id % 4 + 1, src = { Drop = true } } end
+		end
+	end
+	for _, en in ipairs(ENTRIES) do byId[en.id] = en end
+	local function Prepare(X)
+		X.DT.Item.Start, X.DT.Item.Ready, X.DT.Item.All = function() return false end, function() return true end, function() return ENTRIES end
+		X.DT.CraftSkill = {}
+		local asked, order, total = {}, {}, { n = 0 }
+		X.env.C_Item.RequestLoadItemDataByID = function(id)
+			total.n = total.n + 1
+			if not asked[id] then asked[id], order[#order + 1] = true, id end
+		end
+		return asked, order, total
+	end
+	local before = { ["warrior-fury"] = 5083 } -- (what the same list asked before the item level cut: measured with this block)
+	local counts = {}
+	for _, spec in ipairs({ "warrior-fury", "mage-fire", "priest-holy", "rogue-combat" }) do
+		local X = Client("BisFast")
+		local B = X.DT.Bis
+		local asked, order = Prepare(X)
+		B.Pick(spec)
+		for _ = 1, 700 do B.Sift(); step(0.2) end
+		local n = 0
+		for _ in pairs(asked) do n = n + 1 end
+		counts[#counts + 1] = spec .. " " .. n
+		check(n <= 1500, spec .. ": asks the game for at most 1500 of 9000 items (asked " .. n .. ")")
+		local first, last, k = 0, 0, math.min(40, #order)
+		for i = 1, k do first, last = first + (byId[order[i]] and byId[order[i]].ilvl or 99), last + (byId[order[#order - i + 1]] and byId[order[#order - i + 1]].ilvl or 99) end
+		check(k == 0 or first >= last, spec .. ": the best prospects are asked for first")
+		leave(X)
+	end
+	-- a look at what there is: the best set stands after the first few, with the rest still to come
+	local X = Client("BisFast")
+	local B, e = X.DT.Bis, X.env
+	local asked, _, total = Prepare(X)
+	B.Pick("warrior-fury")
+	for _ = 1, 20 do B.Sift(); step(0.2) end
+	step(3)
+	local s = B.State()
+	check(#B.finder.todo > 100, "most items are still to come")
+	check(s.bis and s.bis.rows[1] and s.bis.rows[1] > 49000 or error("DBG " .. tostring(B.Item(49001)) .. tostring(B.finder.kind[49001]) .. tostring(B.finder.gone) .. tostring(s.bis and s.bis.rows[1]) .. " got " .. #B.finder.got .. " todo " .. #B.finder.todo), "yet the best set is shown, with the best helm of those looked at")
+	check(B.db.facts[49001] ~= nil, "what the game said of an item is kept for the next session")
+	-- what is kept is not asked again, in a session after
+	local seen = total.n
+	B.db.facts[41234] = { id = 41234, loc = "INVTYPE_HEAD", name = "Kept Helm", q = 3, lvl = 50, s = { str = 30 } }
+	check(B.Item(41234) and B.Item(41234).name == "Kept Helm", "an item kept from before is known without the game")
+	eq(total.n, seen, "and is not asked for")
+	-- another spec of the same class does not start over; items the game never gave are not asked for again
+	for _ = 1, 700 do B.Sift(); step(0.2) end
+	local done = total.n
+	B.Pick("warrior-arms")
+	for _ = 1, 100 do B.Sift(); step(0.2) end
+	eq(total.n, done, "another spec of the class asks for nothing more")
+	eq(#B.finder.todo, 0, "and everything asked is answered or given up on")
+	-- not in a fight
+	B.Pick("mage-fire")
+	X.combat = true
+	for _ = 1, 20 do B.Sift(); step(0.2) end
+	eq(total.n, done, "nothing is asked in a fight")
+	X.combat = false
+	leave(X)
+	for id in pairs(LOADED) do ITEMS[id] = nil end
+end)()
+;(function() -- the store: two installs that each learned something end with the same database
+	local P, R = NewClient("Pax"), NewClient("Rue")
+	local a, b = P.DT.DB, R.DT.DB
+	check(a.Origin():find("^%x%x%x%x%x%x$"), "an install has an origin of its own: no name"); eq(a.Origin(), P.env.DawnToolsDB.db.origin, "kept in the saved file")
+	eq(a.Put("item:872", "Rockhide Strongfish;35"), true, "a row learned is kept"); eq(a.Put("item:872", "Rockhide Strongfish;35"), false, "the same again changes nothing")
+	eq(a.Row("item:872").v, "Rockhide Strongfish;35", "and is found by its key"); eq(a.Row("item:872").src, "guild", "as what the guild learned"); eq(a.Row("item:1"), nil, "one not there: nothing")
+	a.Put("npc:9000", "Gar'Thok;12;Durotar")
+	a.Put("loot:9000:" .. a.Origin(), P.DT.DBLogic.Counter(4, { [872] = 1 }))
+	b.Put("npc:9001", "Old Blanchy")
+	b.Put("loot:9000:" .. b.Origin(), R.DT.DBLogic.Counter(6, { [872] = 2 }))
+	-- loot: every corpse counted, once, where I see all of it
+	local pe = P.env
+	local corpses, drop = { "Creature-0-1-2-3-9100-00000A" }, { { 872, 2 }, { 100, 1 } }
+	pe.GetNumLootItems = function() return #drop end
+	pe.GetLootSourceInfo = function() -- (as the game answers: corpse, how many, corpse, how many, ...)
+		local out = {}
+		for _, guid in ipairs(corpses) do out[#out + 1], out[#out + 2] = guid, 1 end
+		return table.unpack(out)
+	end
+	pe.GetLootSlotLink = function(slot) return "|cffffffff|Hitem:" .. drop[slot][1] .. "::::|h[x]|h|r" end
+	pe.GetLootSlotInfo = function(slot) return "icon", "x", 1, nil, drop[slot][2] end
+	P.fire("LOOT_OPENED")
+	P.fire("LOOT_READY")
+	local n, items = a.Looted("npc", 9100)
+	eq(n, 1, "a corpse looted is counted once, however often its window is told of"); eq(items[872], 1, "with what of worth was in it"); eq(items[100], nil, "common things are not noted")
+	corpses, drop = { "Creature-0-1-2-3-9100-00000B", "Creature-0-1-2-3-9100-00000C" }, { { 100, 1 } }
+	P.fire("LOOT_OPENED")
+	n, items = a.Looted("npc", 9100)
+	eq(n, 3, "two corpses looted at once are two"); eq(items[872], 1, "with nothing of worth in them")
+	corpses, drop = { "GameObject-0-1-2-3-555-00000D" }, { { 872, 3 } }
+	P.fire("LOOT_OPENED")
+	eq(select(1, a.Looted("object", 555)), 1, "a chest is an object, not a mob"); eq(select(1, a.Looted("npc", 555)), 0, "of the same number")
+	pe.IsInGroup, pe.GetLootMethod = function() return true end, function() return "group" end
+	corpses = { "Creature-0-1-2-3-9100-00000E" }
+	P.fire("LOOT_OPENED")
+	eq(select(1, a.Looted("npc", 9100)), 3, "in a group that rolls I do not see all of it: not counted")
+	pe.GetLootMethod = function() return "freeforall" end
+	P.fire("LOOT_OPENED")
+	eq(select(1, a.Looted("npc", 9100)), 4, "with free-for-all loot I do")
+	pe.IsInGroup = nil
+	local of = a.Rel("drops", "npc", 9100)
+	eq(#of, 1, "what a mob drops, as we counted it"); eq(of[1].kind .. of[1].id, "item872", "the item"); eq(of[1].n, 4, "of so many looted"); eq(of[1].k, 2, "seen so often"); eq(of[1].src, "guild", "our own knowledge")
+	eq(a.ChanceText(of[1]), "2 of 4 looted (50%)", "said as a chance")
+	local who = {}
+	for _, fact in ipairs(a.RelTo("drops", "item", 872)) do who[#who + 1] = fact.kind .. fact.id .. ":" .. tostring(fact.n) end
+	table.sort(who)
+	eq(table.concat(who, ","), "npc644:nil,npc9000:4,npc9100:4,object555:1", "and who drops an item: the dungeon boss the shipped list names, and every mob and object it was seen in")
+	check(a.Root() ~= b.Root(), "two installs that know different things: different hashes")
+	local function Give(from, to) -- (what the sync will do: only the chunks whose hashes differ change hands)
+		local sent = 0
+		for _, chunk in ipairs(P.DT.DBLogic.Differ(to.Hashes(), from.Hashes())) do
+			if from.Text(chunk) then
+				to.Take(chunk, from.Text(chunk))
+				sent = sent + 1
+			end
+		end
+		return sent
+	end
+	check(Give(a, b) > 0 and Give(b, a) > 0, "each gives the other its chunks that differ")
+	eq(a.Root(), b.Root(), "and both end with the same hash"); eq(Give(a, b), 0, "after which nothing more changes hands")
+	eq(b.Row("npc:9000").v, "Gar'Thok;12;Durotar", "what one learned the other has"); eq(b.Row("npc:9000").src, "guild", "the very same row")
+	check(a.Row("loot:9000:" .. b.Origin()) and b.Row("loot:9000:" .. a.Origin()), "counters of both origins are kept side by side: none is counted twice")
+	-- my own counter never comes back in from the wire, however new it claims to be
+	local forged = ("loot:9000:%s\t%d\town\t%s"):format(a.Origin(), P.DT.Now() + 100, "999;872:999")
+	eq(a.Take("loot:35", forged), 0, "a counter of my own origin is not taken from another"); eq(a.Row("loot:9000:" .. a.Origin()).v, "4;872:1", "mine stands")
+	eq(a.Take("npc:35", "item:5\t1\town\tfiled in the wrong chunk"), 0, "nor a row that does not belong in the chunk it came in")
+	local stats = a.Stats()
+	eq(stats.rows, 9, "the store says what it holds (the loot counted, and the item and the chest that were new, written down)"); check(stats.bytes > 0 and stats.chunks >= 3 and stats.root == a.Root(), "rows, chunks, size and hash")
+	-- it is there again after a login
+	leave(P)
+	local P2 = NewClient("Pax", { db = P.env.DawnToolsDB })
+	eq(P2.DT.DB.Row("npc:9001").v, "Old Blanchy", "the store is in the saved file"); eq(P2.DT.DB.Root(), b.Root(), "hash and all"); eq(P2.DT.DB.Origin(), a.Origin(), "under the same origin")
+	leave(P2)
+	leave(R)
+end)()
+;(function() -- the store's sync: installs that share become the same, by whisper, a chunk at a time
+	local first = #sent + 1 -- (members of the checks above shared too: only what is said from here on is counted)
+	local function whispers(from)
+		local n = 0
+		for i = first, #sent do
+			local m = sent[i]
+			if m.prefix == "DAWND" and (not from or m.from == from) then n = n + 1 end
+		end
+		return n
+	end
+	local A1, B1 = NewClient("Ada"), NewClient("Ben")
+	local a, b = A1.DT.DB, B1.DT.DB
+	a.Put("npc:9000", "Gar'Thok;12;Durotar")
+	a.Put("loot:9000:" .. a.Origin(), "4;872:1")
+	b.Put("npc:70000", "Old Blanchy")
+	b.Put("loot:9000:" .. b.Origin(), "6;872:2")
+	step(700)
+	eq(whispers(), 0, "sharing not agreed to: not a whisper"); eq(b.Row("npc:9000"), nil, "and nothing taken in")
+	check(not sent[#sent].text:find(a.Root(), 1, true), "nor is the store's hash said on the guild channel")
+	A1.slash("db")
+	eq(A1.popups[#A1.popups], "DAWNTOOLS_SHARE", "/dt db asks, once, whether to share")
+	A1.env.StaticPopupDialogs.DAWNTOOLS_SHARE.OnAccept()
+	eq(A1.DT.db.settings.share, true, "yes is kept")
+	step(700)
+	eq(whispers(), 0, "one member alone who shares: still nobody to talk to"); eq(b.Row("npc:9000"), nil, "the other, who does not, takes nothing")
+	B1.DT.db.settings.share = true
+	step(700)
+	eq(a.Root(), b.Root(), "both share: after a round of hellos both hold the same")
+	eq(b.Row("npc:9000").v, "Gar'Thok;12;Durotar", "what one found the other has"); eq(a.Row("npc:70000").v, "Old Blanchy", "both ways")
+	check(a.Row("loot:9000:" .. b.Origin()) and b.Row("loot:9000:" .. a.Origin()), "counters of both, side by side")
+	eq(select(1, a.Looted("npc", 9000)), 10, "which add up: looted ten times between us")
+	check(whispers("Ada") > 0 and whispers("Ben") > 0, "by whisper, each to the other")
+	for i = first, #sent do
+		local m = sent[i]
+		if m.prefix == "DAWND" then check(m.distribution == "WHISPER" and not m.text:find("Ada", 1, true) and not m.text:find("Ben", 1, true), "no name in any of it, and none of it on the guild channel") end
+	end
+	local before = whispers()
+	step(1300)
+	eq(whispers(), before, "two that hold the same have nothing more to say")
+	-- a find reaches someone who was never online with its finder
+	leave(A1)
+	local C1 = NewClient("Cy")
+	C1.DT.db.settings.share = true
+	step(700)
+	eq(C1.DT.DB.Row("npc:9000").v, "Gar'Thok;12;Durotar", "a newcomer gets from one member what another, now offline, found")
+	eq(C1.DT.DB.Root(), b.Root(), "all of it")
+	-- only what was asked for is taken
+	local forged = "C=" .. LibDeflate:EncodeForWoWAddonChannel(LibDeflate:CompressDeflate("npc:35\nnpc:9000\t" .. (Now() + 50) .. "\tguild\tA lie"))
+	C1.hear("DAWND", forged, "WHISPER", "Ben-Forever")
+	eq(C1.DT.DB.Row("npc:9000").v, "Gar'Thok;12;Durotar", "a chunk nobody asked for is not taken")
+	C1.hear("DAWND", forged, "GUILD", "Ben-Forever")
+	eq(C1.DT.DB.Row("npc:9000").v, "Gar'Thok;12;Durotar", "nor one that did not come as a whisper")
+	-- in a fight nothing is asked; afterwards it goes on
+	b.Put("npc:70001", "Mankrik")
+	C1.combat = true
+	step(700)
+	eq(C1.DT.DB.Row("npc:70001"), nil, "in a fight nothing is asked for")
+	C1.combat = false
+	step(700)
+	eq(C1.DT.DB.Row("npc:70001").v, "Mankrik", "after it, it goes on")
+	leave(B1)
+	leave(C1)
+end)()
+;(function() -- Finds: what the game shows is written down where it is not known, and listed under World
+	local target, loot, at = nil, {}, { 0.452, 0.601 }
+	local source = "Creature-0-1-2-3-5-00000A"
+	local X = NewClient("Fay", { globals = function(env)
+		env.LibQuestieDB = {
+			Npc = { Get = function(id, key) return id == 5 and key == "name" and "Known Wolf" or nil end },
+			Item = { Get = function(id, key) return id == 100 and key == "name" and "Copper Bar" or nil end },
+			Quest = { Get = function() return nil end }, Object = { Get = function() return nil end },
+		}
+		local guid, name = env.UnitGUID, env.UnitName
+		env.UnitExists = function(unit) return (unit == "target" and target ~= nil) or unit == "npc" end
+		env.UnitGUID = function(unit) if unit == "target" then return target and target[1] end return guid(unit) end
+		env.UnitName = function(unit) if unit == "target" then return target and target[2] end return name(unit) end
+		env.UnitLevel = function(unit) return unit == "target" and 23 or 10 end
+		env.GetRealZoneText = function() return "Stonetalon Mountains" end
+		env.C_Map = { GetBestMapForUnit = function() return 1 end, GetPlayerMapPosition = function() return { GetXY = function() return at[1], at[2] end } end }
+		env.GetNumLootItems = function() return #loot end
+		env.GetLootSourceInfo = function() return source, 1 end
+		env.GetLootSlotLink = function(slot) return "|cffffffff|Hitem:" .. loot[slot][1] .. "::::|h[" .. loot[slot][2] .. "]|h|r" end
+		env.GetLootSlotInfo = function(slot) return "icon", loot[slot][2], 1, nil, 3 end
+		env.GetQuestID, env.GetTitleText = function() return 60001 end, function() return "A Runesteel Matter" end
+	end })
+	local F, D = X.DT.Finds, X.DT.DB
+	target = { "Creature-0-1-2-3-5-00000A", "Known Wolf" }
+	X.fire("PLAYER_TARGET_CHANGED")
+	eq(D.Row("npc:5"), nil, "an NPC QuestieDB knows is not written down")
+	target = { "Creature-0-1-2-3-270001-00000B", "Runesteel Sentinel" }
+	X.fire("PLAYER_TARGET_CHANGED")
+	eq(D.Row("npc:270001").v, "Runesteel Sentinel;23;Stonetalon Mountains;45.2;60.1;m1", "one it does not know is: name, level, the zone, and where I stood")
+	local t = D.Row("npc:270001").t
+	step(5)
+	X.fire("PLAYER_TARGET_CHANGED")
+	eq(D.Row("npc:270001").t, t, "once: targeted again it is not written anew")
+	target = { "Player-Someone", "Someone" }
+	X.fire("PLAYER_TARGET_CHANGED")
+	target = { "Pet-0-1-2-3-99-00000C", "Wolf" }
+	X.fire("PLAYER_TARGET_CHANGED")
+	eq(#F.All(), 1, "players and pets are not written down")
+	-- talked to: now I stand at it, and its place is exact
+	X.npc, X.npcName, at = "Creature-0-1-2-3-270001-00000B", "Runesteel Sentinel", { 0.47, 0.62 }
+	X.fire("GOSSIP_SHOW")
+	eq(D.Row("npc:270001").v, "Runesteel Sentinel;10;Stonetalon Mountains;47.0;62.0;1;m1", "talked to: its place is put right, and marked as where it stands")
+	check(F.About(F.All()[1]):find("Stonetalon Mountains 47.0, 62.0", 1, true) and not F.About(F.All()[1]):find("afar", 1, true), "said so: " .. F.About(F.All()[1]))
+	-- a quest it offers
+	X.fire("QUEST_DETAIL")
+	eq(D.Row("quest:60001").v, "A Runesteel Matter;270001;Stonetalon Mountains;47.0;62.0;m1", "a quest offered: its title, who gives it, where")
+	-- loot: the items, and a chest
+	loot = { { 100, "Copper Bar" }, { 275736, "Horn of Vehan" } }
+	step(2)
+	X.fire("LOOT_OPENED")
+	eq(D.Row("item:100"), nil, "an item QuestieDB knows is not written down"); eq(D.Row("item:275736").v, "Horn of Vehan;3", "one it does not know is: name and quality")
+	eq(D.Row("object:555"), nil, "a mob's corpse is no object")
+	source = "GameObject-0-1-2-3-555-00000D"
+	X.fire("LOOT_OPENED")
+	eq(D.Row("object:555").v, ";;Stonetalon Mountains;47.0;62.0;1;m1", "a chest looted: its number and where it stands (the game gives no name)")
+	-- what I carry, and what the auction house showed
+	ITEMS[9300] = { "Odd Trinket", 3, 1, 100, false, 4, 0 }
+	X.bags = { 9300, 100 }
+	X.fire("BAG_UPDATE_DELAYED")
+	X.items()[9301] = { p = 5, q = 1, t = Now(), o = "", d = {}, n = "Auctioned Oddity" }
+	F.Sweep()
+	check(D.Row("item:9300").v:find("^Odd Trinket;"), "an item in my bags that is not known"); check(D.Row("item:9301").v:find("^Auctioned Oddity;"), "and one seen on the auction house")
+	local all = F.All(true)
+	eq(#all, 6, "the finds: an NPC, a quest, three items, a chest")
+	-- the tab, under World
+	local tab
+	for _, tb in ipairs(X.DT.UI:TabList(true)) do if tb.id == "world" then tab = tb end end
+	local subs = {}
+	for _, sub in ipairs(tab.subs) do subs[#subs + 1] = sub.id end
+	check(table.concat(subs, ","):find("finds", 1, true), "Finds is a sub-tab of World: " .. table.concat(subs, ","))
+	X.DT.UI:Show("finds")
+	check(F.note.text:find("6 finds", 1, true), "it says how many: " .. F.note.text)
+	local shown = {}
+	for _, row in ipairs(F.rows) do if row.shown then shown[#shown + 1] = row.cells[3].text .. " | " .. row.cells[4].text end end
+	local text = table.concat(shown, "\n")
+	check(text:find("A Runesteel Matter | |cff888888from Runesteel Sentinel, Stonetalon Mountains 47.0, 62.0", 1, true), "a quest with its giver and place: " .. text)
+	check(text:find("object 555", 1, true) and text:find("#270001", 1, true), "each with its number")
+	-- without QuestieDB everything met is written down (nothing is known), and nothing is called a find
+	X.env.LibQuestieDB = nil
+	target = { "Creature-0-1-2-3-12-00000E", "Plain Boar" }
+	X.fire("PLAYER_TARGET_CHANGED")
+	check(D.Row("npc:12").v:find("^Plain Boar;23;"), "without QuestieDB what is met is still written down")
+	eq(#F.All(true), 0, "but none of it is called a find"); eq(#F.All(), 7, "it is all in the store")
+	F.Refresh()
+	check(F.note.text:find("QuestieDB is not installed", 1, true), "and the tab says why")
+	ITEMS[9300] = nil
+	leave(X)
+end)()
+;(function() -- base rows: what an installed QuestieDB knows is written into the store, and passes to members without it
+	local many, far = {}, {}
+	for i = 1, 20 do many[i] = { 30 + i, 40 + i } end
+	for i = 1, 60 do far[i] = 1000 + i end
+	local NPC = {
+		[5] = { name = "Known Wolf", minLevel = 11, maxLevel = 12, rank = 0, zoneID = 17, spawns = { [17] = { { 45.2, 60.14 }, { 1, 2 } } } },
+		[300] = { name = "Far Trader", minLevel = 30, maxLevel = 30, rank = 0, zoneID = 0, friendlyToFaction = "AH", subName = "Trade Goods", npcFlags = 4 + 2,
+			spawns = { [400] = { { 10, 20 } } }, questStarts = { 102 }, waypoints = { [400] = { { { 1, 1 } } } } },
+		[6] = { name = "" },
+		[7] = { name = "Roamer", minLevel = 19, maxLevel = 20, zoneID = 17, spawns = { [3] = { { 9, 9 } }, [17] = many } },
+	}
+	local ITEM = {
+		[100] = { name = "Copper Bar", requiredLevel = 0, itemLevel = 10, class = 7, subClass = 7, vendors = { 300 } },
+		[872] = { name = "Rockhide Strongfish", requiredLevel = 20, itemLevel = 25, class = 2, subClass = 7, npcDrops = far, questRewards = { 102 }, startQuest = 103 },
+	}
+	local QUEST = {
+		[101] = { name = "First Steps", requiredLevel = 1, questLevel = 5, zoneOrSort = 17, startedBy = { { 5 } } },
+		[102] = { name = "A Wolf; Problem", requiredLevel = 8, questLevel = 10, zoneOrSort = 17, startedBy = { { 300 } }, finishedBy = { nil, { 77 } }, preQuestSingle = { 101 },
+			nextQuestInChain = 103, requiredSkill = { 185, 50 }, objectivesText = { "Kill 10 wolves, bring \"proof\": 100% of it." } },
+		[103] = { name = "Unfiled", requiredLevel = 10, questLevel = 12, zoneOrSort = 0, startedBy = { nil, nil, { 872 } } },
+		[104] = { name = "Wordy", requiredLevel = 3, questLevel = 4, zoneOrSort = 17, objectives = { { { 5, "Slay it" } } }, extraObjectives = { { nil, "icon", ("x"):rep(2500) } } },
+	}
+	QUEST[102].objectives, QUEST[102].reputationReward, QUEST[102].triggerEnd = { { { 5, "Wolf slain" } }, nil, { { 100 } } }, { { 76, 250 } }, { "Reach the cave", { [17] = { { 50, 50 } } } }
+	local OBJECT = { [77] = { name = "Copper Vein", zoneID = 17, spawns = { [17] = { { 33.3, 44.4 } } }, questEnds = { 102 } } }
+	local AREAS = { [3] = "Badlands", [17] = "The Barrens", [400] = "Thousand Needles" }
+	local function questie(env)
+		local function entity(data)
+			local function Get(id, key) return data[id] and data[id][key] end
+			return { GetAllIds = function() local ids = {} for id in pairs(data) do ids[#ids + 1] = id end return ids end, Get = Get,
+				GetAll = function(id, keys) local out = {} for i, key in ipairs(keys) do out[i] = Get(id, key) end return data[id] and out end }
+		end
+		env.LibQuestieDB = { Npc = entity(NPC), Item = entity(ITEM), Quest = entity(QUEST), Object = entity(OBJECT),
+			Enum = { npcFlags = { QUEST_GIVER = 2, VENDOR = 4 }, raceMaskById = { [1] = 1, [2] = 2, [10] = 512 } },
+			Support = { Get = function(name)
+				return name == "QuestXP" and { db = { [102] = { 10, 850 } } } or name == "ZoneDB" and { private = { areaIdToUiMapId = { [17] = 1413, [400] = 1441 } } } or nil
+			end } }
+		env.C_Map = { GetAreaInfo = function(area) return AREAS[area] end }
+		env.GetAddOnMetadata = function(addon, field) return addon == "QuestieDB" and field == "Version" and "1.1.3" or nil end
+	end
+	local Q1 = NewClient("Quill", { globals = questie })
+	local d, DL = Q1.DT.DB, Q1.DT.DBLogic
+
+	-- the values of a row, as one text and back
+	local packed = DL.Pack({ 30, nil, "A \"quoted\" 100%, name", { 5, 6, [17] = { { 45.2, 60.1 } }, [-3] = true }, 0.25 }, 5)
+	eq(packed, ',,"A %22quoted%22 100%25, name",{5,6,-3:T,17:{{45.2,60.1}}},0.25' and "30" .. packed:sub(3), "values as one text: " .. packed)
+	local back = DL.Unpack(packed)
+	eq(back[1], 30, "a number comes back"); eq(back[2], nil, "one that was not there is not"); eq(back[3], "A \"quoted\" 100%, name", "a text, whatever is in it")
+	eq(back[4][2], 6, "a list in order"); eq(back[4][17][1][2], 60.1, "and what it holds under a number, lists within lists"); eq(back[4][-3], true, "true"); eq(back[5], 0.25, "a fraction")
+	eq(DL.Pack(back, 5), packed, "the same values give the same text"); eq(DL.Pack({ 1, nil, nil }, 3), "1", "nothing is written for what is not there at the end")
+	eq(DL.Unpack('1,{2,"open'), nil, "a text that is not one is not read"); eq(DL.Unpack("{1,2}}"), nil, "nor one with more in it than values")
+	eq(#DL.Unpack(""), 0, "an empty one holds nothing")
+	-- which of two rows under one key stands
+	local base, sight = { t = 1, src = "questie", v = "a" }, { t = 5000, src = "guild", v = "b" }
+	eq(DL.Wins(sight, base, 9999), false, "a sighting, however new, does not replace a source's row"); eq(DL.Wins(base, sight, 9999), true, "a source's row replaces a sighting")
+	eq(DL.Wins({ t = 6000, src = "guild", v = "c" }, sight, 9999), true, "of two sightings the newer stands")
+
+	d.Put("npc:5", "Known Wolf;13;The Barrens;50.0;50.0;1") -- (a sighting, from before the import)
+	step(30)
+	eq(d.Base("questie"), "1.1.3/6", "the import ran, and is marked with the QuestieDB it was of and the shape of its rows")
+	eq(d.Row("npc:300").v, 'Far Trader;30,30,0,0,"AH","Trade Goods",6,{400:{{10,20}}},{102},,{400:{{{1,1}}}}', "an NPC: name, levels, rank, zone, side, title, flags, places, the quests it gives, and where it walks")
+	eq(d.Row("npc:300").src, "questie", "as QuestieDB's"); eq(d.Row("npc:300").t, 710103060, "of a time that is its version, which every install writes alike")
+	eq(d.Row("npc:5").src, "questie", "a sighting of what QuestieDB knows gives way to its row"); eq(d.Row("npc:6"), nil, "a record with no name is left out")
+	eq(d.Row("item:100").v, "Copper Bar;0,10,7,7,,,,{300}", "an item with who sells it")
+	eq(d.Row("quest:102").v:match("^[^;]*;"), "A Wolf, Problem;", "a name is kept clear of what ends it")
+	eq(d.Row("object:77").v, "Copper Vein;17,{17:{{33.3,44.4}}},,{102}", "an object with its place and the quest that ends at it")
+	check(#d.Row("quest:104").v <= DL.MAX_VALUE and d.Row("quest:104").v:find('{{{5,"Slay it"}}}', 1, true), "a row too long for the store loses its last fields, not its first: " .. #d.Row("quest:104").v)
+	eq(d.Row("zone:17").v, "1413", "the map an area is drawn on"); check(d.Row("enum:npcFlags") and d.Row("enum:raceMaskById"), "and QuestieDB's own small tables")
+	eq(#Q1.DT.Finds.All(true), 0, "none of it is a find"); eq(Q1.DT.Finds.Seen("npc", 300, "x"), false, "nor is what it knows written down again when met")
+	check(d.Lib() == Q1.env.LibQuestieDB, "where QuestieDB is installed it is what the tabs read")
+	local before = d.Root()
+	Q1.DT.DBImport.Start()
+	eq(Q1.DT.DBImport.Start(), false, "the same QuestieDB is not imported twice"); eq(d.Root(), before, "nothing changes")
+	-- another install with the same QuestieDB writes the very same rows
+	local Q2 = NewClient("Quinn", { globals = questie })
+	step(30)
+	eq(Q2.DT.DB.Row("npc:300").v, d.Row("npc:300").v, "a second install imports the same")
+	eq(Q2.DT.DB.Hashes()["item:0"], d.Hashes()["item:0"], "to the letter: the same hash, so nothing of it needs passing between them")
+
+	-- a member without QuestieDB: nothing to list, until a guildmate's rows come
+	local tom
+	local N1 = NewClient("Nell", { globals = function(env)
+		env.C_Map = { GetAreaInfo = function(area) return AREAS[area] end }
+		env.TomTom = { AddWaypoint = function(_, map, x, y, opts) tom = { map, x, y, opts.title } end }
+	end })
+	local n, Npc, Quest, Item = N1.DT.DB, N1.DT.Npc, N1.DT.Quest, N1.DT.Item
+	N1.DT.db.settings.background = false
+	eq(n.Lib(), nil, "without QuestieDB and with an empty store: nothing to read"); eq(n.Row("npc:300"), nil, "no base rows of one's own")
+	eq(Npc.Start(), false, "the NPC tab has nothing to read")
+	n.Put("npc:5", "Known Wolf;12;The Barrens;1.0;1.0") -- (met before anything was known: written down, as nothing says it is known)
+	Q1.DT.db.settings.share, N1.DT.db.settings.share = true, true
+	step(700)
+	eq(n.Root(), d.Root(), "with the game database shared, a guildmate's rows come: both hold the same")
+	eq(n.Row("npc:5").src, "questie", "what was written down of a thing QuestieDB knows gave way to its row")
+	eq(d.Row("npc:5").v, Q2.DT.DB.Row("npc:5").v, "and did not write over it on the machine that has QuestieDB")
+	eq(n.Take("npc:1", ("npc:300\t%d\tguild\tFar Trader;1;Nowhere"):format(Now())), 0, "nor does a sighting from the wire, however new")
+	eq(#N1.DT.Finds.All(true), 0, "they are known there, not finds")
+	N1.slash("db")
+	check(N1.printed[#N1.printed - 3]:find("base rows", 1, true), "/dt db says where the base rows are from: " .. N1.printed[#N1.printed - 3])
+
+	-- a member who has the source is a referee: a row of its own version that says something else is put right,
+	-- and the right one then stands wherever the two meet
+	local t0 = d.Row("npc:300").t
+	local right = d.Row("npc:300").v
+	local wrong = ("npc:300\t%d\tquestie\tZZ Wrong Trader;1"):format(t0)
+	-- every chunk of a source has its fingerprint, written by the import and passed on first
+	local print = d.Row("fp:questie:npc:1")
+	check(print and print.src == "questie" and #print.v == 16, "the import wrote a fingerprint of the chunk's rows"); eq(n.Row("fp:questie:npc:1").v, print.v, "which the member without QuestieDB has too")
+	eq(n.Take("npc:1", wrong), 0, "so a member without QuestieDB can tell: rows that do not add up to the fingerprint are not taken"); eq(n.Row("npc:300").v, right, "its own stand")
+	check(n.refused == 1, "and it counts what it refused")
+	eq(n.Take("npc:1", d.Text("npc:1")), 0, "the whole chunk as the source gives it adds up (nothing new in it here)")
+	eq(d.Take("npc:1", wrong), 0, "the machine with QuestieDB refuses it the same way")
+	-- where there is no fingerprint (rows of before there were any), the machine that has the source is the referee
+	n.Put("fp:questie:npc:1", "lost", "guild", 5)
+	d.Put("fp:questie:npc:1", "lost", "guild", 5)
+	eq(d.Take("npc:1", wrong), 1, "without a fingerprint a row of the same version that says something else is taken (its text sorts later)")
+	eq(d.Row("npc:300").v, right, "but the machine with QuestieDB puts it right by its own QuestieDB"); eq(d.Row("npc:300").t, t0 + 1, "a moment later than the wrong one")
+	eq(n.Take("npc:1", wrong), 1, "a member without QuestieDB and without the fingerprint cannot tell, and takes the wrong one")
+	step(700)
+	eq(n.Row("npc:300").v, right, "until it next meets the referee: the right row is the later one, and stands")
+	n.Put("fp:questie:npc:1", print.v, "questie", print.t)
+	d.Put("fp:questie:npc:1", print.v, "questie", print.t)
+	eq(n.Root(), d.Root(), "both hold the same again")
+	eq(n.Take("npc:1", d.Text("npc:1")), 0, "and a row put right still adds up to the fingerprint: it is the values that count, not the moment")
+	eq(d.Take("npc:1", ("npc:300\t%d\tquestie\tNewer Trader;1"):format(t0 + 1000)), 1, "a row of a later version is not this machine's to judge: taken as it is")
+	check(d.Row("npc:300").v:find("^Newer Trader"), "it stands")
+	d.Put("npc:300", right, "questie", t0 + 2000) -- (put back for the checks below)
+	step(700)
+
+	-- the store answers as QuestieDB would
+	local lib = n.Lib()
+	eq(lib.store, true, "the store is read in QuestieDB's place")
+	eq(lib.Npc.Get(300, "subName"), "Trade Goods", "one field of an NPC"); eq(lib.Npc.Get(300, "name"), "Far Trader", "its name")
+	local all = lib.Npc.GetAll(300, { "name", "maxLevel", "nothing", "npcFlags" })
+	eq(all[1] .. all[2] .. tostring(all[3]) .. all[4], "Far Trader30nil6", "several at once, in the order asked"); eq(lib.Npc.GetAll(999, { "name" }), nil, "nothing of an NPC there is not")
+	eq(table.concat(lib.Npc.GetAllIds(), ","), "5,7,300", "every NPC's number")
+	local spots, others = lib.Npc.Get(7, "spawns"), 0
+	for area in pairs(spots) do if area ~= 17 then others = others + 1 end end
+	eq(#spots[17], 8, "of many places the first few are kept: those of its own zone first"); eq(others, 0, "and no more than those")
+	eq(#lib.Item.Get(872, "npcDrops"), 40, "a long list is cut short"); eq(lib.Item.Get(872, "startQuest"), 103, "a number")
+	eq(lib.Quest.Get(102, "startedBy")[1][1], 300, "who gives a quest"); eq(lib.Quest.Get(102, "finishedBy")[1], nil, "whom it goes back to: no NPC")
+	eq(lib.Quest.Get(102, "finishedBy")[2][1], 77, "but an object"); eq(lib.Quest.Get(102, "objectivesText")[1], "Kill 10 wolves, bring \"proof\": 100% of it.", "what it asks, to the letter")
+	eq(lib.Quest.Get(102, "objectives")[1][1][2], "Wolf slain", "what has to be killed for it"); eq(lib.Quest.Get(102, "objectives")[3][1][1], 100, "and brought, with nothing between left out of place")
+	eq(lib.Quest.Get(102, "reputationReward")[1][2], 250, "the reputation it gives"); eq(lib.Quest.Get(102, "triggerEnd")[2][17][1][1], 50, "where it ends"); eq(lib.Object.Get(77, "questEnds")[1], 102, "what ends at an object")
+	eq(lib.Npc.Get(300, "waypoints")[400][1][1][1], 1, "where an NPC walks")
+	eq(lib.Quest.Get(102, "requiredSkill")[2], 50, "a skill it asks for"); eq(lib.Support.Get("QuestXP").db[102][2], 850, "the experience it gives")
+	eq(lib.Enum.npcFlags.VENDOR, 4, "what QuestieDB's flags are called"); eq(lib.Enum.raceMaskById[10], 512, "and which bit a race is")
+	eq(lib.Support.Get("ZoneDB").private.areaIdToUiMapId[400], 1441, "the map of an area")
+	-- and so does DT.DB
+	eq(n.Get("npc", 300).name, "Far Trader", "DT.DB knows the NPC"); eq(n.Name("quest", 101), "First Steps", "and a quest by name")
+	local sells = n.RelTo("sells", "item", 100)
+	eq(#sells, 1, "who sells an item"); eq(sells[1].id, 300, "the vendor")
+	eq(#n.Only(n.RelTo("drops", "item", 872), "npc", "questie"), 40, "who drops one"); eq(n.RelTo("rewards", "item", 872)[1].id, 102, "which quest gives it"); eq(n.Rel("starts", "item", 872)[1].id, 103, "what it starts")
+
+	-- the tabs list it: the NPC tab was told the store has more now, and reads it
+	eq(Npc.Start(), true, "the NPC tab reads anew once rows have come")
+	while not Npc.Step(8) do end
+	local found = Npc.Find("far trader", {})
+	eq(#found, 1, "an NPC is found by name, without QuestieDB installed")
+	local e = found[1].e
+	eq(e.sub, "Trade Goods", "with its title"); eq(e.typeText, "Vendor, Quest giver, Trade goods", "what it is, from its flags and its title"); eq(e.zoneName, "Thousand Needles", "and its zone")
+	eq(#Npc.Find("", { types = { Vendor = true } }), 1, "the type filter works")
+	Npc.Waypoint(e)
+	eq(tom[1], 1441, "a waypoint to it: on the map of its zone"); eq(tom[2], 0.1, "at its place"); eq(tom[4], "Far Trader", "by name")
+	-- quests and items too
+	Quest.Start()
+	while not Quest.Step(8) do end
+	local q = Quest.Entry(102)
+	eq(q.name, "A Wolf, Problem", "the Quests tab has the quest"); eq(q.zoneName, "The Barrens", "its zone"); eq(q.preAny[1], 101, "and what comes before it")
+	check(q.types["In chain"] and q.types.Profession, "its kinds: " .. q.typeText)
+	eq(Quest.Origin(q).name, "Far Trader", "who gives it"); eq(Quest.Asks(q), "Kill 10 wolves, bring \"proof\": 100% of it.", "what it asks")
+	eq(Quest.Rewards(q).xp, 850, "what it gives")
+	Item.Start()
+	while not Item.Step(8) do end
+	eq(#Item.All(), 2, "the Items tab has the items")
+	local fish
+	for _, it in ipairs(Item.All()) do if it.id == 872 then fish = it end end
+	eq(fish.srcText, "Drop, Quest reward, Starts a quest", "with where each comes from"); eq(Item.rewards[102][1].id, 872, "and what a quest gives")
+
+	-- the Zones tab follows: worked out before the quests' rows changed, it is worked out anew
+	local Zone = N1.DT.Zone
+	check(Zone.Ensure() and Zone.Get("The Barrens"), "the Zones tab has the zones of the store's NPCs")
+	local was = Zone.Get("The Barrens")
+	N1.DT:Fire("DT_DB_UPDATE", "npc:0")
+	Npc.Start()
+	while not Npc.Step(8) do end
+	check(Zone.Ensure() and Zone.Get("The Barrens") ~= was, "and works them out anew when the NPCs were read anew")
+
+	-- two members with different versions of QuestieDB: the later one's rows stand, on both machines
+	local Q3 = NewClient("Quentin", { globals = function(env)
+		questie(env)
+		local get = env.LibQuestieDB.Npc.Get
+		env.LibQuestieDB.Npc.Get = function(id, key) if id == 300 and key == "name" then return "Old Trader" end return get(id, key) end
+		env.GetAddOnMetadata = function(addon, field) return addon == "QuestieDB" and field == "Version" and "1.1.2" or nil end
+	end })
+	step(30)
+	check(Q3.DT.DB.Row("npc:300").v:find("^Old Trader;"), "an older QuestieDB says something else of an NPC"); check(Q3.DT.DB.Row("npc:300").t < d.Row("npc:300").t, "and its rows are marked as older")
+	Q3.DT.db.settings.share = true
+	step(700)
+	check(Q3.DT.DB.Row("npc:300").v:find("^Far Trader;"), "shared: the member with the older QuestieDB has the later one's row"); check(d.Row("npc:300").v:find("^Far Trader;"), "and the later one's did not give way")
+	Q3.DT.DB.Base("questie", "something else")
+	Q3.DT.DBImport.Start()
+	while not Q3.DT.DBImport.Step(50) do end
+	check(Q3.DT.DB.Row("npc:300").v:find("^Far Trader;"), "nor does importing the older QuestieDB again write over it")
+	leave(Q3)
+
+	-- what the guild met itself stands beside it: an NPC written down in play is listed, and can be gone to
+	n.Put("npc:270001", "Runesteel Sentinel;23;Stonetalon Mountains;45.2;60.1;1;m77")
+	N1.DT:Fire("DT_DB_UPDATE")
+	Npc.Start()
+	while not Npc.Step(8) do end
+	found = Npc.Find("runesteel", {})
+	eq(#found, 1, "an NPC the guild met and QuestieDB does not know is in the NPC tab"); eq(found[1].e.zoneName, "Stonetalon Mountains", "with the zone it was met in"); eq(found[1].e.max, 23, "and its level")
+	Npc.Waypoint(found[1].e)
+	eq(tom[1], 77, "a waypoint to where it was met: the map noted with it"); eq(tom[2], 0.452, "and the place")
+	-- a click on a find sets the waypoint too
+	N1.DT.UI:Show("finds")
+	local row
+	for _, r in ipairs(N1.DT.Finds.rows) do if r.shown and r.find and r.find.id == 270001 then row = r end end
+	check(row, "the find is listed under World > Finds")
+	tom = nil
+	row.scripts.OnClick(row, "LeftButton")
+	eq(tom and tom[4], "Runesteel Sentinel", "and a click on it is a waypoint")
+	leave(Q1) leave(Q2) leave(N1)
+end)()
+;(function() -- the seed: recipes, vendor prices and dungeons are not in the addon; they are rows of the store, written on a machine that has the seed and passed on by the guild
+	local function seed(env)
+		env.DawnToolsSeed = {
+			SkillUpVersion = "v9", OneForAllVersion = "7.0",
+			Recipes = { [7934] = { 129, 80, 80, 115, 150, 0, 6452, 3, { 1475, 1 } }, [7418] = { 333, 1, 70, 90, 110, 0, 0, 1, { 10940, 1, 10938, 2 } },
+				[100001] = { 164, 50, 60, 70, 80, 9, 6452, 1.5, {} } },
+			VendorPrice = { [2678] = 2 },
+			Dungeons = { { "Hall of Tests", 13, 20, { { "First Boss", 9001, 0, { 872, 3.9, 873, 0 } }, { "Trash", 0, 0, { 874, 0 } } } },
+				{ "Deep \"Quote\" Mine", 30, 35, { { "Rare One", 9002, 1, { 875, 12.5 } } } } },
+		}
+	end
+	local S1 = NewClient("Sid", { globals = seed, noData = true })
+	local d, T = S1.DT.DB, S1.DT
+	eq(d.Row("recipe:7934").v, "129,80,80,115,150,0,6452,3,{1475,1}", "a recipe of the seed is a row of the store"); eq(d.Row("recipe:7934").src, "skillup", "of its source"); eq(d.Row("recipe:7934").t, 790000040, "as a base row, of a time that is its version")
+	eq(d.Row("vprice:2678").v, "2", "what a vendor asks"); eq(d.Row("boss:2").v, '"Hall of Tests",13,20,"Trash",0,0,{874,0}', "a boss with its dungeon and what it drops")
+	eq(d.Row("boss:3").src, "oneforall", "of its source"); eq(d.Base("skillup"), "v9/4", "marked with the version it was of"); eq(d.Row("base:oneforall").v, "7.0;3", "which the rows say too, and how many bosses there are")
+	eq(T.DBSeed.Seed(), false, "the same seed is not written twice")
+	-- the tables the tabs read are put together from the rows
+	eq(T.Recipes[7934][9][1], 1475, "a recipe as the tabs read it, reagents and all"); eq(T.Recipes[100001][8], 1.5, "how many it makes")
+	eq(table.concat(T.CraftSkill[6452], ","), "164,50,60,70,80,9", "for an item the band of the recipe that turns yellow soonest"); eq(T.CraftSkill[0], nil, "an enchantment makes no item")
+	eq(T.VendorPrice[2678], 2, "a vendor's price"); eq(#T.Dungeons, 2, "the dungeons"); eq(T.Dungeons[1][1], "Hall of Tests", "in their order"); eq(#T.Dungeons[1][4], 2, "each with its bosses")
+	eq(T.Dungeons[2][1], "Deep \"Quote\" Mine", "a name with anything in it"); eq(T.Dungeons[2][4][1][4][2], 12.5, "a drop chance"); eq(T.Dungeons[2][4][1][3], 1, "a rare")
+	eq(T.Dungeon.DropOf(872).name, "First Boss", "the Dungeons tab knows who drops what"); eq(T.Craft.ByItem(6452), 100001, "and the profession tabs which recipe makes an item")
+	S1.slash("db")
+	check(S1.printed[#S1.printed - 2]:find("3 recipes and 1 vendor prices (SkillUp Forever v9), 3 bosses (OneForAll 7.0); this machine has the seed", 1, true), "/dt db says what is held: " .. S1.printed[#S1.printed - 2])
+	-- a newcomer asks every member who holds it, and none of them for what another is sending or has sent
+	;(function()
+		local function big(env)
+			seed(env)
+			for i = 1, 60 do env.DawnToolsSeed.Recipes[1000 + i * 300] = { 129, 1, 2, 3, 4, 0, 5000 + i, 1, {} } end
+		end
+		local H1 = NewClient("Hal", { globals = big, noData = true })
+		local H2 = NewClient("Hedda", { globals = big, noData = true })
+		eq(H1.DT.DB.Root(), H2.DT.DB.Root(), "two machines with the same seed hold the same")
+		local chunks = 0
+		for _ in pairs(H1.DT.DB.Hashes()) do chunks = chunks + 1 end
+		local N2 = NewClient("Nia", { noData = true })
+		H1.DT.db.settings.share, H2.DT.db.settings.share, N2.DT.db.settings.share = true, true, true
+		local before = #sent
+		step(1400)
+		eq(N2.DT.DB.Root(), H1.DT.DB.Root(), "the newcomer has it all")
+		local asked = { Hal = 0, Hedda = 0 }
+		for i = before + 1, #sent do
+			local m = sent[i]
+			if m.prefix == "DAWND" and m.from == "Nia" and m.text:sub(1, 2) == "C?" then
+				for _, other in ipairs(clients) do if other.wire == m.to then asked[other.name] = asked[other.name] + 1 end end
+			end
+		end
+		eq(asked.Hal + asked.Hedda, chunks, ("each chunk was asked for once, of one member or the other (%d of Hal, %d of Hedda)"):format(asked.Hal, asked.Hedda))
+		check(asked.Hal > 0 and asked.Hedda > 0, ("and both were asked: %d of Hal, %d of Hedda"):format(asked.Hal, asked.Hedda))
+		leave(H1) leave(H2) leave(N2)
+	end)()
+	-- a new member starts with none of it
+	local M1 = NewClient("Mo", { noData = true })
+	local m = M1.DT
+	eq(m.Recipes, nil, "a member without the seed has no recipes"); eq(#m.Dungeon.All(), 0, "and no dungeons"); eq(m.Craft.ByItem(6452), nil, "nothing is made of anything")
+	step(10)
+	eq(M1.popups[#M1.popups], "DAWNTOOLS_SHARE", "and is asked, a little after login, whether to share the game database: that is how it comes")
+	M1.DT.UI:Show("dungeon")
+	local said
+	for _, w in ipairs(M1.widgets) do if w.kind == "FontString" and type(w.text) == "string" and w.text:find("No dungeons known yet", 1, true) then said = w.text end end
+	check(said and said:find("/dt db", 1, true), "the Dungeons tab says where they come from")
+	-- with the game database shared it comes from the guild
+	S1.DT.db.settings.share, M1.DT.db.settings.share = true, true
+	step(700)
+	eq(m.DB.Root(), d.Root(), "shared: both hold the same")
+	eq(m.Recipes[7934][7], 6452, "the member has the recipes"); eq(m.VendorPrice[2678], 2, "the prices"); eq(m.Dungeons[2][4][1][1], "Rare One", "and the dungeons")
+	eq(m.Dungeon.DropOf(875).name, "Rare One", "the Dungeons tab lists them at once"); eq(m.Craft.ByItem(6452), 100001, "the profession tabs too")
+	m.DBSeed.Rebuild()
+	eq(m.DBSeed.counts.boss, 3, "and can say how much it holds")
+	-- a third member gets it from the second: the one with the seed need not be online
+	leave(S1)
+	local M2 = NewClient("Mia", { noData = true })
+	M2.DT.db.settings.share = true
+	step(700)
+	eq(M2.DT.Recipes and M2.DT.Recipes[7418][1], 333, "a member passes on what came from the seed")
+	-- rows that are not of the shape are not believed
+	local bad = ("recipe:5\t1\tskillup\t1,2,\"x\"\nrecipe:6\t1\tskillup\t{{{\nrecipe:8\t%d\tguild\t129,80,80,115,150,0,6452,3,{1475,1}"):format(Now())
+	check(M2.DT.DB.Take("recipe:0", bad) > 0, "rows of any shape may come over the wire")
+	M2.DT.DBSeed.Rebuild()
+	eq(M2.DT.Recipes[5], nil, "one that is no recipe is left out"); eq(M2.DT.Recipes[6], nil, "one that is no text of values too"); eq(M2.DT.Recipes[8], nil, "and one that is no base row")
+	eq(M2.DT.Recipes[7934][3], 80, "the good ones stand")
+	-- a newer seed replaces the rows
+	leave(M1) leave(M2)
+	local S2 = NewClient("Sid", { db = S1.env.DawnToolsDB, noData = true, globals = function(env)
+		seed(env)
+		env.DawnToolsSeed.SkillUpVersion, env.DawnToolsSeed.Recipes[7934][3] = "v10", 85
+		env.DawnToolsSeed.OneForAllVersion, env.DawnToolsSeed.Dungeons[2] = "7.1", nil
+	end })
+	eq(S2.DT.Recipes[7934][3], 85, "a newer seed: its values replace the old"); eq(#S2.DT.Dungeons, 1, "and a shorter list of bosses leaves none of the old behind")
+	leave(S2)
+end)()
+;(function() -- the stores of before move into the game database: once, from a saved file of today's shape, losing nothing and counting nothing twice
+	local now = Now()
+	local DL = assert(loadfile(DIR .. "Core/DBLogic.lua"))()
+	local function allRows(DT)
+		local out = {}
+		for chunk in pairs(DT.DB.Hashes()) do
+			for key, row in pairs(DL.Parse(DT.DB.Text(chunk))) do out[key] = row end
+		end
+		return out
+	end
+	local counted = "loot:644:1a2b3c\t" .. (now - 20) .. "\tguild\t5;872:1" -- (what DB.Loot counted of the first boss, since 0.44)
+	local saved = {
+		db = { v = 1, origin = "1a2b3c", chunks = { ["loot:2"] = counted }, hash = { ["loot:2"] = DL.Hash(counted) } },
+		dungeon = { picked = "deadmines", seen = { [644] = { k = 4, t = now - 50, items = { [872] = 3, [7777] = 1 } }, [645] = { k = 0 },
+				["ruinsoflordaeron/lordaeroncaptain"] = { k = 2, t = now - 5, items = { [6641] = 5 } } },
+			guild = { Dana = { [644] = { k = 9, t = now, items = { [872] = 9 } } } }, peers = { Dana = now }, listPeers = { Dana = now },
+			adds = { [644] = { t = now, line = "644;The Deadmines;17;26;Rhahk'Zor;644;0;888001:7.5" } }, more = { [888500] = { t = now, line = "x" } } },
+		quest = { seen = { [501] = { m = 250, x = 900, l = 12, t = now - 100, r = { { 6001, 1 } }, c = { { 6002, 1 }, { 6003, 5 } } },
+				[502] = { m = 0, x = 40, l = 12, t = now - 100, g = now, r = {}, c = {} }, [503] = { m = 1, x = 1, l = 200, r = {}, c = {} } }, rpeers = { Quinn = now } },
+		market = { vendors = { [7001] = { p = 40, v = "Grimtak", z = "Razor Hill, Durotar", l = true, t = now - 1000 },
+				[7002] = { p = 5, v = "Hon|cffff0000est Hal", z = "Here", t = now - 1000, r = now }, [7003] = { p = 0, v = "Nobody", z = "Nowhere" } }, vpeers = { Vera = now } },
+		fish = { catches = { ["Testwater, Pier"] = { casts = 20, items = { [6359] = 40, [600] = 20 }, skill = 140 }, ["Elwynn Forest"] = { casts = 3, items = { [6291] = 3 } } } },
+	}
+	local X = NewClient("Mig", { db = saved })
+	local T, d = X.DT, X.DT.DB
+	-- dungeon loot: the larger of the tab's count and the store's, not the sum
+	local n, items = d.Looted("npc", 644)
+	eq(n, 5, "a boss the tab counted 4 times and DB.Loot 5: 5, not 9"); eq(items[872], 3, "an item: the larger of the two"); eq(items[7777], 1, "one only the tab saw")
+	local n2, items2 = d.Looted("boss", "ruinsoflordaeron/lordaeroncaptain")
+	eq(n2, 2, "a boss with no NPC number has a home of its own"); eq(items2[6641], 2, "an item is never seen more often than the boss was looted")
+	eq(d.Row("loot:645:1a2b3c"), nil, "a boss never looted is not written"); eq(d.Row("loot:644:1a2b3c").src, "guild", "the rows are of what the guild learned, under this install's origin")
+	for _, key in ipairs({ "seen", "guild", "peers", "listPeers", "adds", "more" }) do eq(saved.dungeon[key], nil, "the tab's saved " .. key .. " is gone") end
+	eq(saved.dungeon.picked, "deadmines", "what is of the tab's set-up stays"); eq(saved.dungeon.moved, true, "and the move is marked")
+	eq((T.Dungeon.Seen({ npc = 644, key = 644 })), 5, "the tab reads the store")
+	-- quest rewards
+	local q = T.Quest.SeenAll()
+	eq(q[501].m, 250, "a quest's money"); eq(q[501].x, 900, "its experience"); eq(q[501].l, 12, "the level it was seen at"); eq(q[501].c[2][2], 5, "what there is to choose from, and how many"); eq(d.Row("qreward:501").t, now - 100, "of the time it was seen")
+	eq(q[502].x, 40, "one that came from the guild is a row like the others"); eq(d.Row("qreward:503"), nil, "a level that cannot be is not written")
+	eq(saved.quest.seen, nil, "the saved table is gone"); eq(saved.quest.rpeers, nil, "and its peers")
+	-- vendor prices
+	local v = d.Vendor(7001)
+	eq(v.p, 40, "a vendor's price"); eq(v.v, "Grimtak", "the vendor"); eq(v.z, "Razor Hill, Durotar", "the place"); eq(v.l, true, "limited stock"); eq(v.t, now - 1000, "the time it was seen")
+	eq(d.Vendor(7002).v, "Honcffff0000est Hal", "a name has no colour code in it"); eq(d.Row("vendor:7003"), nil, "a price of nothing is not written")
+	eq(select(1, X.env.DawnMarket.API.GetVendor(7001)), 40, "the Market's API answers from the store"); eq(saved.market.vendors, nil, "the saved table is gone"); eq(saved.market.vpeers, nil, "and its peers")
+	-- fishing catches
+	local pier, elwynn = T.Fish.Catches()["Testwater, Pier"], T.Fish.Catches()["Elwynn Forest"]
+	eq(pier.casts, 20, "twenty casts"); eq(pier.mine, 20, "all mine"); eq(pier.items[6359], 40, "what was caught"); eq(pier.skill, 140, "at what skill"); eq(elwynn.casts, 3, "a spot of few casts too")
+	check(d.Row(T.Fish.Key("Testwater, Pier")), "a counter under this install's origin"); eq(saved.fish.catches, nil, "the saved table is gone")
+	-- nothing of a player in any row
+	for key, row in pairs(allRows(T)) do
+		check(not (key .. row.v):find("Dana", 1, true) and not (key .. row.v):find("Quinn", 1, true) and not (key .. row.v):find("Vera", 1, true), "no player's name in " .. key)
+	end
+	-- run again on the same tables (a half-moved file): nothing is lost, nothing is counted twice
+	local root = d.Root()
+	T.Dungeon.Migrate({ seen = { [644] = { k = 4, items = { [872] = 3, [7777] = 1 } }, ["ruinsoflordaeron/lordaeroncaptain"] = { k = 2, items = { [6641] = 5 } } } })
+	T.Quest.Migrate({ seen = { [501] = { m = 250, x = 900, l = 12, t = now - 100, r = { { 6001, 1 } }, c = { { 6002, 1 }, { 6003, 5 } } } } })
+	T.Fish.Migrate({ catches = { ["Testwater, Pier"] = { casts = 20, items = { [6359] = 40, [600] = 20 }, skill = 140 } } })
+	T.Market.MigrateVendors({ vendors = { [7001] = { p = 40, v = "Grimtak", z = "Razor Hill, Durotar", l = true, t = now - 1000 } } })
+	eq(d.Root(), root, "the same again changes nothing")
+	-- a newer row stands over an older one of the old table; a bigger count stands over a smaller
+	d.Put("qreward:501", DL.Pack({ 300, 950, 14, {}, {} }, 5), "guild", now - 10)
+	T.Quest.Migrate({ seen = { [501] = { m = 250, x = 900, l = 12, t = now - 100, r = {}, c = {} } } })
+	eq(T.Quest.SeenAll()[501].m, 300, "a quest seen since stands over the old table's")
+	T.Fish.Migrate({ catches = { ["Testwater, Pier"] = { casts = 25, items = { [6359] = 10 } } } })
+	eq(T.Fish.Catches()["Testwater, Pier"].casts, 25, "a larger count of casts is taken"); eq(T.Fish.Catches()["Testwater, Pier"].items[6359], 40, "an item keeps the larger of its two")
+	leave(X)
+	-- fishing: the guild's counters are summed, and the tab says whose they are
+	local function fisher(name)
+		local c = NewClient(name, { globals = function(env)
+			env.IsFishingLoot = function() return true end
+			env.GetRealZoneText = function() return "Shared Cove" end
+			env.GetSubZoneText = function() return "" end
+			env.GetNumLootItems = function() return 1 end
+			env.GetLootSlotLink = function() return "|Hitem:6359::|h[Firefin Snapper]|h" end
+			env.GetLootSlotInfo = function() return nil, "x", 1 end
+		end })
+		c.DT.db.settings.share = true
+		return c
+	end
+	local F1, F2 = fisher("Finn"), fisher("Fia")
+	local function cast(c, times)
+		for _ = 1, times do
+			c.fire("LOOT_READY")
+			c.fire("LOOT_CLOSED")
+		end
+	end
+	cast(F1, 3)
+	cast(F2, 2)
+	local function cove(c)
+		for _, s in ipairs(c.DT.Fish.Spots()) do if s.name == "Shared Cove" then return s end end
+	end
+	eq(cove(F1).casts, 3, "alone, a member's own casts"); eq(cove(F1).mine, 3, "all of them mine")
+	step(700)
+	eq(cove(F1).casts, 5, "shared: every member's casts are added up"); eq(cove(F1).mine, 3, "mine are still mine"); eq(cove(F2).casts, 5, "on both machines"); eq(cove(F2).mine, 2, "each with its own")
+	eq(F2.DT.Fish.Catches()["Shared Cove"].items[6359], 5, "and what was caught"); eq(F1.DT.DB.Root(), F2.DT.DB.Root(), "both hold the same")
+	for key, row in pairs(allRows(F1.DT)) do
+		check(not (key .. row.v):find("Finn", 1, true) and not (key .. row.v):find("Fia", 1, true), "no player's name in " .. key)
+	end
+	cast(F2, 15)
+	step(700)
+	eq(cove(F1).casts, 20, "from twenty casts of the guild's the spot's own numbers stand over the guess")
+	eq(F1.DT.modules.fish.hello, nil, "the module has nothing to say on the guild channel"); eq(F1.DT.Comms:Totals().mods.fish, nil, "and nothing counted of its own")
+	leave(F1)
+	leave(F2)
+end)()
 print(("ok: %d checks passed"):format(checks))

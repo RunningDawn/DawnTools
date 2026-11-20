@@ -1,4 +1,5 @@
-// Writes Data/CraftSkill.lua: for every item a profession makes, the profession and the skill band of its recipe.
+// Writes ../DawnTools_Seed/CraftSkill.lua (the seed addon beside DawnTools; in no download and no repository, see
+// Core/DBSeed.lua): for every item a profession makes, the profession and the skill band of its recipe.
 //   node tools/craftskill.js ["<...>/Interface/AddOns/SkillUpForever"]     (default: the addon folder next to this one)
 // Read from the SkillUp Forever addon (GPL-3.0-or-later, see THIRD_PARTY_LICENSES.txt): its Data/Recipes.lua
 // (which item a recipe makes, and of which profession), Data/Thresholds.lua (orange, yellow, green, grey; which scroll
@@ -9,7 +10,7 @@ const path = require('path');
 const { lua, lauxlib, lualib, to_luastring, to_jsstring } = require('../tests/node_modules/fengari');
 
 const src = path.resolve(process.argv[2] || path.join(__dirname, '..', '..', 'SkillUpForever'));
-const out = path.resolve(__dirname, '..', 'Data', 'CraftSkill.lua');
+const out = path.resolve(__dirname, '..', '..', 'DawnTools_Seed', 'CraftSkill.lua');
 const version = (fs.readFileSync(path.join(src, 'SkillUpForever.toc'), 'utf8').match(/## Version:\s*(\S+)/) || [])[1] || '?';
 
 const MAKE = `
@@ -46,6 +47,7 @@ local lines = {
 	"-- its Data/Recipes.lua and Data/Thresholds.lua (WoW: Forever client tables via wago.tools) and Data/Trainer.lua",
 	"-- (CMaNGOS classic-db, GPL-3.0). See THIRD_PARTY_LICENSES.txt.",
 	"local _, DT = ...",
+	"DT.SkillUpVersion = " .. ("%q"):format(version),
 	"DT.CraftSkill = {",
 }
 for _, item in ipairs(ids) do

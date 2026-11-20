@@ -22,7 +22,7 @@ local MAX_IDS = 1000 -- foods taken from one message
 local dirty = true
 
 local function On()
-	return Food.db.settings.share == true
+	return DT:Shares()
 end
 
 local function Short(sender)
@@ -169,7 +169,7 @@ end
 local ROW_H, SIDE_W, TOP_H, SIDE_H = 18, 150, 28, 20
 -- (a column of width 0 takes what is left; those of a width below 0 sit at the right edge, that wide, side by side)
 local RECIPE_W, WHERE_W, PROFIT_W, VENDOR_W = 170, 250, 92, 104
--- "Cooking skill": the band of its recipe (Data/CraftSkill.lua): learned at, yellow, green, grey; blank where none is known
+-- "Cooking skill": the band of its recipe (DT.CraftSkill): learned at, yellow, green, grey; blank where none is known
 -- "Profit (AH)" / "Profit (vendor)": what one cooking earns at today's prices, sold on the auction house or to a
 -- vendor (DT.Craft.Profit); hover the row for how it is made up
 local COLS = { { "Food", 168 }, { "Level", 52, true }, { "Cooking skill", 120 }, { "Gives", 84 }, { "This character", 84 }, { "Who can cook it", 0 },
@@ -192,7 +192,7 @@ local RIGHT_W = RightOf(0)
 -- several and no chance (none is known here). The Items tab has them all: Shift-click the cell.
 local sources = {}
 local function Friendly(npc)
-	local ok, to = pcall(function() return LibQuestieDB.Npc.Get(npc, "friendlyToFaction") end)
+	local ok, to = pcall(function() return DT.DB.Q("npc", npc, "friendlyToFaction") end)
 	if not ok or type(to) ~= "string" then return true end
 	local mine = UnitFactionGroup and UnitFactionGroup("player")
 	return to == "AH" or type(mine) ~= "string" or to == mine:sub(1, 1)
@@ -201,7 +201,7 @@ end
 function Food.Source(scroll)
 	if sources[scroll] ~= nil then return sources[scroll] or nil end
 	local I = DT.Item
-	if not (I and I.Sources and LibQuestieDB) then return nil end
+	if not (I and I.Sources and DT.DB.Lib()) then return nil end
 	local ok, lines = pcall(I.Sources, { id = scroll, src = {} })
 	if not ok then return nil end
 	local by, head = {}, nil
@@ -459,7 +459,6 @@ local function SideButton(i)
 	return b
 end
 
-local asking
 local function Refresh()
 	if not panel then return end
 	dirty = false
@@ -605,20 +604,7 @@ DT:RegisterModule("food", {
 	title = "Cooking",
 	version = 1,
 	slash = "/dtfood",
-	settings = {
-		{ key = "share", label = "Tell the guild which recipes my characters know: cooking and the other professions (and see theirs)" },
-	},
-	tab = {
-		id = "food", title = "Cooking", defaultOrder = 50, under = "craft", create = Build,
-		onShow = function()
-			Refresh()
-			-- asked once, the first time the tab is looked at
-			if Food.db.settings.share == nil and IsInGuild() and not asking then
-				asking = true
-				StaticPopup_Show("DAWNTOOLS_FOOD_SHARE")
-			end
-		end,
-	},
+	tab = { id = "food", title = "Cooking", defaultOrder = 50, under = "craft", create = Build, onShow = function() Refresh() end },
 	onEnable = function(mod)
 		local db = mod.db
 		db.foods, db.mine, db.guild, db.types = db.foods or {}, db.mine or {}, db.guild or {}, db.types or {}
@@ -629,24 +615,6 @@ DT:RegisterModule("food", {
 		if UnitFullName then first, surname = UnitFullName("player") end
 		me.name = (first or "?") .. (surname and surname ~= "" and (" " .. surname) or "")
 
-		StaticPopupDialogs.DAWNTOOLS_FOOD_SHARE = {
-			text = "DawnTools Cooking and professions: tell the guild which recipes your characters know?\n\n"
-				.. "Sent to guild members who use DawnTools: each character's name and the recipes it knows, of cooking and of its other professions. "
-				.. "In return you see who can cook what.\n\nNothing else is sent, and you can switch it off at any time: /dt settings.",
-			button1 = "Share", button2 = "Not now",
-			OnAccept = function()
-				db.settings.share = true
-				-- (said as a change of the setting: the food goes out below, and the profession tabs,
-				-- which go by this switch too, send theirs)
-				DT:Fire("DT_SETTINGS", "food", "share")
-			end,
-			-- (only a real no: a popup pushed aside by another one asks again next time)
-			OnCancel = function(_, _, reason)
-				if reason == "clicked" then db.settings.share = false end
-				asking = false
-			end,
-			timeout = 0, whileDead = true, hideOnEscape = true, preferredIndex = 3,
-		}
 		DT:On("TRADE_SKILL_SHOW", function() C_Timer.After(1, ReadCooking) end)
 		DT:On("TRADE_SKILL_LIST_UPDATE", function() C_Timer.After(1, ReadCooking) end)
 		DT:On("DT_SETTINGS", function(name, key)

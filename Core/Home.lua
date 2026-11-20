@@ -13,11 +13,13 @@ local panel, guide, log, logLines, logOffset = nil, {}, nil, {}, 0
 -- what is where: one line per tab on the bar, its sub-tabs named behind it
 local ABOUT = {
 	market = "Auction prices, shared with the guild.",
+	favs = "Your favourite items (Alt-click an item anywhere): where each comes from, what it costs.",
 	inventory = "What every character of yours carries and banks.",
-	craft = "Fishing spots worth the cast; who in the guild cooks what.",
-	world = "Every NPC, quest, item and zone: search, waypoints, chains, sources.",
+	craft = "Fishing spots worth the cast; every profession's recipes, with who can make them and what they earn.",
+	world = "Every NPC, quest, item, zone and dungeon: search, waypoints, chains, sources, boss loot.",
 	combat = "Who killed you, whom you killed, and how.",
-	tools = "Small helpers: range, the five-second rule, a target tracker.",
+	bis = "The best gear for your spec: of what you own and of a pre-raid list, with what to get next.",
+	tools = "Small helpers: range, the five-second rule, a target tracker, enemies in sight, chat history, the carrot.",
 	settings = "Tabs, modules, and each module's switches.",
 }
 

@@ -4,7 +4,7 @@
 local ADDON, DT = ...
 _G.DawnTools = DT
 
-DT.VERSION = "0.36.1" -- keep in step with the .toc
+DT.VERSION = "0.48.0" -- keep in step with the .toc
 DT.LOGO = "Interface\\AddOns\\DawnTools\\logo"
 
 local DEFAULTS = {
@@ -61,7 +61,7 @@ local COIN = {
 	"|TInterface\\MoneyFrame\\UI-SilverIcon:0:0:2:0|t",
 	"|TInterface\\MoneyFrame\\UI-CopperIcon:0:0:2:0|t",
 }
--- The skill band of the recipe that makes an item (Data/CraftSkill.lua), as the Professions window colours it:
+-- The skill band of the recipe that makes an item (DT.CraftSkill: from the store, Core/DBSeed.lua), as the Professions window colours it:
 -- learned at (orange), yellow, green, grey. Returns the band as text and the profession's name; nothing for an
 -- item no profession makes. "?" where the skill it is learned at is not known.
 local PROFESSION = { [129] = "First Aid", [164] = "Blacksmithing", [165] = "Leatherworking", [171] = "Alchemy", [182] = "Herbalism",
@@ -302,6 +302,8 @@ local function Slash(input)
 		DT:Print("window back to its first size and place.")
 	elseif cmd == "probe" then
 		Probe()
+	elseif cmd == "db" then
+		DT.DB.Slash(rest)
 	elseif cmd == "sync" then
 		DT.Comms:Diagnose()
 	elseif cmd == "deathtest" then
@@ -375,10 +377,45 @@ function DT:ShowLink(title, url)
 	StaticPopup_Show("DAWNTOOLS_LINK", title, nil, url)
 end
 
+-- Favourites: items marked to be kept an eye on. One list for the whole addon (the tab with the star shows it,
+-- the Market tab marks them with a star), kept where the Market tab always kept its own: db.market.favs.
+DT.Favs = {}
+function DT.Favs.All()
+	local market = DT.db.market
+	if type(market) ~= "table" then
+		market = {}
+		DT.db.market = market
+	end
+	market.favs = market.favs or {}
+	return market.favs
+end
+function DT.Favs.Is(item)
+	return DT.Favs.All()[item] and true or false
+end
+-- makes an item a favourite, or no longer one; says so (name: for the saying); returns what it is now
+function DT.Favs.Toggle(item, name)
+	local favs = DT.Favs.All()
+	favs[item] = not favs[item] or nil
+	DT:Print(favs[item] and "%s: a favourite now (the tab with the star lists them)." or "%s: no longer a favourite.", name or ("item " .. item))
+	DT:Fire("DT_FAVS", item)
+	return favs[item] or false
+end
+
+-- the line for an item row's tooltip that says what an Alt-click does (by whether it is a favourite already)
+function DT.Favs.Hint(tip, item)
+	tip:AddLine(DT.Favs.Is(item) and "Alt-click: no longer a favourite." or "Alt-click: make it a favourite (the tab with the star lists them).", 0.5, 0.8, 1)
+end
+
 -- A click on a row with Shift held, as on anything in the game: the left button puts its link into the chat
 -- line being written (a line is opened if none is); the right button shows its web page, to copy.
 -- Returns true when Shift was held (the click is dealt with).
-function DT:LinkClick(button, link, title, url)
+-- (item: its number where the row is an item's. With Alt held instead, the item is made a favourite, or no
+-- longer one: see DT.Favs.)
+function DT:LinkClick(button, link, title, url, item)
+	if item and IsAltKeyDown and IsAltKeyDown() then
+		DT.Favs.Toggle(item, title)
+		return true
+	end
 	if not (IsShiftKeyDown and IsShiftKeyDown()) then return false end
 	if button == "RightButton" then
 		self:ShowLink(title, url)
@@ -520,8 +557,51 @@ function DT:ShowMinimap(on)
 	mini:SetShown(on and true or false)
 end
 
+---------------------------------------------------------------------------
+-- Sharing with the guild: one switch for all of it
+---------------------------------------------------------------------------
+-- DT.db.settings.share: nil until the player has answered, then true or false. Every kind of shared data goes
+-- by it (docs/DATA.md, 4): with it off nothing is sent and nothing is taken in.
+function DT:Shares()
+	return self.db ~= nil and self.db.settings.share == true
+end
+
+-- yes or no, said by the player (the popup, or the switch on the Settings tab)
+function DT:SetSharing(on)
+	self.db.settings.share = on and true or false
+	-- (the modules that send what they hold when sharing begins hear it as a change of their setting)
+	if on then
+		for _, mod in DT:Enabled() do DT:Fire("DT_SETTINGS", mod.name, "share") end
+	end
+end
+
+-- asked a little after login and by /dt db, while it has not been answered
+function DT:AskToShare()
+	if self.db.settings.share == nil and IsInGuild() then StaticPopup_Show("DAWNTOOLS_SHARE") end
+end
+
+StaticPopupDialogs.DAWNTOOLS_SHARE = {
+	text = "DawnTools: share with the guild?\n\n"
+		.. "DawnTools does not come with the game's data: recipes, dungeons, NPCs, quests and items reach you from guild "
+		.. "members who use it, and you pass on what you hold.\n\n"
+		.. "Also sent to them as you play: the auction prices you see, with your character's name (it can be left out in "
+		.. "the settings), and what vendors ask; each of your characters' names and the recipes it knows, of cooking and "
+		.. "its other professions; what a quest gave you and the level you were; what a boss dropped and how often you "
+		.. "looted it; what you catch fishing, and where; and what you loot or meet that nobody knew, under a random number.\n\n"
+		.. "Nothing else is sent, and you can switch it off at any time: /dt settings.",
+	button1 = "Share", button2 = "Not now",
+	OnAccept = function() DT:SetSharing(true) end,
+	-- (only a real no: a popup pushed aside by another one asks again next time)
+	OnCancel = function(_, _, reason)
+		if reason == "clicked" then DT:SetSharing(false) end
+	end,
+	timeout = 0, whileDead = true, hideOnEscape = true, preferredIndex = 3,
+}
+
 DT:On("PLAYER_LOGIN", function()
 	DT.me = UnitName("player")
+	DT:Print("version %s loaded. /dt opens the window.", DT.VERSION)
+	C_Timer.After(5, function() DT:AskToShare() end)
 
 	for _, mod in DT:Enabled() do
 		-- a module that fails must not take the others with it; the error still reaches BugSack

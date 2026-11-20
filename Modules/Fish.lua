@@ -1,20 +1,28 @@
 -- DawnFish
 -- Fish as a way to make gold: what each one sells for raw and cooked, where it is caught, and what a cast is
--- worth in each fishing spot at today's auction prices. Local only: the module sends and receives nothing.
+-- worth in each fishing spot at today's auction prices. The module sends and receives nothing itself: what it counts
+-- of casts is rows of the game database (below), which the guild shares with the rest of it where the player agreed.
 --
 -- Three sources, in rising order of trust:
 --   1. the lists below: old-world fish, their cooking recipes and waters (a starting point; Forever has waters
 --      and recipes of its own that are not in them)
 --   2. the Cooking window: every recipe this account knows is recorded when it is opened
---   3. your own casts: every fishing catch is counted per spot, which is what "per cast" is really made from
+--   3. casts: every fishing catch is counted per spot, mine and (once the game database is shared) the guild's,
+--      which is what "per cast" is really made from
 
 local _, DT = ...
 local F = {}
 DT.Fish = F
+local DB, DBL = DT.DB, DT.DBLogic
 
--- db: catches[spot] = { casts, items = { [itemID] = qty }, skill = lowest fishing skill a catch was made at }
---     recipes[output itemID] = { q = made per craft, r = { { itemID, qty }, ... } }   from the Cooking window
+-- db: recipes[output itemID] = { q = made per craft, r = { { itemID, qty }, ... } }   from the Cooking window
 --     names[itemID] = name
+-- Catches are counters of the game database, one per spot and origin (a random number per install: never a name):
+--   "fcatch:<n>:<origin>" = casts, { item, qty, item, qty, ... }, the lowest fishing skill a catch was made at, the
+--   spot's name (DBLogic.Pack). n is a number made of the spot's name, so that every install writes the same key for
+--   the same spot. A spot is "Zone, Subzone" as the game names it (a client in another language has its own).
+--   F.Catches() adds every origin's up: { [spot] = { casts, items = { [itemID] = qty }, skill, mine = my casts } }.
+local MAX_KINDS = 100 -- ponytail: a spot's row holds the commonest 100 kinds of catch (a row may be 2000 bytes); more is junk
 
 -- { raw fish, cooked, cooking skill, { extra mat, qty }... }
 local MILD, HOT, SOOTHING, WATER = 2678, 2692, 3713, 159
@@ -197,8 +205,101 @@ local function Best(id)
 	return Worth(id) + math.max(0, gain or 0)
 end
 
+---------------------------------------------------------------------------
+-- Catches: the counters
+---------------------------------------------------------------------------
+
+local function Plain(text) -- (a name as it is kept: no colour code, link or line break)
+	return (tostring(text or ""):gsub("[|%c]", ""):sub(1, 60))
+end
+
+local function Key(spot)
+	return ("fcatch:%d:%s"):format(tonumber(DBL.Hash(spot):sub(1, 6), 16), DB.Origin())
+end
+F.Key = Key
+
+-- a row's values as { casts, items = { [item] = qty }, skill, name }; nil where it is not of the shape (it may
+-- have come over the wire: sane sizes only)
+local function Parse(text)
+	local v = DBL.Unpack(text)
+	if not v or type(v[1]) ~= "number" or v[1] < 1 or v[1] >= 1e7 or type(v[4]) ~= "string" or Plain(v[4]) == "" then return nil end
+	local flat = v[2]
+	if type(flat) ~= "table" or #flat % 2 ~= 0 or #flat > 2 * MAX_KINDS then return nil end
+	local items = {}
+	for i = 1, #flat, 2 do
+		if type(flat[i]) ~= "number" or type(flat[i + 1]) ~= "number" or flat[i + 1] < 0 or flat[i + 1] >= 1e7 then return nil end
+		items[flat[i]] = flat[i + 1]
+	end
+	return { casts = v[1], items = items, skill = type(v[3]) == "number" and v[3] > 0 and v[3] < 1000 and v[3] or nil, name = Plain(v[4]) }
+end
+
+-- my counter of a spot written: c = { casts, items, skill }
+local function Save(spot, c)
+	local ids = {}
+	for id in pairs(c.items) do ids[#ids + 1] = id end
+	table.sort(ids, function(a, b)
+		if c.items[a] ~= c.items[b] then return c.items[a] > c.items[b] end
+		return a < b
+	end)
+	for i = MAX_KINDS + 1, #ids do ids[i] = nil end
+	table.sort(ids)
+	local flat = {}
+	for _, id in ipairs(ids) do flat[#flat + 1], flat[#flat + 2] = id, c.items[id] end
+	DB.Put(Key(spot), DBL.Pack({ c.casts, flat, c.skill, spot }, 4))
+end
+
+local sums = {} -- { stamp, by }: worked out once until the store changes
+function F.Catches()
+	if sums.stamp == DB.Stamp() then return sums.by end
+	local by, me = {}, DB.Origin()
+	DB.Each("fcatch", function(key, row)
+		local origin = key:match("^fcatch:%d+:(%x+)$")
+		local p = origin and Parse(row.v)
+		if p then
+			local c = by[p.name]
+			if not c then
+				c = { casts = 0, items = {}, mine = 0 }
+				by[p.name] = c
+			end
+			c.casts = c.casts + p.casts
+			if origin == me then c.mine = c.mine + p.casts end
+			for id, qty in pairs(p.items) do c.items[id] = (c.items[id] or 0) + qty end
+			if p.skill and (not c.skill or p.skill < c.skill) then c.skill = p.skill end
+		end
+	end)
+	sums = { stamp = DB.Stamp(), by = by }
+	return by
+end
+
+-- The catches saved before (db.catches[spot] = { casts, items, skill }) laid under my origin: the larger of each number
+-- and what the store holds of mine for the spot, so that a second run, or one on a half-moved file, changes nothing;
+-- then the table goes.
+function F.Migrate(db)
+	for spot, c in pairs(type(db.catches) == "table" and db.catches or {}) do
+		local casts = type(c) == "table" and math.floor(tonumber(c.casts) or 0)
+		if type(spot) == "string" and Plain(spot) ~= "" and casts and casts >= 1 and casts < 1e7 then
+			spot = Plain(spot)
+			local items, skill = {}, tonumber(c.skill)
+			for id, qty in pairs(type(c.items) == "table" and c.items or {}) do
+				id, qty = tonumber(id), tonumber(qty)
+				if id and id > 0 and qty and qty >= 0 and qty < 1e7 then items[id] = math.floor(qty) end
+			end
+			local row = DB.Row(Key(spot))
+			local have = row and Parse(row.v)
+			if have then
+				casts = math.max(casts, have.casts)
+				for id, qty in pairs(have.items) do items[id] = math.max(items[id] or 0, qty) end
+				if have.skill and (not skill or have.skill < skill) then skill = have.skill end
+			end
+			Save(spot, { casts = casts, items = items, skill = skill })
+		end
+	end
+	db.catches = nil
+	db.moved = true
+end
+
 -- Spots, best per cast first: { name, skill (needed), caught (lowest skill I caught at), casts (nil = from the
--- list), per = copper per cast, fish = { { id, share } }, best = { id, copper }: the dearest single catch }
+-- list), mine (of them mine), per = copper per cast, fish = { { id, share } }, best = { id, copper }: the dearest single catch }
 local function Spots()
 	local spots, fished = {}, {}
 	local function Dearest(ids)
@@ -209,7 +310,7 @@ local function Spots()
 		end
 		return best
 	end
-	for name, c in pairs(F.db.catches) do
+	for name, c in pairs(F.Catches()) do
 		local zone = name:match("^(.-), ") or name
 		if c.casts >= OWN_CASTS then fished[zone] = true end
 		local per, fish = 0, {}
@@ -220,7 +321,7 @@ local function Spots()
 		table.sort(fish, function(a, b) return a[3] > b[3] end)
 		local ids = {}
 		for id in pairs(c.items) do ids[#ids + 1] = id end
-		spots[#spots + 1] = { name = name, zone = zone, skill = Need(zone), caught = c.skill, casts = c.casts, per = per / c.casts, fish = fish, best = Dearest(ids) }
+		spots[#spots + 1] = { name = name, zone = zone, skill = Need(zone), caught = c.skill, casts = c.casts, mine = c.mine, per = per / c.casts, fish = fish, best = Dearest(ids) }
 	end
 	for _, w in ipairs(WATERS) do
 		for _, zone in ipairs(w[2]) do
@@ -273,9 +374,9 @@ local looting
 local function Catch()
 	if looting or not (IsFishingLoot and IsFishingLoot()) then return end
 	looting = true -- (the game may announce one loot window more than once)
-	local spot = Spot()
-	local c = F.db.catches[spot] or { casts = 0, items = {} }
-	F.db.catches[spot] = c
+	local spot = Plain(Spot())
+	local row = DB.Row(Key(spot))
+	local c = row and Parse(row.v) or { casts = 0, items = {} }
 	c.casts = c.casts + 1
 	for slot = 1, GetNumLootItems() do
 		local link = GetLootSlotLink(slot)
@@ -288,6 +389,7 @@ local function Catch()
 	end
 	local skill = FishingSkill()
 	if skill and (not c.skill or skill < c.skill) then c.skill = skill end
+	Save(spot, c)
 	dirty = true
 end
 
@@ -326,7 +428,7 @@ local VIEWS = {
 		{ title = "Where (fishing skill)", width = 0 },
 	},
 	spots = {
-		{ title = "Spot", width = 190 }, { title = "Levels", width = 54, right = true }, { title = "Skill", width = 50, right = true }, { title = "Your casts", width = 70, right = true },
+		{ title = "Spot", width = 190 }, { title = "Levels", width = 54, right = true }, { title = "Skill", width = 50, right = true }, { title = "Casts", width = 70, right = true },
 		{ title = "Per cast", width = 104, right = true }, { title = "Per hour", width = 104, right = true }, { title = "Best catch", width = 200 },
 		{ title = "What bites (per cast)", width = 0 },
 	},
@@ -354,7 +456,7 @@ local function FishRows()
 	end
 	for _, c in ipairs(COOKED) do Add(c[1]) end
 	for _, id in ipairs(OTHER) do Add(id) end
-	for _, c in pairs(F.db.catches) do
+	for _, c in pairs(F.Catches()) do
 		for id in pairs(c.items) do
 			if IsFish(id) or Auction(id) then Add(id) end
 		end
@@ -448,8 +550,11 @@ local function SpotRows()
 			if #s.fish > 10 then tips[#tips + 1] = GREY .. ("  and %d more|r"):format(#s.fish - 10) end
 		end
 		tips[#tips + 1] = " "
-		tips[#tips + 1] = GREY .. (s.casts and ("From your own %d cast%s here%s."):format(s.casts, s.casts == 1 and "" or "s", s.caught and (", the first at skill " .. s.caught) or "")
-			or "~ A guess from the built-in list, until you have fished here.") .. "|r"
+		-- (where the numbers are from: my own counts, and the guild's where the game database is shared)
+		local first = s.caught and (", the first at skill " .. s.caught) or ""
+		tips[#tips + 1] = GREY .. (s.casts and (s.mine == s.casts and ("From your own %d cast%s here%s."):format(s.casts, s.casts == 1 and "" or "s", first)
+			or ("From %d cast%s here: %d yours, the rest the guild's%s."):format(s.casts, s.casts == 1 and "" or "s", s.mine or 0, first))
+			or "~ A guess from the built-in list, until you or the guild have fished here.") .. "|r"
 		out[#out + 1] = {
 			tips = tips,
 			s.name, levels, SkillText(s.skill, mine), s.casts and tostring(s.casts) or GREY .. "-|r",
@@ -606,10 +711,10 @@ local function Refresh(scrolled)
 	for key, b in pairs(viewButtons) do
 		if key == view then b:LockHighlight() else b:UnlockHighlight() end
 	end
-	local casts = 0
-	for _, c in pairs(F.db.catches) do casts = casts + c.casts end
-	note:SetText(("|cff888888Prices: %s auction house (grey v = vendor only). %d of your casts counted. ~ = a guess from the built-in list. Skill: green = nothing gets away, yellow = some do, red = cannot cast.|r"):format(
-		DT.Market.HOUSE_NAMES[DT.Market.view] or "?", casts))
+	local casts, mine = 0, 0
+	for _, c in pairs(F.Catches()) do casts, mine = casts + c.casts, mine + c.mine end
+	note:SetText(("|cff888888Prices: %s auction house (grey v = vendor only). %d casts counted: %d yours%s. ~ = a guess from the built-in list. Skill: green = nothing gets away, yellow = some do, red = cannot cast.|r"):format(
+		DT.Market.HOUSE_NAMES[DT.Market.view] or "?", casts, mine, casts > mine and ", the rest the guild's" or ""))
 end
 F.Refresh = Refresh
 F.Spots, F.Name, F.Worth = Spots, Name, Worth -- (for the Zones tab)
@@ -718,7 +823,13 @@ DT:RegisterModule("fish", {
 	tab = { id = "fish", title = "Fishing", defaultOrder = 40, under = "craft", create = Build, onShow = Refresh },
 	onEnable = function(mod)
 		F.db = mod.db
-		F.db.catches, F.db.recipes, F.db.names = F.db.catches or {}, F.db.recipes or {}, F.db.names or {}
+		F.db.recipes, F.db.names = F.db.recipes or {}, F.db.names or {}
+		if F.db.catches then
+			local ok, err = pcall(F.Migrate, F.db)
+			if not ok then geterrorhandler()(err) end -- (what was not moved is still there for the next login)
+		end
+		-- (a member's catches are on show at once)
+		DT:On("DT_DB_UPDATE", function(chunk) if chunk and chunk:find("^fcatch:") then dirty = true end end)
 		DT:On("LOOT_READY", Catch)
 		DT:On("LOOT_OPENED", Catch)
 		DT:On("LOOT_CLOSED", function() looting = false end)

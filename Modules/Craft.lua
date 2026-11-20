@@ -1,6 +1,6 @@
 -- DawnTools :: Craft
 -- A tab for each crafting profession under "Craft" (beside Fishing and Cooking, which are modules of their own):
--- every recipe there is (the shipped list, Data/CraftSkill.lua: DT.Recipes), its skill band, what its materials
+-- every recipe there is (DT.Recipes: rows of the game database, Core/DBSeed.lua), its skill band, what its materials
 -- cost and what it earns at today's prices, which of them this character knows, who can make it, and where the
 -- recipe comes from.
 --
@@ -97,6 +97,11 @@ end
 
 -- the recipe that makes an item (the one that turns yellow soonest, where there are several); nil for none
 local byItem
+local data = 0 -- counts the times the recipes were put together anew (Core/DBSeed.lua: rows of a guildmate's came)
+DT:On("DT_DATA_UPDATE", function()
+	byItem, data = nil, data + 1
+	Stale()
+end)
 function Craft.ByItem(item)
 	if not byItem then
 		byItem = {}
@@ -243,7 +248,7 @@ end
 ---------------------------------------------------------------------------
 
 local function On()
-	return DT.Food ~= nil and DT.Food.db ~= nil and DT.Food.db.settings.share == true
+	return DT.Food ~= nil and DT.Food.db ~= nil and DT:Shares()
 end
 
 local function Send()
@@ -381,8 +386,8 @@ local function NewView(prof)
 
 	-- the recipes of this profession, once
 	local function Recipes()
-		if not v.spells then
-			v.spells = {}
+		if not v.spells or v.data ~= data then
+			v.spells, v.data = {}, data
 			for spell, r in pairs(DT.Recipes or {}) do
 				-- (what is made for the camp is the Campsite tab's, whatever profession makes it)
 				local camp = Craft.IsCamp(spell)
@@ -518,14 +523,17 @@ local function NewView(prof)
 			GameTooltip:AddLine(" ")
 			GameTooltip:AddLine(d.makers[1] and ("Can make it: " .. table.concat(d.makers, ", ")) or "Nobody known who can make it.", 1, 1, 1, true)
 			Craft.ProfitTip(GameTooltip, d.profit)
-			if d.id then GameTooltip:AddLine("Shift-click: link in chat. Shift-right-click: its web page. Hold Shift: compare.", 0.5, 0.8, 1) end
+			if d.id then
+				GameTooltip:AddLine("Shift-click: link in chat. Shift-right-click: its web page. Hold Shift: compare.", 0.5, 0.8, 1)
+				DT.Favs.Hint(GameTooltip, d.id)
+			end
 			GameTooltip:Show()
 			if d.id then DT:CompareTip(self) end
 		end)
 		row:SetScript("OnLeave", function() GameTooltip:Hide() end)
 		row:SetScript("OnMouseUp", function(self, button)
 			local d = self.data
-			if d and d.id then DT:LinkClick(button, DT:GameItemLink(d.id, d.name), d.name, DT:ItemLink(d.id)) end
+			if d and d.id then DT:LinkClick(button, DT:GameItemLink(d.id, d.name), d.name, DT:ItemLink(d.id), d.id) end
 		end)
 		v.rows[i] = row
 		return row
@@ -593,7 +601,8 @@ local function NewView(prof)
 		for c, h in ipairs(v.heads) do
 			h.text:SetText("|cffffd100" .. COLS[c][1] .. (v.sortBy.col == c and (v.sortBy.desc and " v" or " ^") or "") .. "|r")
 		end
-		countText:SetText(("%d recipes%s"):format(#list, read and (", %d of them known to this character"):format(Count(Me().ids) > 0 and (function()
+		countText:SetText(not next(DT.Recipes or {}) and (GREY .. "No recipes known yet. DawnTools does not come with them: they reach you from guild members, with the game database shared (/dt db).|r")
+			or ("%d recipes%s"):format(#list, read and (", %d of them known to this character"):format(Count(Me().ids) > 0 and (function()
 			local n = 0
 			for _, d in ipairs(list) do if Me().ids[d.spell] then n = n + 1 end end
 			return n

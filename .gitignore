@@ -1,1 +1,4 @@
 tests/node_modules/
+# stat weights taken down from two websites: not cleared for publishing (THIRD_PARTY_LICENSES.txt)
+Tools/bis/
+tools/bis/

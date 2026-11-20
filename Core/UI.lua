@@ -56,30 +56,64 @@ grip:SetHighlightTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Highlight"
 grip:SetPushedTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Down")
 -- The window may be no bigger than the screen (less a margin), however it is pulled.
 local function Fit(w, h)
-	local sw, sh = UIParent:GetWidth() or 0, UIParent:GetHeight() or 0
-	if sw < MIN_W + 40 or sh < MIN_H + 40 then return math.max(MIN_W, w), math.max(MIN_H, h) end -- (screen size not known yet)
+	local sw, sh = UIParent:GetWidth(), UIParent:GetHeight()
+	-- (the screen's size not known, or not told in plain numbers: a size that fits any screen in use, never
+	-- "as big as it is pulled". Without this there was no upper limit at all at such a moment.)
+	local known = type(sw) == "number" and type(sh) == "number" and not (issecretvalue and (issecretvalue(sw) or issecretvalue(sh)))
+		and sw >= MIN_W + 40 and sh >= MIN_H + 40
+	if not known then sw, sh = MIN_W + 500, MIN_H + 400 end
+	if type(w) ~= "number" or w ~= w then w = MIN_W end -- (no number, or not one that can be compared: the least)
+	if type(h) ~= "number" or h ~= h then h = MIN_H end
 	return math.max(MIN_W, math.min(w, sw - 40)), math.max(MIN_H, math.min(h, sh - 40))
 end
+-- (the corner is above whatever lies under it: a list's scroll bar ends in that corner too)
+if grip.SetFrameLevel and frame.GetFrameLevel then grip:SetFrameLevel((frame:GetFrameLevel() or 0) + 100) end
+
+-- The corner is pulled by a sum of our own, not by the game's sizing: the size the window had when the corner
+-- was taken, plus how far the mouse has moved since. The game's own StartSizing made the window leap to its
+-- largest size on some clicks; a sum cannot leap. Meanwhile the window hangs by its top left corner, so that it
+-- grows to the right and down, under the mouse.
+local pull -- { x, y, w, h }: where the mouse was and how big the window, when the corner was taken
+local function Mouse()
+	if not GetCursorPosition then return nil end
+	local x, y = GetCursorPosition()
+	local scale = frame.GetEffectiveScale and frame:GetEffectiveScale() or 1
+	if type(x) ~= "number" or type(y) ~= "number" or type(scale) ~= "number" or scale <= 0 then return nil end
+	return x / scale, y / scale
+end
+local function Drop()
+	if not pull then return end
+	pull = nil
+	grip:SetScript("OnUpdate", nil)
+	frame:SetSize(Fit(frame:GetWidth(), frame:GetHeight()))
+	DT.db.size = { frame:GetWidth(), frame:GetHeight() }
+	-- (the window was hung anew: remember where it is now)
+	local point, _, relative, x, y = frame:GetPoint(1)
+	if point then DT.db.pos = { point, relative, x, y } end
+end
 grip:SetScript("OnMouseDown", function()
-	-- Sizing pulls the bottom right corner, so the window must hang by its top left one: hung by its
-	-- centre (as it is until first moved) it grows both ways and jumps out from under the mouse.
+	-- (hung by its centre, as it is until first moved, it would grow both ways. Only where the game tells
+	-- where the window stands in plain numbers: else it is left hanging as it is.)
 	local left, top = frame:GetLeft(), frame:GetTop()
-	if left and top then
+	local plain = type(left) == "number" and type(top) == "number" and not (issecretvalue and (issecretvalue(left) or issecretvalue(top)))
+	if plain then
 		frame:ClearAllPoints()
 		frame:SetPoint("TOPLEFT", UIParent, "BOTTOMLEFT", left, top)
 	end
-	local w, h = Fit(math.huge, math.huge)
-	if frame.SetResizeBounds then frame:SetResizeBounds(MIN_W, MIN_H, w, h) end
-	frame:StartSizing("BOTTOMRIGHT")
+	local x, y = Mouse()
+	pull = { x = x, y = y, w = frame:GetWidth(), h = frame:GetHeight() }
+	grip:SetScript("OnUpdate", function()
+		if not pull then return end
+		-- (the button let go somewhere the corner did not hear of it: the window is put down)
+		if IsMouseButtonDown and not IsMouseButtonDown("LeftButton") then return Drop() end
+		local mx, my = Mouse()
+		if not (mx and pull.x) then return end
+		local w, h = Fit(pull.w + (mx - pull.x), pull.h - (my - pull.y))
+		if w ~= frame:GetWidth() or h ~= frame:GetHeight() then frame:SetSize(w, h) end
+	end)
 end)
-grip:SetScript("OnMouseUp", function()
-	frame:StopMovingOrSizing()
-	frame:SetSize(Fit(frame:GetWidth(), frame:GetHeight()))
-	DT.db.size = { frame:GetWidth(), frame:GetHeight() }
-	-- sizing re-anchors the window: remember where it is now
-	local point, _, relative, x, y = frame:GetPoint(1)
-	DT.db.pos = { point, relative, x, y }
-end)
+grip:SetScript("OnMouseUp", Drop)
+UI.frame, UI.grip = frame, grip -- (for the self test and the checks)
 
 local body = CreateFrame("Frame", nil, frame)
 body:SetPoint("TOPLEFT", 8, -36)
@@ -119,7 +153,9 @@ local function Place(id)
 		line:SetHeight(1)
 		p.rule = line -- (moved down where the sub-tabs take more than one row)
 		p.panel = panel
-		panel:SetScript("OnSizeChanged", function() if p.current then ShowSub(p) end end) -- (a wider window: fewer rows)
+		-- (a wider window: fewer rows of buttons. Only they are laid out: the sub-tab itself hears of its
+		-- new size from its own panel, and is not shown anew for every step of a pull at the corner.)
+		panel:SetScript("OnSizeChanged", function() if p.current then ShowSub(p, true) end end)
 	end
 	p.onShow = function() ShowSub(p) end
 	p.onHide = function()
@@ -132,11 +168,12 @@ local function Place(id)
 end
 
 -- shows a place's sub-tab: the one asked for (p.want), else the last one used there, else the first
-function ShowSub(p)
+-- (layoutOnly: only its row of buttons is laid out again, for a window that changed its width)
+function ShowSub(p, layoutOnly)
 	if not p.panel then return end
 	DT.db.tabs.sub = DT.db.tabs.sub or {}
-	local sub, last = p.want, p.current or DT.db.tabs.sub[p.id]
-	p.want = nil
+	local sub, last = (not layoutOnly) and p.want or nil, p.current or DT.db.tabs.sub[p.id]
+	if not layoutOnly then p.want = nil end
 	for _, s in ipairs(p.subs) do
 		if not sub and s.id == last then sub = s end
 	end
@@ -196,7 +233,7 @@ function ShowSub(p)
 		p.body:SetPoint("TOPLEFT", 0, -30 - row * 24)
 		p.body:SetPoint("BOTTOMRIGHT", 0, 0)
 	end
-	if not sub then return end
+	if not sub or layoutOnly then return end
 	if p.current and p.current ~= sub.id and p.panels[p.current] then
 		p.panels[p.current]:Hide()
 		for _, s in ipairs(p.subs) do
@@ -528,6 +565,10 @@ UI:Section("general", "General", 10, function(panel)
 		function() return DT.db.settings.coins end,
 		function(on) DT.db.settings.coins = on end)
 	y = y - 22
+	Toggle(panel, 4, y, "Share with the guild, and receive what it shares: the game database, prices, recipes known, quest rewards, boss loot",
+		function() return DT.db.settings.share == true end,
+		function(on) DT:SetSharing(on) end)
+	y = y - 22
 	Toggle(panel, 4, y, "Send guild messages in instances too",
 		function() return DT.db.settings.instances end,
 		function(on) DT.db.settings.instances = on end)
@@ -627,13 +668,13 @@ end
 
 -- The other addons DawnTools reads when they are there (all optional), and what for
 UI.DEPS = {
-	{ "QuestieDB", "the NPC, Quests, Items and Zones tabs; who sells what" },
+	{ "QuestieDB", "|cffffd100the one to have:|r the NPC, Quests, Items and Zones tabs, a dungeon's quests, who sells or drops what, where a recipe comes from" },
 	{ "Questie", "not needed: QuestieDB alone is enough" },
-	{ "Auctionator", "its price history, for you only" },
-	{ "TomTom", "waypoint arrows (without it: the map pin)" },
-	{ "GatherMate2", "herb and ore nodes you found, on the Zones tab" },
-	{ "AtlasLootClassic", "which items are crafted" },
-	{ "OneForAll", "the quests of Forever's own dungeons" },
+	{ "Auctionator", "extra: its price history, for you only" },
+	{ "TomTom", "extra: waypoint arrows (without it: the game's map pin)" },
+	{ "GatherMate2", "extra: herb and ore nodes you found, on the Zones tab" },
+	{ "AtlasLootClassic", "extra: raids and drop chances on the Dungeons tab; which items are crafted" },
+	{ "OneForAll", "extra: its dungeon bosses and drops go into the game database (and so to guildmates); the quests of Forever's own dungeons" },
 }
 
 -- "loaded", "off" (installed, not switched on) or "missing"

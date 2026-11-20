@@ -405,7 +405,10 @@ end
 function M:Enable(mod)
 	local db = mod.db
 	db.favs, db.stats, db.houses, db.auctioneers = db.favs or {}, db.stats or {}, db.houses or {}, db.auctioneers or {}
-	db.vendors = db.vendors or {}
+	if db.vendors or db.vpeers then
+		local ok, err = pcall(M.MigrateVendors, db)
+		if not ok then geterrorhandler()(err) end -- (what was not moved is still there for the next login)
+	end
 	self.db = db
 	self.faction = (UnitFactionGroup and UnitFactionGroup("player")) == "Alliance" and "A" or "H"
 	if db.items then -- from before the houses were told apart: all of it counts as my faction's
@@ -468,13 +471,34 @@ end
 ---------------------------------------------------------------------------
 -- Vendors: what they sell, read whenever the player opens one
 ---------------------------------------------------------------------------
--- db.vendors[itemID] = { p = copper for one, v = the vendor's name, z = where, l = true for limited stock, t = seen }
--- r = when it came from the guild (not there: I saw it myself). Shared with the guild where the player agreed to
--- share prices (Sync.lua); otherwise kept on this computer. Items paid for in anything but money are left out.
+-- A row of the game database, "vendor:<item>" (DB.Vendor, Core/DB.lua): { p = copper for one, v = the vendor's name,
+-- z = where, l = true for limited stock, t = seen }. It goes to the guild with the rest of the store, where the
+-- player agreed to share it (settings.share), and is otherwise kept on this computer. Items paid for in anything
+-- but money are left out.
+
+local function Plain(text) -- (what is kept of a name: no colour code, link or line break)
+	return (tostring(text or ""):gsub("[|%c]", ""):sub(1, 60))
+end
+
+-- The vendor prices of before (the saved file has db.vendors[item] = { p, v, z, l, t, r }) moved into the store:
+-- each kept where the store holds nothing newer for that item, so that a second run, or one on a half-moved file,
+-- changes nothing; then the table goes (with db.vpeers, the sync of before).
+function M.MigrateVendors(db)
+	for id, v in pairs(type(db.vendors) == "table" and db.vendors or {}) do
+		id = tonumber(id)
+		local p = type(v) == "table" and tonumber(v.p)
+		if id and id > 0 and id == math.floor(id) and p and p > 0 and p < 1e10 and type(v.v) == "string" and Plain(v.v) ~= "" then
+			DT.DB.Keep(("vendor:%d"):format(id), DT.DB.VendorText(math.floor(p), v.l, Plain(v.v), Plain(v.z)), tonumber(v.t) or 1)
+		end
+	end
+	db.vendors, db.vpeers = nil, nil
+	db.moved = true
+end
 
 local function Merchant()
 	local npc = UnitName("npc")
 	if not (npc and GetMerchantNumItems and GetMerchantItemID) then return end
+	npc = Plain(npc)
 	local zone, sub = GetRealZoneText and GetRealZoneText() or "?", GetSubZoneText and GetSubZoneText() or ""
 	local where = sub ~= "" and sub ~= zone and (sub .. ", " .. zone) or zone
 	for i = 1, GetMerchantNumItems() do
@@ -487,12 +511,10 @@ local function Merchant()
 			_, _, price, stack, left, _, _, extended = GetMerchantItemInfo(i)
 		end
 		if id and price and price > 0 and not extended then
-			local unit, old = math.ceil(price / math.max(1, stack or 1)), M.db.vendors[id]
-			-- the cheapest seller is kept; a seller's own price is brought up to date
+			local unit, old = math.ceil(price / math.max(1, stack or 1)), DT.DB.Vendor(id)
+			-- the cheapest seller is kept; a seller's own price is brought up to date (a price only seen again writes nothing)
 			if not old or unit <= old.p or old.v == npc then
-				M.db.vendors[id] = { p = unit, v = npc, z = where, l = (left or -1) >= 0 or nil, t = DT.Now() }
-				-- (new to me, or changed: told to the guild; a price only seen again is not)
-				if not old or old.p ~= unit or old.v ~= npc then M.Sync:QueueVendor(id) end
+				DT.DB.Put("vendor:" .. id, DT.DB.VendorText(unit, (left or -1) >= 0, npc, Plain(where)))
 			end
 		end
 	end
@@ -536,8 +558,15 @@ end
 
 -- what a vendor asks for one, the vendor's name, where, whether the stock is limited; nothing when none is known
 function API.GetVendor(itemID)
-	local v = M.db and M.db.vendors[itemID]
+	local v = DT.DB.Vendor(itemID)
 	if v then return v.p, v.v, v.z, v.l or false end
+end
+
+-- how many vendor prices are held (mine and the guild's: the store does not say whose)
+function M.VendorCount()
+	local n = 0
+	for _ in pairs(DT.DB.Vendors()) do n = n + 1 end
+	return n
 end
 
 -- the auction house the prices given here are of: its key ("H", "A", "X") and its name. At an auctioneer

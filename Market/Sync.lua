@@ -21,7 +21,7 @@ local REPLY_CAP = 2000
 local replied = {}         -- [requester] = GetTime() of my last answer
 
 function Sync:On()
-	return M.db.settings.share == true
+	return DT:Shares()
 end
 
 function Sync:Queue(ob)
@@ -142,72 +142,6 @@ function Sync:OnMessage(kind, payload, sender)
 	end
 end
 
----------------------------------------------------------------------------
--- Vendor prices: what a vendor asks is the same for everybody, so one member's visit fills it in for the guild.
--- Under the same switch as the auction prices (settings.share). No player's name is in it. Passed on the
--- shared way (Comms:Gossip, module "vendors"); a record is "item;copper;limited (0/1);seen;vendor;where".
--- What came from the guild is marked (r = when it came): it is not my sighting, and is not sent on.
--- ponytail: a price seen with a reputation discount goes out as seen, and the cheapest is kept: it may read a
--- little under what another member pays until they visit that vendor.
----------------------------------------------------------------------------
-local function Clean(text)
-	return (tostring(text or ""):gsub("[|;%c]", ""):sub(1, 60))
-end
-
-local vendors = DT.Comms:Gossip("vendors", {
-	on = function() return M.db ~= nil and Sync:On() end,
-	peers = function()
-		M.db.vpeers = M.db.vpeers or {}
-		return M.db.vpeers
-	end,
-	own = function()
-		local out = {}
-		for id, v in pairs(M.db.vendors) do
-			if not v.r then out[id] = v.t or 1 end
-		end
-		return out
-	end,
-	line = function(id)
-		local v = M.db.vendors[id]
-		return v and ("%d;%d;%d;%d;%s;%s"):format(id, v.p, v.l and 1 or 0, v.t or 0, Clean(v.v), Clean(v.z))
-	end,
-	take = function(line, now)
-		local id, p, l, t, v, z = line:match("^(%d+);(%d+);([01]);(%d+);([^;]*);([^;]*)$")
-		id, p, t = tonumber(id), tonumber(p), math.min(tonumber(t) or 0, now)
-		if not (id and id > 0 and p and p > 0 and p < 1e10 and v ~= "") then return false end
-		v, z = Clean(v), Clean(z)
-		local old = M.db.vendors[id]
-		-- as with my own visits: the cheapest seller is kept, and a seller's own price is brought up to
-		-- date by a newer sighting. What I saw myself at that vendor is not replaced by another's.
-		local mine = old and not old.r and old.v == v
-		if old and (mine or not (p < old.p or (old.v == v and t > (old.t or 0)))) then return false end
-		M.db.vendors[id] = { p = p, v = v, z = z, l = l == "1" or nil, t = t, r = now }
-		return true
-	end,
-	taken = function()
-		M:Touch()
-		Sync.last = DT.Now()
-	end,
-})
-
-function Sync:QueueVendor(id) vendors:Queue(id) end
-function Sync:VendorHello() return vendors:Hello() end
-
--- how many vendor prices are held, and how many of them came from the guild
-function Sync:VendorCounts()
-	local n, guild = 0, 0
-	for _, v in pairs(M.db and M.db.vendors or {}) do n, guild = n + 1, guild + (v.r and 1 or 0) end
-	return n, guild
-end
-
-DT:RegisterModule("vendors", {
-	title = "Vendor price sharing",
-	version = 1,
-	hello = function() return vendors:Hello() end,
-	onHello = function(_, sender, summary) vendors:OnHello(sender, summary) end,
-	onMessage = function(_, kind, payload, sender) vendors:OnMessage(kind, payload, sender) end,
-})
-
 function Sync:Status()
 	local items, peers = Tracked(), 0
 	for _ in pairs(DT.Comms.peers) do peers = peers + 1 end
@@ -220,23 +154,6 @@ function Sync:Status()
 end
 
 function Sync:Enable()
-	StaticPopupDialogs.DAWNTOOLS_MARKET_SHARE = {
-		text = "DawnTools Market: share prices with the guild?\n\n"
-			.. "Sent to guild members who use DawnTools: the prices and quantities you see at the auction house, when you "
-			.. "saw them, and your character's name (you can leave the name out in the settings). Also what vendors "
-			.. "ask for their goods (the item, the price, the vendor and the place).\n\n"
-			.. "Nothing else is sent, and you can switch it off at any time: /dt settings.",
-		button1 = "Share", button2 = "Not now",
-		OnAccept = function() M.db.settings.share = true end,
-		-- (only a real no: a popup pushed aside by another one asks again next time)
-		OnCancel = function(_, _, reason)
-			if reason == "clicked" then M.db.settings.share = false end
-		end,
-		timeout = 0, whileDead = true, hideOnEscape = true, preferredIndex = 3,
-	}
-	if M.db.settings.share == nil and IsInGuild() then
-		C_Timer.After(5, function() StaticPopup_Show("DAWNTOOLS_MARKET_SHARE") end)
-	end
 	C_Timer.NewTicker(PUSH_EVERY, function() Sync:Flush() end)
 	-- in step with the guild as of now, if this session heard what it had missed
 	DT:On("PLAYER_LOGOUT", function()

@@ -11,13 +11,25 @@ A World of Warcraft addon in plain Lua for the server **WoW: Forever 1.60.1** (`
 ```
 DawnTools.toc   load order; version
 Core/           Logic (pure functions), Core (events, slash commands, minimap button, DT.VERSION),
+                DB (DT.DB: the one way to ask about items, NPCs, quests and how they hang together, and the store of
+                what we learned; DB.Lib: the lists of NPCs, items, quests as QuestieDB or the store gives them;
+                DBLogic: its rows, chunks, hashes, merge, pure; DBImport: an installed QuestieDB into the store;
+                DBSeed: the seed addon's recipes and dungeons into the store, and DT.Recipes / DT.Dungeons out of it;
+                DBSync: passing it between members),
                 Comms (guild messages), UI (window, tabs, settings), Profiles, Changelog, Home
 Market/         Capture (reading the auction house), Sync (guild sharing), UI
-Modules/        Inventory, Fish, Food, Npc, Quest, Item, Zone, Combat: one file, one tab; Craft: a tab for each profession
+Modules/        Inventory, Fish, Food, Npc, Quest, Item, Zone, Combat, Bis: one file, one tab; Craft: a tab for each profession
+                (Bis: its maths is Core/BisLogic.lua, pure; its profiles ../DawnTools_Seed/BisProfiles.lua, made by tools/bisweights.js
+                from tools/bis/*.json; its item lists Data/BisLists.lua, by hand)
 Tools/          Tools (the tab), Range, Mp5, Tracker: small tools as sub-tabs
+Data/           BisLists (by hand). No other game data is in the addon: it is in the store
+../DawnTools_Seed/   beside the addon, in no repository and no download: CraftSkill.lua, Dungeons.lua and
+                BisProfiles.lua (the BiS stat weights: not cleared, so not passed to the guild either) as
+                tools/craftskill.js, tools/dungeons.js and tools/bisweights.js write them (the tests read them too)
 Libs/           third-party libraries, unchanged
 tests/          run.js starts fengari; run.lua is a fake client plus every check
-docs/           the spec
+docs/           the spec; DATA.md: the data model, every source and its licence, what is stored and what is sent;
+                PLAN-DATA.md: the work left on the game database, in order (keep its state up to date)
 ```
 
 A new file goes in the `.toc` **and** in `FILES` near the top of `tests/run.lua`.
@@ -38,7 +50,7 @@ Passing ends with `ok: N checks passed`. A change in behaviour gets a check in `
 
 With each batch of changes, in step:
 
-1. `## Version:` in `DawnTools.toc`
+1. `## Version:` in `DawnTools.toc`, and the green `v…` at the end of its `## Title:` (the addon list shows it)
 2. `DT.VERSION` in `Core/Core.lua`
 3. a new entry on top of `DT.CHANGELOG` in `Core/Changelog.lua` (a test checks it begins with the current version)
 
@@ -46,8 +58,9 @@ Patch for fixes, minor for features. Changelog lines are short and say only what
 
 ## Principles that must hold
 
-- **Opt-in and visible.** Nothing goes to the guild before the player agrees in a popup. Sharing off means nothing sent *and* nothing merged. An imported profile never switches sharing on.
-- **Only four kinds of shared data:** Market observations (item, price, quantity, time, observer name), vendor prices (item, price, vendor's name, place; under Market's sharing switch), recipes known (character name, and the food item IDs and profession recipe IDs it knows; one switch, Cooking's) and quest rewards (quest, money, experience, items, the level it was seen at; no name). A fifth kind is a decision for the owner and goes in the spec first.
+- **Opt-in and visible.** Nothing goes to the guild before the player agrees in a popup. One question and one switch for all of it (`DT:Shares()`, `DT.db.settings.share`; a module asks nothing itself and has no switch of its own for it). Sharing off means nothing sent *and* nothing merged. An imported profile never switches sharing on.
+- **Only three kinds of shared data** (the table of what each carries is in `docs/DATA.md`): the game database (rows of `DawnToolsDB.db`: the game's data as imported from QuestieDB and OneForAll and seeded from the seed addon, things met in play, loot counted per mob, chest, node or boss under a random origin number, vendor prices, quest rewards, fishing catches; by whisper, no name; a member passes on all of it, whoever it came from), Market observations (item, price, quantity, time, observer name) and recipes known (character name, and the food item IDs and profession recipe IDs it knows). New data about the game goes into the store as rows, not into a store and a sync of its own. A new kind is a decision for the owner and goes in the spec first. New code that asks where a thing comes from or what it gives goes through `DT.DB` (`DB.Lib()` for the long lists), not to QuestieDB directly: `LibQuestieDB` is named in `Core/DB.lua` and `Core/DBImport.lua` only.
+- **No game data in the download.** Data from another project goes into the store on a machine that has the source (an import at runtime, or the seed addon), not into a file of this repository. What reaches the store reaches other members: only sources whose licence allows passing it on (below) go in.
 - **Everything else is local:** inventory, combat records, Auctionator's imported prices, anything about other players.
 - **No automation of trade.** No buying, bidding, posting, cancelling. A scan starts from a click only; a full scan (`ReplicateItems`) at most once per 15 minutes.
 - **Libraries** in `Libs/` stay unchanged and keep their licence files.
@@ -57,8 +70,8 @@ Patch for fixes, minor for features. Changelog lines are short and say only what
 DawnTools is **GPL-3.0-or-later** (`LICENSE`). New files are under it too.
 
 - **May be copied in:** code or data whose licence is GPL-3.0-or-later compatible *and stated in the source itself* (a licence file, a `.toc` `X-License`, a file header): GPL-3.0, GPL-2.0-or-later, LGPL, MIT, BSD, zlib, public domain. Known so far: OneForAll (GPL-3.0-or-later), QuestieDB and Questie (GPL-3.0 for what their licence file covers; it warns that not every contributor may have agreed).
-- **Every copy is recorded** in `THIRD_PARTY_LICENSES.txt` (create it with the first copy): what was taken, from which project and version, its author, its licence, and the licence text where that licence asks for it. Generated data files name their source in a header and are made by a script in `tools/`, not by hand.
-- **May not be copied in:** anything "all rights reserved", without a licence, or with a contradictory one. Known: Auctionator (do not even read its source as a reference: its authors forbid it), TSM, aux, ForeverFishing, ForeverLevelingBiS, RareScanner, GatherMate2 (`.toc` and licence file disagree). Their data may still be *read at runtime* through their public functions on the player's own machine, never stored or shipped.
+- **Every copy is recorded** in `THIRD_PARTY_LICENSES.txt` (create it with the first copy): what was taken, from which project and version, its author, its licence, and the licence text where that licence asks for it. That holds for rows of the store as for files: keeping data out of the download does not change what its licence allows, since a row passed to a guildmate is a copy handed on. Generated data files name their source in a header and are made by a script in `tools/`, not by hand.
+- **May not be copied in:** anything "all rights reserved", without a licence, or with a contradictory one. Known: Auctionator (do not even read its source as a reference: its authors forbid it), TSM, aux, ForeverFishing, ForeverLevelingBiS, RareScanner, GatherMate2 (`.toc` and licence file disagree), AtlasLootClassic (GPL version 2: not one this licence may take in). Their data may still be *read at runtime* through their public functions on the player's own machine, never stored or shipped.
 - **Not from websites.** No scraping of Wowhead or other sites: their terms forbid it, whatever the licence of DawnTools.
 - When in doubt about a licence: do not copy, ask the owner.
 

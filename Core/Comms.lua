@@ -39,6 +39,8 @@ function Comms:Totals()
 		sync = { since = DT.Now(), mods = {} }
 		DT.db.sync = sync
 	end
+	-- (the four kinds that went into the game database, 0.48: their counts are of nothing now)
+	for _, gone in ipairs({ "dungeon", "dungeonlist", "quest", "vendors" }) do sync.mods[gone] = nil end
 	return sync
 end
 
@@ -218,140 +220,9 @@ function Comms:OnComm(_, text, distribution, sender)
 	end
 end
 
----------------------------------------------------------------------------
--- Gossip: records that are the same for everybody (what a vendor asks, what a quest gives), seen by one member
--- and told to the guild.
---   HAVE  records, one a line: what I just saw, or my answer to a WANT
---   WANT  "<member>;<since>": that member, send me what you saw after `since`
--- The module's HELLO summary is "<how many I saw myself>,<the newest of them>".
--- Only what a member saw with their own eyes is sent on: what came from the guild is never passed along, so
--- nothing goes round and round. An answer goes to the whole guild, so one is enough for all who asked.
--- ponytail: no relay, so I get a member's sightings only from that member (as they happen, or when both are
--- online). A first answer is the 500 newest.
---
--- Comms:Gossip(module, o) -> g, with o:
---   on()             may anything be sent or taken now (the player agreed, the module has its data)
---   peers()          a saved table: [member] = the newest of theirs that I have
---   own()            { [id] = when I saw it }: what I saw myself
---   line(id)         one record as text, no line break in it; nil for none
---   take(line, now)  takes a record in; true when it was news
---   taken()          after a message of which something was taken (optional)
--- The module calls g:Queue(id) for a new sighting, and passes on g:Hello(), g:OnHello(), g:OnMessage().
----------------------------------------------------------------------------
-local GOSSIP_BATCH, GOSSIP_CAP, GOSSIP_EVERY = 200, 500, 45
-local gossips = {}
-
-function Comms:Gossip(module, o)
-	local g = { module = module }
-	local queue, asked, want, pending = {}, {}, {}, nil
-	local heard = {} -- [member asked] = { since, GetTime() }: the last question to them that I heard (my own too)
-	local last       -- { since, GetTime() }: my last answer
-	local function Short(sender)
-		return Ambiguate and Ambiguate(sender, "guild") or sender
-	end
-	local function SendAll(ids)
-		local lines = {}
-		for _, id in ipairs(ids) do
-			local line = o.line(id)
-			if line then lines[#lines + 1] = line end
-		end
-		for from = 1, #lines, GOSSIP_BATCH do
-			Comms:Send(module, "HAVE", table.concat(lines, "\n", from, math.min(#lines, from + GOSSIP_BATCH - 1)), true)
-		end
-	end
-
-	function g:Queue(id)
-		if o.on() then queue[id] = true end
-	end
-
-	function g:Flush()
-		if not next(queue) then return end
-		if not o.on() then
-			queue = {}
-			return
-		end
-		if not Comms:CanSend() then return end
-		local ids = {}
-		for id in pairs(queue) do ids[#ids + 1] = id end
-		table.sort(ids)
-		queue = {}
-		SendAll(ids)
-	end
-
-	function g:Hello()
-		if not o.on() then return nil end
-		local n, newest = 0, 0
-		for _, t in pairs(o.own()) do n, newest = n + 1, math.max(newest, t) end
-		return ("%d,%d"):format(n, newest)
-	end
-
-	-- a member who saw something newer than what I last had of theirs is asked for it: one member at a time
-	function g:OnHello(sender, summary)
-		if not o.on() or not summary or pending or asked[sender] then return end
-		local newest = tonumber(summary:match("^%d+,(%d+)$"))
-		local have = o.peers()[Short(sender)] or 0
-		if not newest or newest <= have then return end
-		asked[sender], pending, want[sender] = true, sender, newest
-		C_Timer.After(math.random() * 3, function()
-			-- (somebody just asked them for as much or more: their answer will do for me too)
-			local h = heard[sender]
-			if h and h[1] <= have and GetTime() - h[2] < 30 then return end
-			heard[sender] = { have, GetTime() }
-			Comms:Send(module, "WANT", ("%s;%d"):format(sender, have))
-		end)
-		C_Timer.After(90, function()
-			if pending == sender then pending = nil end -- no answer: the next member may be asked
-		end)
-	end
-
-	function g:OnMessage(kind, payload, sender)
-		if not o.on() then return end
-		if kind == "HAVE" then
-			local now, n, taken = DT.Now(), 0, 0
-			for line in payload:gmatch("[^\n]+") do
-				n = n + 1
-				if n > GOSSIP_CAP then break end
-				local ok, news = pcall(o.take, line, now)
-				if ok and news then taken = taken + 1 end
-			end
-			if taken > 0 and o.taken then o.taken() end
-			if sender == pending then
-				o.peers()[Short(sender)], pending = want[sender], nil
-			end
-		elseif kind == "WANT" then
-			local target, since = payload:match("^(.-);(%d+)$")
-			since = tonumber(since)
-			if not target then return end
-			if target ~= Comms.self then
-				heard[target] = { since, GetTime() }
-				return
-			end
-			-- (asked again within the minute for no more than I just sent: that answer was heard by all)
-			if last and GetTime() - last[2] < 60 and since >= last[1] then return end
-			last = { since, GetTime() }
-			local own, ids = o.own(), {}
-			for id, t in pairs(own) do
-				if t > since then ids[#ids + 1] = id end
-			end
-			table.sort(ids, function(a, b)
-				if own[a] ~= own[b] then return own[a] > own[b] end
-				return a < b
-			end)
-			for i = GOSSIP_CAP + 1, #ids do ids[i] = nil end
-			SendAll(ids)
-		end
-	end
-
-	gossips[#gossips + 1] = g
-	return g
-end
-
 function Comms:Start()
 	self:RegisterComm(PREFIX, "OnComm")
 	stats.started = true
-	C_Timer.NewTicker(GOSSIP_EVERY, function()
-		for _, g in ipairs(gossips) do g:Flush() end
-	end)
 	C_Timer.After(8, function() Comms:Hello() end)
 	C_Timer.NewTicker(HELLO_EVERY, function() Comms:Hello() end)
 end

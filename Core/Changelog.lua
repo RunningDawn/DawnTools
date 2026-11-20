@@ -6,6 +6,94 @@
 local _, DT = ...
 
 DT.CHANGELOG = {
+	{ "0.48.0", "2026-11-19", {
+		"Vendor prices, what quests give, dungeon loot counts and fishing catches now live in the game database and are shared with it. Dungeon loot is counted once. What you had is carried over at login.",
+		"Fishing: the Spots tab uses the guild's casts too, and says whose numbers they are.",
+		"An installed OneForAll fills your dungeon list when it is newer than what the guild has, and passes it on.",
+		"A member without QuestieDB can now tell a broken copy of the game's data from a whole one, and does not take or pass on the broken one.",
+		"BiS: looks at far fewer items, the most promising first, so the best set shows within seconds and fills in as items arrive. What it learns is kept, so the next login is quick.",
+		"Members on an older DawnTools stop exchanging vendor prices, quest rewards and dungeon loot with updated members until they update.",
+	} },
+	{ "0.47.1", "2026-11-19", {
+		"The game database is read anew once more, so that every member's copy is marked the same way.",
+	} },
+	{ "0.47.0", "2026-11-19", {
+		"One question, one switch: sharing with the guild is asked once, a little after login, and switched on or off in one place (Settings > General). The separate questions and switches of Market, Cooking, Quests, Dungeons and the game database are gone. Everyone is asked once more.",
+		"A guild member who has QuestieDB (or the seed) now checks what comes from the guild against it and puts wrong entries right, for everyone.",
+		"BiS: every spec now gets a best set and upgrades, found from quests, crafting, drops, dungeons and vendors, not only from the hand list. Another class's spec shows what that class could find.",
+		"BiS: items the game is slow to send are asked for again, and the tab says how many are left.",
+		"BiS: the tooltip names the place an item changes (Ring, Trinket, Main hand, Off hand, Two-hand) and says nothing about gear your class cannot wear. \"Reset to default\" puts a spec's weights and caps back.",
+	} },
+	{ "0.46.0", "2026-11-19", {
+		"Filling the game database is shared out over the guild members who are online: each is asked for different pieces, none for a piece another is already sending.",
+		"Where guild members have different versions of QuestieDB (or of the recipes and dungeons), the newest one's data now stands for everyone.",
+		"World > Zones follows the game database as it fills.",
+	} },
+	{ "0.45.1", "2026-11-19", {
+		"The game database now keeps everything QuestieDB knows of an NPC, item, quest or object (what a quest wants killed or brought, reputation it gives, where an NPC walks), for the guild members who do not have QuestieDB. It is read anew once, in the background.",
+		"The addon list shows the version beside the name.",
+	} },
+	{ "0.45.0", "2026-11-19", {
+		"The game's data is no longer part of DawnTools' download: recipes, vendor prices and dungeons now live in the game database on your computer and come from guild members who have them. Share the game database (/dt db, or the question after login) to get them; until then the profession and Dungeons tabs say so.",
+		"World tabs without QuestieDB: with the game database shared, NPCs, quests and items (who sells or drops what, quest chains, waypoints) come from a guildmate who has QuestieDB.",
+		"What the guild met that QuestieDB does not know is now listed in the NPC and Quests tabs too. World > Finds: a click on an NPC, quest or chest sets a waypoint to where it was met.",
+		"/dt db says how many recipes and bosses the database holds and of which version.",
+	} },
+	{ "0.44.0", "2026-11-19", {
+		"Items: where an item comes from now names the dungeon boss that drops it, with the drop chance stated and what you and the guild have seen.",
+		"Loot of every mob, chest and node is now counted on this computer (once a corpse, uncommon and better, where you see all of the loot): the start of our own drop chances. ",
+		"New, off until you agree (/dt db): share that game database with the guild, without your name. Members' addons compare what they hold and pass each other only the pieces that differ, so you also get what members who are offline found.",
+		"With QuestieDB installed, DawnTools copies what it uses of it (names, levels, where NPCs and objects stand) into its own database in the background. Shared with the guild, a member without QuestieDB gets it from the others.",
+		"New under World: Finds. An NPC you target or an item you loot that QuestieDB does not know is noted and listed there; with the game database shared, the guild's finds too.",
+		"/dt db bench: measures what a large saved database costs and how fast guild whispers get through, for the shared game database to come.",
+	} },
+	{ "0.43.0", "2026-11-18", {
+		"New tab, BiS (right of Combat): the best gear for a spec. Pick any class and spec by its picture. Along the top how far along you are, the caps and your stats; down the left every slot with what you wear and what it is worth; on the right, for the slot you click, the best you own, the pre-raid list's pick, and the five best quest rewards, dungeon drops, crafted and world-drop items of your level.",
+		"Stat weights and caps for 40 specs of all classes, from MythicSim and wowforeverbislist (client 1.60.1). All of them can be changed on the tab's Weights view.",
+		"Item tooltips say what the item would gain over your best set and which slots it changes; so does a chat line when an item is rolled for.",
+		"The pre-raid list is for Protection warriors so far.",
+		"Combat: players are shown with their surname, where it was seen.",
+		"The version is said in the chat when the interface loads.",
+	} },
+	{ "0.42.3", "2026-11-18", {
+		"Fixed: pulling the window's corner could make it leap to nearly the whole screen. The corner now follows the mouse exactly.",
+	} },
+	{ "0.42.2", "2026-11-18", {
+		"Search (NPCs, quests, items, zones): a name is found without its apostrophes and hyphens: \"vehan\" finds Horn of Ve'han, \"zulfarrak\" finds Zul'Farrak.",
+	} },
+	{ "0.42.1", "2026-11-18", {
+		"Items: a bag shows how many slots it has, and bags sort by size (click \"Slot / size\").",
+		"Data Sync: the list of other addons says which one matters (QuestieDB) and what the rest add.",
+	} },
+	{ "0.42.0", "2026-11-17", {
+		"Tools: Chat History. In the chat line, Up and Down bring back what you sent before (no Alt needed), and the last 50 lines are remembered across sessions.",
+	} },
+	{ "0.41.3", "2026-11-17", {
+		"Dungeons: \"Hide done quests\" also hides the quests of another class.",
+	} },
+	{ "0.41.2", "2026-11-16", {
+		"Dungeons: a dungeon's quests are coloured by where they stand (in your log yellow, done green), each under the steps that lead up to it. Done ones are hidden unless you untick \"Hide done quests\".",
+	} },
+	{ "0.41.1", "2026-11-16", {
+		"Item tooltips in DawnTools say what an Alt-click does: make it a favourite, or no longer one.",
+	} },
+	{ "0.41.0", "2026-11-16", {
+		"Favourites: a tab with a star, beside Market. Alt-click an item to make it a favourite: on an item row of DawnTools, in your bags, at a vendor, in the loot window. The tab lists them with level, slot, kind, where they come from, auction and vendor price, and how many you have.",
+	} },
+	{ "0.40.0", "2026-11-16", {
+		"Dungeons: a box for only the dungeons about your level; each dungeon lists its quests, for Horde, Alliance or both (your side to begin with).",
+		"Dungeons: click a boss to fold its drops shut or open (remembered); the trash stands apart at the end. Right-click a boss for its waypoint.",
+	} },
+	{ "0.39.0", "2026-11-16", {
+		"Dungeons: if you have the OneForAll addon, bosses and drops it knows beyond DawnTools' own list are added, and (if you share) passed to the guild: one member with a newer OneForAll keeps everybody's list up to date.",
+	} },
+	{ "0.38.0", "2026-11-16", {
+		"Dungeons: the list of dungeons, bosses and drops now comes with DawnTools: no other addon needed. AtlasLootClassic, where installed, adds raids and drop chances.",
+		"Dungeons: what you see bosses drop is counted, and can be shared with the guild (asked once): real drop rates build up in the \"Seen by the guild\" column.",
+	} },
+	{ "0.37.0", "2026-11-16", {
+		"World: Dungeons. Every dungeon and raid with its levels; pick one for its bosses and what each drops, with the chance and the auction price. Needs the AtlasLootClassic addon.",
+	} },
 	{ "0.36.1", "2026-11-16", {
 		"Craft: Mining and Campsite stand on the first row, after First Aid; the crafting professions have the second row.",
 	} },

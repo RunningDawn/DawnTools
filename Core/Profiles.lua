@@ -244,6 +244,10 @@ local function Sane(v)
 	for _, key in ipairs(TOP) do
 		if type(v.top[key]) == TOP_KIND[key] then out.top[key] = Copy(v.top[key]) end
 	end
+	-- (the one switch of sharing is among the core's settings: it too comes in unset)
+	if out.top.settings then
+		for key in pairs(CONSENT) do out.top.settings[key] = nil end
+	end
 	for name, m in pairs(v.mods) do
 		local mod = DT.modules[name]
 		if mod and type(m) == "table" then
