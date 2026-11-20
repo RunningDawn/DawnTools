@@ -359,6 +359,29 @@ function Q.Status(e)
 		return "done", e.types.Repeatable and "done once (can be repeated)" or "done"
 	end
 	if m.on(e.id) then return "log", "in your log" end
+	-- The repeat of a quest done once has a number of its own (Zapped Giants, then Again With the Zapped Giants):
+	-- done as well, once the first is. Known for the repeat by the quest before it having the same giver.
+	-- ponytail: by the giver only. A repeat handed out by someone else than its first time still reads as open.
+	-- A quest only to be had during another (the elixir bought for The Videre Elixir): over with that one.
+	if e.parent and e.parent > 0 and byId[e.parent] and (m.done(e.parent) or m.turned[e.parent]) then
+		return "done", "only during: " .. QuestName(e.parent) .. " (done)"
+	end
+	if e.types.Repeatable then
+		for _, pres in ipairs({ e.preAny, e.preAll }) do
+			for _, pre in ipairs(pres) do
+				local p = byId[pre]
+				if p and (m.done(pre) or m.turned[pre]) then
+					for at = 1, 2 do
+						for _, a in ipairs(type(e.starts[at]) == "table" and e.starts[at] or {}) do
+							for _, b in ipairs(type(p.starts[at]) == "table" and p.starts[at] or {}) do
+								if a == b then return "done", ("done once as: %s (can be repeated)"):format(p.name) end
+							end
+						end
+					end
+				end
+			end
+		end
+	end
 	if e.races ~= 0 and m.race and not Has(e.races, m.race) then return "never", "other race or side" end
 	if e.classes ~= 0 and m.class and not Has(e.classes, m.class) then return "never", "other class" end
 	-- One of several quests that shut each other out (the same errand from different givers, say): doing one

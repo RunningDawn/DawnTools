@@ -315,4 +315,34 @@ function BL.Solve(slots, base, prof)
 	return picks, gear, score, short
 end
 
+---------------------------------------------------------------------------
+-- Which spec a character is
+---------------------------------------------------------------------------
+
+-- the talent trees of each class in the order the game lists them
+BL.TREES = {
+	WARRIOR = { "Arms", "Fury", "Protection" }, PALADIN = { "Holy", "Protection", "Retribution" },
+	HUNTER = { "Beast Mastery", "Marksmanship", "Survival" }, ROGUE = { "Assassination", "Combat", "Subtlety" },
+	PRIEST = { "Discipline", "Holy", "Shadow" }, SHAMAN = { "Elemental", "Enhancement", "Restoration" },
+	MAGE = { "Arcane", "Fire", "Frost" }, WARLOCK = { "Affliction", "Demonology", "Destruction" },
+	DRUID = { "Balance", "Feral", "Restoration" },
+}
+
+-- The profile id for talent points (points[tree] = spent): the tree with the most (the first of equals), and of
+-- the profiles of that class the one named for the tree ("warrior-fury"); a variant of it (threat only, melee
+-- weave, bear) is for a click. nil where no point is spent or no such profile is there.
+function BL.SpecId(class, points, profiles)
+	local names, most, at = BL.TREES[class or ""], 0, nil
+	if not names then return nil end
+	for i = 1, #names do
+		if (points[i] or 0) > most then most, at = points[i], i end
+	end
+	if not at then return nil end
+	local id = class:lower() .. "-" .. (names[at]:lower():gsub("%s", ""))
+	for _, p in ipairs(profiles or {}) do
+		if p.id == id then return id end
+	end
+	return nil
+end
+
 return BL

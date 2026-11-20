@@ -4,7 +4,7 @@
 local ADDON, DT = ...
 _G.DawnTools = DT
 
-DT.VERSION = "0.48.0" -- keep in step with the .toc
+DT.VERSION = "0.50.5" -- keep in step with the .toc
 DT.LOGO = "Interface\\AddOns\\DawnTools\\logo"
 
 local DEFAULTS = {
@@ -228,7 +228,7 @@ local function Probe()
 		"InCombatLockdown", "Ambiguate", "TooltipDataProcessor.AddTooltipPostCall", "StaticPopup_Show",
 		"Auctionator.API.v1.GetAuctionPriceByItemID", "Auctionator.API.v1.GetAuctionAgeByItemID",
 		"Auctionator.API.v1.RegisterForDBUpdate",
-		"LibQuestieDB.Npc.GetAllIds", "LibStub", "TargetFrame", "FocusFrame", "OpenWorldMap", "WorldMapFrame.SetMapID", "SLASH_PING1", "C_Ping", "SLASH_TARGET_MARKER1", "C_Spell.GetSpellPowerCost", "GetSpellPowerCost", "PlayerFrame", "PlayerFrameManaBar", "issecretvalue", "UnitCanAttack", "C_SpellBook.GetSpellBookItemInfo", "C_Spell.IsSpellInRange", "C_Spell.GetSpellInfo", "IsSpellInRange", "GetSpellTabInfo", "UnitPosition", "LibQuestieDB.Quest.GetAllIds", "LibQuestieDB.Item.GetAllIds", "LibQuestieDB.Object.Get", "GetItemStats", "C_Item.GetItemStats", "AtlasLoot.Data.Profession.GetCraftSpellForCreatedItem", "C_QuestLog.GetAllCompletedQuestIDs", "C_QuestLog.IsQuestFlaggedCompleted", "C_QuestLog.IsOnQuest", "C_QuestLog.GetQuestTagInfo", "GetQuestTagInfo", "GetQuestsCompleted", "QuestieLoader.ImportModule", "TomTom.AddWaypoint", "C_Map.GetAreaInfo", "C_Map.SetUserWaypoint",
+		"LibQuestieDB.Npc.GetAllIds", "LibStub", "TargetFrame", "FocusFrame", "OpenWorldMap", "WorldMapFrame.SetMapID", "SLASH_PING1", "C_Ping", "SLASH_TARGET_MARKER1", "C_Spell.GetSpellPowerCost", "GetSpellPowerCost", "PlayerFrame", "PlayerFrameManaBar", "issecretvalue", "UnitCanAttack", "C_SpellBook.GetSpellBookItemInfo", "C_Spell.IsSpellInRange", "C_Spell.GetSpellInfo", "IsSpellInRange", "GetSpellTabInfo", "UnitPosition", "LibQuestieDB.Quest.GetAllIds", "LibQuestieDB.Item.GetAllIds", "LibQuestieDB.Object.Get", "GetItemStats", "C_Item.GetItemStats", "UnitDefense", "GetTalentTabInfo", "GetNumTalentTabs", "GetSpecialization", "C_SpecializationInfo.GetSpecialization", "C_SpecializationInfo.GetTalentTabInfo", "AtlasLoot.Data.Profession.GetCraftSpellForCreatedItem", "C_QuestLog.GetAllCompletedQuestIDs", "C_QuestLog.IsQuestFlaggedCompleted", "C_QuestLog.IsOnQuest", "C_QuestLog.GetQuestTagInfo", "GetQuestTagInfo", "GetQuestsCompleted", "QuestieLoader.ImportModule", "TomTom.AddWaypoint", "C_Map.GetAreaInfo", "C_Map.SetUserWaypoint",
 		"UiMapPoint.CreateFromCoordinates", "C_SuperTrack.SetSuperTrackedUserWaypoint", "debugprofilestop",
 	}
 	local missing = {}

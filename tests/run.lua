@@ -2312,6 +2312,7 @@ end)()
 ;(function() -- the profession tabs: every recipe from the shipped list, what it costs and earns, who knows it
 	local P1, P2 = NewClient("Pat"), NewClient("Rex")
 	local Craft = P1.DT.Craft
+	eq(Craft.SpellLink(7421, "Enchant Bracer"), "|cffffd000|Henchant:7421|h[Enchant Bracer]|h|r", "a recipe that makes no item links as an enchantment where the game gives no link of its own")
 	local function price(c, id, copper) c.items()[id] = copper and { p = copper, q = 1, t = Now(), o = "", d = {} } or nil end
 	local function crafts(kind, from)
 		local n = 0
@@ -3525,9 +3526,21 @@ do
 		eq(select(2, Quest.Status(run)), "done once (can be repeated)", "the same where the game itself says it was done")
 		run.types.Daily = true
 		eq(Quest.Status(run) ~= "done", true, "a daily is never done for good")
-		run.types.Daily, run.types.Repeatable, qdone[run.id] = nil, nil, nil
+		run.types.Daily, qdone[run.id] = nil, nil
 		B2.fire("QUEST_ACCEPTED")
 		step(1)
+		-- the repeat of a quest done once, with a number of its own: done as well, where the same giver hands out both
+		local fish, pre, starts = Quest.Entry(100), run.preAll, run.starts
+		local theirs = fish.starts
+		run.preAll, run.starts, fish.starts = { 100 }, { { 777 } }, { { 778 } }
+		eq(Quest.Status(run) ~= "done", true, "a repeatable quest after a done one of another giver: not its repeat, still open")
+		fish.starts = { { 777 } }
+		eq(select(2, Quest.Status(run)), "done once as: Fish for Gorak (can be repeated)", "of the same giver: the repeat of it, done once")
+		run.preAll, run.starts, fish.starts, run.types.Repeatable = pre, starts, theirs, nil
+		local parent = run.parent
+		run.parent = 100
+		eq(select(2, Quest.Status(run)), "only during: Fish for Gorak (done)", "a quest only to be had during another is over once that one is done")
+		run.parent = parent
 	end)()
 	;(function() -- a quest the game does not remember: marked as done by hand, with a right-click
 		local run
@@ -5347,7 +5360,7 @@ end
 		env.UnitDefense = function()
 			local def = 60
 			for _, id in pairs(worn) do if GEAR[id][4] and GEAR[id][4]:find("Defense") then def = def + 10 end end
-			return def, 0
+			return 50, def - 50 -- (the skill, and what is added to it: level 10 gives 50)
 		end
 		env.GetHitModifier = function() return 2 end
 		env.GetLootRollItemLink = function(roll) return roll == 1 and "|cff1eff00|Hitem:9003::::|h[Helm of the List]|h|r" or "|Hitem:100::::|h[Copper Bar]|h" end
@@ -5433,16 +5446,22 @@ end
 	for _, c in ipairs(B.finder.got) do kinds[#kinds + 1] = c.id .. c.kind end
 	table.sort(kinds)
 	eq(table.concat(kinds, ","), "9010quest,9011crafted,9012boe,9014dungeon", "gear of my level, by where it is from: a drop that binds when picked up is no world drop, a level 40 helm not for level 10")
-	local top = B.Top(1, "quest", 5)
-	eq(#top, 1, "the best quest rewards for the head"); eq(top[1].worth, 25, "with what it would add in the worn helm's place"); eq(top[1].gain, 15, "and how much more that is")
-	eq(#B.Top(9, "quest", 5), 0, "none of them are legs")
+	local rank = B.Rank(1, 14, 4)
+	local ids = {}
+	for _, c in ipairs(rank.above) do ids[#ids + 1] = c.id .. c.kind end
+	eq(table.concat(ids, ","), "9003quest,9002owned,9014dungeon,9010quest,9012boe,9011crafted", "one list for the head: all that beat the worn helm, the most worth first, each with where it is from")
+	eq(rank.above[4].worth, 25, "its weight: what it would add in the worn helm's place"); eq(rank.above[4].pct, 150, "the gain as a part of the worn helm's weight"); eq(rank.worn.worth, 10, "the worn helm has its weight"); eq(rank.above[4].gain, 15, "and how much more that is")
+	eq(rank.more, 0, "none left out"); eq(rank.worn.id, 9001, "the worn helm is the one to beat"); eq(#rank.below, 0, "nothing is worse than it here")
+	eq(#B.Rank(9, 14, 4).above, 0, "none of them are legs")
+	eq(B.Rank(1, 2, 4).more, 4, "a list cut short says how many more beat it")
 	-- the tab: what I wear down the left, the stats along the top, what there is to get on the right
 	X.DT.UI:Show("bis")
 	local G = B.gear
 	check(G.progress.text.text:find("%% of the best pre%-raid set"), "the bar says how far along: " .. G.progress.text.text)
 	local capText = {}
-	for _, bar in ipairs(G.caps) do if bar.shown then capText[#capText + 1] = bar.text.text end end
-	eq(#capText, 3, "a bar for each cap"); check(capText[1]:find("Defense 60 / 70", 1, true) and capText[1]:find("owned: 70", 1, true), "defense as it stands, and with the best I own: " .. capText[1])
+	for _, bar in ipairs(G.caps) do if bar.shown then capText[#capText + 1] = bar.text.text .. " " .. bar.value.text end end
+	eq(#capText, 3, "a bar for each cap"); check(capText[1]:find("Defense 60 / 70", 1, true) and capText[1]:find("owned: 70", 1, true), "defense: the total against the cap, and with the best I own: " .. capText[1])
+	check(G.caps[1].sub.text:find("skill 50/50 +10 gear", 1, true) and G.caps[1].tip[1]:find("Defense skill 50 of 50", 1, true), "and under it the base skill over the most for the level and what gear adds, with the same on its tooltip: " .. G.caps[1].sub.text)
 	check(capText[3]:find("Hit %% 2 / 8"), "hit: " .. capText[3])
 	check(G.stats.text:find("Score 30", 1, true) and G.stats.text:find("Stamina |cffffffff30|r", 1, true), "the stats that count, along the top: " .. G.stats.text)
 	local head = G.slots[1]
@@ -5453,13 +5472,28 @@ end
 	eq(#G.slots, 17, "every slot is on the left")
 	head.scripts.OnEnter(head)
 	eq(tip.lines[#tip.lines], "item:9001", "a slot shows its item's tooltip")
-	-- the right side: the slot clicked
-	eq(G.head.text, "Head", "the head slot to begin with")
-	check(G.own.text.text:find("Warding Helm", 1, true), "the best I own for it"); check(G.list.text.text:find("Helm of the List", 1, true), "and the list's pick")
+	-- the right side: at the last level (here level 10 is the last) the whole set to begin with, in versions to compare
+	eq(G.head.text, "Whole set", "the last level opens on the whole set")
 	local L = G.lines
-	check(L[1].head.text:find("Quest rewards", 1, true) and L[2].item.text.text:find("Quest Helm", 1, true), "then the best quest rewards")
-	check(L[2].gain.text:find("+15.0", 1, true) and L[2].worth.text == "25" and L[2].lvl.text == "1", "each with its level, worth and gain over the worn one")
-	eq(L[2].from.text, "quest reward", "and where it is from")
+	check(L[1].head.text:find("Score", 1, true) and L[1].head.text:find("the set you wear", 1, true), "its score, and that of the set worn")
+	check(L[2].head.text:find("Defense 70", 1, true) and L[2].head.text:find("you: ", 1, true) and L[2].head.text:find("this set: ", 1, true) and L[3].head.text:find("Expertise", 1, true) and L[4].head.text:find("Hit", 1, true), "then each cap, as I stand and as the set would: " .. L[2].head.text)
+	check(L[2].head.text:find("short by 10", 1, true) and L[2].head.text:find("reached", 1, true), "defense: ten short in what I wear, reached in the set")
+	check(L[5].n.text:find("Head", 1, true) and L[5].item.id == 9003 and L[5].from.text:find("Quest", 1, true) and L[5].diff.text:find("%+") and L[5].pct.text:find("%%"), "a line for each slot: the item, what it alone would gain, where it is from")
+	check(L[5].warn.text:find("#1", 1, true) and L[5].item.swap and L[5].item.swap[1]:find("Just this piece", 1, true), "where it comes in the order to buy in, and the detail on a hover")
+	check(L[13].n.text:find("Legs", 1, true) and L[13].item.id == 9005 and L[13].diff.text:find("-8.0", 1, true) and L[13].warn.text:find("#", 1, true), "a listed piece that is worse than what I wear is shown too, with what it costs: " .. L[13].diff.text)
+	eq(#X.DT.Bis.PERMS, 4, "the set worn and three more to compare"); eq(G.perms[1].shown, true, "a button each")
+	click(G.perms[3]); eq(B.perm, 3, "the third"); check(L[1].head.text:find("Score", 1, true), "is shown"); check(B.Perm(3).short.def == nil, "the one that reaches every cap, as the gear there is allows: defense is")
+	click(G.perms[4]); check(L[5].item.shown, "and the fourth"); click(G.perms[1]); check(L[5].item.id == 9001 and L[5].diff.text == "" and L[5].warn.text == "", "the set worn: its own items, no swaps")
+	click(G.perms[2])
+	eq(G.back.shown, false, "no way back from the whole set")
+	click(G.slots[1])
+	eq(G.head.text, "Head", "a click on a slot shows its list"); eq(G.back.shown, true, "with a way back to the set")
+	local function Row(id) for _, l in ipairs(L) do if l.item.shown and l.item.id == id then return l end end end
+	check(L[1].item.id == 9003 and L[1].from.text:find("Quest", 1, true), "the first line is the best item, with where it is from")
+	check(L[2].item.id == 9002 and L[2].from.text:find("Owned", 1, true) and L[2].from.text:find("in your bags", 1, true), "one I own and do not wear says so, and where it is")
+	check(Row(9010).diff.text:find("+15.0", 1, true) and Row(9010).pct.text:find("+150.0%", 1, true) and Row(9010).wt.text == "25", "each with its weight, its gain over the worn one, and that as a percent of the worn one's weight, in columns of their own")
+	check(Row(9010).from.text:find("|cffffd100Quest|r", 1, true) and not Row(9010).from.text:find("Quest:", 1, true), "a quest reward is a Quest, in its own colour")
+	check(L[7].item.id == 9001 and L[7].wt.text == "10" and L[7].diff.text == "" and L[7].from.text:find("Equipped", 1, true), "the worn helm stands in its place among them, with its weight and no difference, and its own source"); eq(L[8].item.shown, false, "nothing worse")
 	-- (with the quests read: who gives the quest and where, first; a click on the line is a waypoint there)
 	local way
 	X.DT.Quest.Entry = function(id) return id == 77 and { id = 77, name = "A Helm for the Brave", zoneName = "Durotar" } or nil end
@@ -5468,19 +5502,20 @@ end
 	e.LibQuestieDB = { Item = { Get = function(id, key) return id == 9010 and key == "questRewards" and { 77 } or nil end } }
 	B.wheres = {}
 	B.Refresh()
-	check(L[2].from.text:find("Gar'Thok|r, Durotar", 1, true) and L[2].from.text:find("A Helm for the Brave", 1, true), "a quest reward says who gives the quest, and where: " .. L[2].from.text)
-	click(L[2].item)
+	check(Row(9010).from.text:find("Gar'Thok|r, Durotar", 1, true) and Row(9010).from.text:find("A Helm for the Brave", 1, true), "a quest reward says who gives the quest, and where: " .. Row(9010).from.text)
+	click(Row(9010).item)
 	eq(way, 77, "a click on it: a waypoint to where the quest is picked up")
-	e.LibQuestieDB = nil; eq(L[2].icon.texture, 1000 + 9010, "and its picture")
-	check(L[7].head.text:find("Dungeon drops", 1, true) and L[8].item.text.text:find("Dungeon Helm", 1, true), "the best dungeon drops")
-	check(L[13].head.text:find("Crafted", 1, true) and L[14].item.text.text:find("Crafted Helm", 1, true), "the best crafted")
-	check(L[19].head.text:find("World drops", 1, true) and L[20].item.text.text:find("World Helm", 1, true), "and the best world drops")
-	eq(L[20].from.text, "world drop", "a world drop not seen on the auction house says so"); eq(L[3].item.shown, false, "a line with nothing is empty")
-	L[8].item.scripts.OnEnter(L[8].item)
+	e.LibQuestieDB = nil; eq(Row(9010).icon.texture, 1000 + 9010, "and its picture")
+	check(Row(9014).from.text:find("Dungeon", 1, true), "a dungeon drop: " .. Row(9014).from.text); check(Row(9011).from.text:find("Crafted", 1, true), "crafted"); check(Row(9012).from.text:find("World Drop", 1, true), "a world drop not seen on the auction house")
+	Row(9014).item.scripts.OnEnter(Row(9014).item)
 	eq(tip.lines[#tip.lines], "item:9014", "a line shows its item's tooltip")
 	click(G.slots[9])
 	eq(G.head.text, "Legs", "a click on a slot shows that slot"); eq(G.slots[9].sel.shown, true, "and marks it")
-	check(L[1].head.text:find("nothing for this slot", 1, true), "a kind with nothing for it says so")
+	check(L[1].head.text:find("Nothing found beats", 1, true), "a slot with nothing better says so")
+	check(pcall(B.Refresh), "the slot list is drawn through Refresh for my own class, a worse item among them, without an error")
+	check(L[2].item.id == 9007 and L[3].item.id == 9005 and L[3].diff.text:find("-8.0", 1, true), "a worse item stands under the worn one, with what it costs")
+	check(select(2, pcall(B.Rank, 9)) ~= nil and #B.Rank(9).below == 4 or #B.Rank(9).below >= 1, "and a call without the counts does not fail")
+	click(G.back); eq(G.head.text, "Whole set", "the way back")
 	click(G.slots[1])
 	step(3) -- (the set is worked out again as items come in; its gains take a moment)
 	B.Show("up")
@@ -5696,8 +5731,10 @@ end)()
 	step(5)
 	s = B.State()
 	eq(s.foreign, false, "my own class"); eq(s.bis.rows[1], 9110, "the best set found has the best helm"); eq(B.Where(9111, "vendor"), "sold by a vendor", "a vendor's item says so")
-	local top = B.Top(1, "vendor", 5)
-	eq(#top, 2, "vendors are a place to look too"); eq(top[1].id, 9111, "the mail helm first")
+	local rank = B.Rank(1, 14, 4)
+	eq(#rank.above, 2, "an empty slot: what is worth anything is above"); eq(rank.above[2].id, 9111, "the sold mail helm after the better one"); eq(B.Tag(9111, "vendor"), "Vendor", "and a vendor")
+	eq(#rank.below, 4, "four of the rest are shown under it"); eq(rank.worn, nil, "nothing worn to show"); eq(rank.above[1].new, true, "an empty slot: the gain is all new"); eq(rank.above[1].pct, nil, "and no percent")
+	eq(B.Rank(11, 14, 4).ref, 12, "two rings: the empty finger is the one to beat"); eq(B.Rank(11, 14, 4).above[1].id, 9131, "the better ring is above it")
 	eq(s.upg[1] and s.upg[1].id, 9110, "upgrades without a list: the helm gains the most"); eq(s.rank[9110], 1, "numbered")
 	-- the tooltip: where the item goes
 	local tip = e.GameTooltip
@@ -5822,6 +5859,299 @@ end)()
 	X.combat = false
 	leave(X)
 	for id in pairs(LOADED) do ITEMS[id] = nil end
+end)()
+;(function() -- BiS, spec and level: the tab opens on my class and spec, a level can be picked, the phase at the last level, defense as base plus gear
+	local GEAR = { -- name, level, strength
+		[9301] = { "Young Helm", 5, 3 }, [9302] = { "Mid Helm", 25, 10 }, [9303] = { "Late Helm", 38, 20 }, [9304] = { "High Helm", 55, 40 },
+		[9305] = { "Top Helm", 60, 60 }, [9306] = { "Raid Helm", 60, 80 }, [9307] = { "Spire Helm", 55, 30 },
+		[99401] = { "Hit Helm", 1, { ITEM_MOD_STRENGTH_SHORT = 5, ITEM_MOD_HIT_RATING_SHORT = 80 } }, [99402] = { "Strong Helm", 1, 50 },
+		[99403] = { "Hit Shoulders", 1, { ITEM_MOD_STRENGTH_SHORT = 1, ITEM_MOD_HIT_RATING_SHORT = 80 }, "INVTYPE_SHOULDER" },
+	}
+	for id, g in pairs(GEAR) do ITEMS[id] = { g[1], 2, 1, 100, false, 4, 2, slot = g[4] or "INVTYPE_HEAD", lvl = g[2] } end
+	local wornSlots = {}
+	local points, spec = { 0, 0, 0 }, "tabs"
+	local X = NewClient("BisSpec", { globals = function(env)
+		env.UnitLevel = function() return 40 end
+		env.GetItemStats = function(link)
+			local g = GEAR[tonumber(link:match("item:(%d+)"))][3]
+			return type(g) == "table" and g or { ITEM_MOD_STRENGTH_SHORT = g }
+		end
+		env.GetInventoryItemID = function(_, slot) return wornSlots[slot] end
+		env.C_TooltipInfo = { GetItemByID = function(id) return { lines = { { leftText = ITEMS[id][1] } } } end }
+		env.UnitDefense = function() return 195, 12 end
+		env.GetNumTalentTabs = function() return 3 end
+		env.GetTalentTabInfo = function(i)
+			if spec == "tabs" then return "Tab " .. i, "icon", points[i], "background" end -- (Classic: name, icon, points)
+			return 100 + i, "Tab " .. i, "text", "icon", points[i] -- (later: id, name, text, icon, points)
+		end
+	end })
+	local B, e, BL = X.DT.Bis, X.env, X.DT.BisLogic
+	-- the spec I am, from the talent trees
+	eq(B.Default(), nil, "no points spent: nothing can be told"); eq(B.Raw().id, "warrior-arms", "and the first of the class is shown")
+	points = { 5, 31, 15 }
+	eq(B.Default(), "warrior-fury", "the tree with the most points"); eq(B.Raw().id, "warrior-fury", "is the spec the tab opens on")
+	points = { 0, 5, 46 }; eq(B.Raw().id, "warrior-protection", "a tank's tree is its spec: the plain profile of it")
+	points = { 10, 10, 0 }; eq(B.Raw().id, "warrior-arms", "equal trees: the first")
+	spec = "later"; points = { 0, 0, 40 }; eq(B.Raw().id, "warrior-protection", "the later layout of the call is read too")
+	spec, points = "tabs", { 5, 31, 15 }
+	B.Pick("warrior-arms")
+	eq(B.Raw().id, "warrior-arms", "a spec picked by hand wins"); eq(B.db.pick[B.me], "warrior-arms", "and is kept for the character")
+	B.db.pick[B.me] = nil
+	B.db.last = {}
+	B.PickClass("MAGE"); B.PickClass("WARRIOR")
+	eq(B.db.pick[B.me], "warrior-fury", "back to my class with nothing picked: my spec")
+	B.db.pick[B.me] = nil
+	e.GetTalentTabInfo, e.GetSpecialization = nil, function() return 2 end
+	eq(B.Raw().id, "warrior-fury", "a client that names the active spec only: its place is the tree")
+	e.GetSpecialization = nil
+	eq(B.Raw().id, "warrior-arms", "no talent function at all: the first of the class")
+	e.GetTalentTabInfo = function() error("not here") end
+	eq(B.Raw().id, "warrior-arms", "a talent function that fails is no matter")
+	local ALLP = X.DT.BisProfiles
+	for class, names in pairs(BL.TREES) do
+		for i, name in ipairs(names) do
+			local id = BL.SpecId(class, { [i] = 9 }, ALLP)
+			check(id and id:find("^" .. class:lower() .. "%-"), class .. " " .. name .. ": a profile of the class for the tree (" .. tostring(id) .. ")")
+		end
+	end
+	eq(BL.SpecId("WARRIOR", { 0, 0, 0 }, ALLP), nil, "no points: no spec"); eq(BL.SpecId("DRUID", { 0, 9, 0 }, ALLP), "druid-feral", "Feral: the cat; the bear is a click")
+	-- a level to look at: gear for that level, the lower bound with it, what was learned of items kept
+	e.GetTalentTabInfo = function(i) return "Tab " .. i, "icon", points[i] end
+	B.db.pick[B.me] = nil
+	local Item, Dg = X.DT.Item, X.DT.Dungeon
+	local spire, onyxia
+	for _, d in ipairs(Dg.All()) do
+		if d.name == "Upper Blackrock Spire" then spire = d end
+		if d.name == "Onyxia's Lair" then onyxia = d end
+	end
+	spire.bosses[1].has[9307], onyxia.bosses[1].has[9306] = true, true
+	Item.Start, Item.Ready = function() return false end, function() return true end
+	Item.All = function() return {
+		{ id = 9301, req = 5, c = 4, s = 2, src = { ["Quest reward"] = true } }, { id = 9302, req = 25, c = 4, s = 2, src = { ["Quest reward"] = true } },
+		{ id = 9303, req = 38, c = 4, s = 2, src = { ["Quest reward"] = true } }, { id = 9304, req = 55, c = 4, s = 2, src = { ["Quest reward"] = true } },
+		{ id = 9305, req = 60, c = 4, s = 2, src = { ["Quest reward"] = true } }, { id = 9306, req = 60, c = 4, s = 2, src = { Drop = true } },
+		{ id = 9307, req = 55, c = 4, s = 2, src = { Drop = true } },
+		{ id = 9308, req = 60, ilvl = 83, c = 4, s = 2, src = { Drop = true } }, { id = 9309, req = 38, c = 4, s = 2, src = { Drop = true } },
+	} end
+	-- (9308: dropped by a mob that stands in a raid the dungeon list does not have; 9309: by a boss of a dungeon for higher levels than mine)
+	spire.bosses[1].has[9309] = true
+	e.LibQuestieDB = { Item = { Get = function(id, key) return id == 9308 and key == "npcDrops" and { 15990 } or nil end },
+		Npc = { Get = function(id, key) return id == 15990 and key == "zoneID" and 3456 or nil end } }
+	e.C_Map = e.C_Map or {}
+	e.C_Map.GetAreaInfo = function(area) return area == 3456 and "Naxxramas" or nil end
+	X.DT.CraftSkill = {}
+	local function Look() for _ = 1, 400 do B.Sift(); step(0.2) end step(3) end
+	local function List()
+		B.State()
+		local rank, ids = B.Rank(1, 14, 4), {}
+		for _, c in ipairs(rank.above) do ids[#ids + 1] = c.id end
+		return table.concat(ids, ",")
+	end
+	eq(B.ViewLevel(), 40, "my own level to begin with"); Look()
+	eq(List(), "9303,9302", "gear for my level, and not what is more than fifteen levels below it")
+	eq(B.finder.kind[9309], "dungeon", "a boss's drop is a dungeon's drop also where the dungeon is for higher levels than the one looked at, not a world drop")
+	local facts = B.db.facts
+	B.SetLevel(20); Look()
+	eq(B.ViewLevel(), 20, "a level picked"); eq(List(), "9301", "its own gear: the lower bound goes with the level")
+	B.SetLevel(60); Look()
+	eq(List(), "9305,9304,9307", "the last level: pre-raid gear, no raid's")
+	eq(B.finder.kind[9308], nil, "nor the drop of a raid the dungeon list does not have: it is known for a raid's by where the mob that drops it stands")
+	B.SetLevel(nil)
+	eq(B.ViewLevel(), 40, "back to my level"); eq(B.db.level[B.me], nil, "nothing kept of it"); B.SetLevel(40); eq(B.db.level[B.me], nil, "my own level picked is nothing picked")
+	B.SetLevel(99); eq(B.ViewLevel(), 60, "no more than the last level"); B.SetLevel(0); eq(B.ViewLevel(), 1, "no less than one"); B.SetLevel("x"); eq(B.ViewLevel(), 40, "a word is no level")
+	Look()
+	eq(List(), "9303,9302", "my level again"); check(rawequal(B.db.facts, facts) and facts[9304] ~= nil and facts[9302] ~= nil, "what was learned of items stays with a change of level")
+	-- the phase, at the last level
+	eq(B.Phase(), nil, "below the last level there is no phase")
+	B.SetLevel(60); Look()
+	eq(B.Phase()[2], "Pre-raid", "the last level: pre-raid to begin with")
+	eq(Dg.IsRaid(onyxia), true, "Onyxia's Lair is a raid"); eq(Dg.IsRaid(spire), false, "Upper Blackrock Spire is not")
+	eq(B.Tag(9307, "dungeon"), "Dungeon", "a dungeon's drop"); eq(B.Tag(9306, "dungeon"), "Raid", "a raid's"); eq(B.Tag(1, "owned"), "Owned", "an item I own")
+	-- (the last level: the whole set, three versions of it, and the slot's list on a click)
+	X.DT.UI:Show("bis")
+	local G = B.gear
+	eq(G.head.text, "Whole set", "the last level opens on the whole set"); eq(G.perms[4].shown, true, "with the set worn and three versions to compare")
+	local set1, set2, set3 = B.Perm(2), B.Perm(3), B.Perm(4)
+	eq(set1.rows[1], 9305, "the best set has the best helm there is before the raids"); eq(set2.rows[1], 9305, "the one that reaches every cap too, there being none"); eq(set3.rows[1], 9305, "and the one of what I own and the best finds")
+	click(G.slots[1]); eq(G.head.text, "Head", "a slot clicked: its list"); click(G.back); eq(G.head.text, "Whole set", "and back")
+	B.SetPhase("all"); Look()
+	eq(B.Phase()[2], "Everything", "the other phase"); eq(List(), "9306,9305,9304,9307", "has the raid's drops too"); eq(B.finder.kind[9308], "boe", "that raid's as well"); eq(B.Perm(2).rows[1], 9306, "and the set the raid's helm")
+	B.SetPhase("pre"); eq(B.Phase()[1], "pre", "and back")
+	table.insert(B.PHASES, 2, { "one", "Tier 1", { "Onyxia's Lair" } }) -- (a tier is one more line: a name, and the raids out so far)
+	B.SetPhase("one"); Look()
+	eq(B.Phase()[2], "Tier 1", "a tier"); eq(List(), "9306,9305,9304,9307", "has the raids it names")
+	table.remove(B.PHASES, 2)
+	B.db.phase[B.me] = nil
+	-- the controls: a box for the level, a way back, the phase button
+	X.DT.UI:Show("bis")
+	local C = B.level
+	check(C.box.text == "60" and C.mine.shown and C.mine.label.text:find("40", 1, true) and C.phase.shown and C.phase.label.text == "Pre-raid", "the box says the level, with a way back to mine and the phase")
+	-- the phase: a pick-list of every phase, shown at the last level only
+	click(C.phase)
+	check(C.phase.menu.shown, "the phase button opens its list")
+	local named = {}
+	for _, row in ipairs(C.phase.menu.rows) do if row.shown and row.entry then named[#named + 1] = row.entry.text end end
+	eq(table.concat(named, ","), "Pre-raid,Everything", "the list has every phase")
+	click(C.phase.menu.rows[2])
+	eq(B.Phase()[1], "all", "one picked from it"); eq(C.phase.label.text, "Everything", "and shown on the button"); eq(C.phase.menu.shown, false, "the list closes")
+	B.SetPhase("pre")
+	-- the level: - and + step it, the number can be typed, the list is made anew once it has settled
+	local calls, real = 0, B.SetLevel
+	B.SetLevel = function(n) calls = calls + 1 return real(n) end
+	click(C.minus); click(C.minus); click(C.minus)
+	eq(C.box.text, "57", "a click on - steps down and the box shows it at once"); eq(calls, 0, "nothing is made anew yet"); eq(B.ViewLevel(), 60, "the level looked at waits")
+	click(C.plus)
+	eq(C.box.text, "58", "+ steps up")
+	step(0.5)
+	eq(calls, 1, "one rebuild after several quick clicks"); eq(B.ViewLevel(), 58, "and the level is the last one asked for"); check(not C.phase.shown, "no phase below the last level")
+	for _ = 1, 3 do click(C.plus) end
+	step(0.5)
+	eq(B.ViewLevel(), 60, "no more than the last level"); check(C.phase.shown, "the phase is back")
+	for _ = 1, 70 do click(C.minus) end
+	step(0.5)
+	eq(B.ViewLevel(), 1, "no less than 1")
+	C.plus.scripts.OnMouseDown(C.plus); step(0.5); B.panel.scripts.OnUpdate(B.panel); C.plus.scripts.OnMouseUp(C.plus) -- (held: it goes on by itself; the game's frame is run by hand)
+	click(C.plus)
+	eq(B.pendingLevel, 2, "a button held down steps on, and the click that ends the hold steps no more"); step(0.5); eq(B.ViewLevel(), 2, "and settles")
+	C.box.text = "40"; C.box.scripts.OnEnterPressed(C.box)
+	check(B.ViewLevel() == 40 and not C.mine.shown and not C.phase.shown, "a level typed in is taken at once; my own needs no way back, and there is no phase")
+	C.box.text = "30"; C.box.scripts.OnEnterPressed(C.box)
+	eq(B.ViewLevel(), 30, "another"); check(C.mine.shown, "the way back shows"); click(C.mine); eq(B.ViewLevel(), 40, "the button goes back to mine")
+	B.SetLevel = real
+	eq(G.head.text, "Head", "below the last level the list of a slot is the main thing")
+	-- one piece at a time: what it does to the set I wear, and to a cap I meet now
+	e.UnitDefense = function() return 195, 12 end
+	wornSlots[1] = 99401
+	B.SetLevel(nil); B.Pick("warrior-fury"); B.Stale(); step(3)
+	local st = B.State()
+	local sw = B.Swaps(st, { rows = { [1] = 99402, [3] = 99403 } })
+	eq(#sw[1].breaks, 1, "a helm that gives up the hit the worn one has: a swap that breaks a cap"); eq(sw[1].breaks[1], "hit", "the cap it breaks"); check(sw[1].d < 0 and sw[1].pct < 0, "and costs score")
+	eq(#sw[3].breaks, 0, "shoulders that add hit break nothing"); check(sw[3].d > 0, "and gain"); eq(sw[3].order, 1, "they come first"); eq(sw[1].order, 2, "the helm after them")
+	eq(sw[1].needs[1].by, 3, "the helm says which piece to get first: the shoulders"); eq(sw[3].caps.hit.after, 16, "hit as it would stand")
+	wornSlots[1] = nil
+	-- a list longer than the panel: the mouse wheel and the bar reach every row
+	for i = 1, 40 do
+		GEAR[99600 + i] = { "Many " .. i, 30, i }
+		ITEMS[99600 + i] = { "Many " .. i, 2, 1, 100, false, 4, 2, slot = "INVTYPE_HEAD", lvl = 30 }
+	end
+	local more = Item.All
+	Item.All = function()
+		local list = more()
+		for i = 1, 40 do list[#list + 1] = { id = 99600 + i, req = 30, c = 4, s = 2, src = { ["Quest reward"] = true } } end
+		return list
+	end
+	B.Pick("warrior-fury"); B.SetLevel(41); Look()
+	X.DT.UI:Show("bis"); click(G.slots[1]); B.Refresh()
+	local first = G.lines[1].item.id
+	check(G.bar.shown, "more rows than fit: a bar")
+	B.panel.scripts.OnMouseWheel(B.panel, -1)
+	check(G.lines[1].item.id ~= first and B.scroll == 3, "the wheel moves the list")
+	for _ = 1, 30 do B.panel.scripts.OnMouseWheel(B.panel, -1) end
+	local seen = {}
+	for _, l in ipairs(G.lines) do if l.item.shown then seen[l.item.id] = true end end
+	check(seen[99601], "the last of them is reached")
+	B.panel.scripts.OnMouseWheel(B.panel, 100); eq(G.lines[1].item.id, first, "and back to the top")
+	B.SetLevel(nil)
+	-- another class's spec, at a level of its own
+	B.PickClass("MAGE")
+	eq(B.ViewLevel(), 60, "another class: the last level to begin with"); B.SetLevel(30); eq(B.State().who.level, 30, "and any level there is")
+	B.SetLevel(nil); B.PickClass("WARRIOR")
+	-- defense: base skill over the most for the level, then what gear adds, then the cap
+	B.Pick("warrior-protection")
+	local function Defense()
+		X.DT.UI:Show("bis")
+		B.Refresh()
+		for _, bar in ipairs(B.gear.caps) do if bar.shown and bar.text.text:find("^Defense") then return bar.sub.text .. " | " .. bar.value.text end end
+	end
+	check(Defense():find("195/200 +12", 1, true) and Defense():find("207 / 340", 1, true), "defense at my level: " .. tostring(Defense()))
+	B.SetLevel(60)
+	check(Defense():find("295/300 +12", 1, true) and Defense():find("307 / 440", 1, true), "at another level the skill and the cap go with it: " .. tostring(Defense()))
+	B.SetLevel(nil)
+	e.UnitDefense = nil; B.db.base = {}; B.Stale(); step(3)
+	check(Defense():find("200/200 +0", 1, true) and Defense():find("200 / 340", 1, true), "a client that does not say the skill: what the tab works out: " .. tostring(Defense()))
+	leave(X)
+	for id in pairs(GEAR) do ITEMS[id] = nil end
+end)()
+;(function() -- BiS, kept: a second login shows the lists before the item index is read; what it is built from changing throws it away; the keys are capped
+	local GEAR = {}
+	for i = 1, 6 do GEAR[99800 + i] = { "Kept Helm " .. i, 30 + i, 10 * i } end
+	for id, g in pairs(GEAR) do ITEMS[id] = { g[1], 2, 1, 100, false, 4, 2, slot = "INVTYPE_HEAD", lvl = g[2] } end
+	local function Globals(env)
+		env.UnitLevel = function() return 40 end
+		env.GetItemStats = function(link) return { ITEM_MOD_STRENGTH_SHORT = GEAR[tonumber(link:match("item:(%d+)"))][3] } end
+		env.C_TooltipInfo = { GetItemByID = function(id) return { lines = { { leftText = ITEMS[id][1] } } } end }
+		env.GetNumTalentTabs = function() return 3 end
+		env.GetTalentTabInfo = function(i) return "Tab " .. i, "icon", i == 2 and 31 or 5 end
+	end
+	local walks, reads = 0, 0
+	local function Index(X)
+		local Item = X.DT.Item
+		Item.Start, Item.Ready = function() reads = reads + 1 return false end, function() return true end
+		Item.All = function()
+			walks = walks + 1
+			local list = {}
+			for id in pairs(GEAR) do list[#list + 1] = { id = id, req = ITEMS[id].lvl, c = 4, s = 2, src = { ["Quest reward"] = true } } end
+			return list
+		end
+		X.DT.CraftSkill = {}
+	end
+	local function Look(B) for _ = 1, 400 do B.Sift(); step(0.2) end step(3) end
+	-- the first login: the item index is walked, and what was found is kept
+	local X = NewClient("BisKept", { globals = Globals })
+	local B = X.DT.Bis
+	Index(X)
+	X.DT.DB.Base("questie", "1.0/1")
+	Look(B)
+	check(walks > 0 and reads > 0, "the first time the item index is read")
+	local kept = B.db.kept
+	eq(#kept.order, 1, "what was found is kept under its key"); local entry = kept.keys[kept.order[1]]
+	eq(#entry.got, 12, "six items and their kinds")
+	check(kept.order[1]:find("^40:WARRIOR"), "by level and class (and phase): " .. kept.order[1])
+	leave(X)
+	-- the second login: nothing is read, and the slot list is there
+	walks, reads = 0, 0
+	local saved = X.env.DawnToolsDB
+	local Y = NewClient("BisKept2", { globals = Globals, db = saved })
+	local B2 = Y.DT.Bis
+	Index(Y)
+	local asks = 0
+	local realAsk = Y.env.C_Item.RequestLoadItemDataByID
+	Y.env.C_Item.RequestLoadItemDataByID = function(id) asks = asks + 1 return realAsk(id) end
+	Y.DT.UI:Show("bis")
+	Look(B2)
+	click(B2.gear.slots[1])
+	local top = B2.gear.lines[1]
+	check(top.item.shown and top.item.id == 99806, "the slot list is shown from what was kept: the best helm first")
+	eq(walks, 0, "the item index is not walked"); eq(reads, 0, "nor read"); eq(asks, 0, "and the game is asked for no item")
+	check(B2.State().all and #B2.State().all > 0, "the sets have their candidates")
+	-- an old list is shown while it is looked at again
+	B2.db.kept.keys[B2.db.kept.order[1]].at = -1e9
+	B2.Sift(); B2.Refresh()
+	eq(B2.gear.lines[1].item.id, 99806, "an old list stays on show while it is looked at again")
+	Look(B2); B2.Refresh()
+	check(walks > 0, "older than its age: the index is walked again, quietly"); eq(B2.gear.lines[1].item.id, 99806, "and the list is the same after"); check(B2.db.kept.keys[B2.db.kept.order[1]].at ~= -1e9, "and is as new as the look")
+	eq(#B2.db.kept.order, 1, "the same finds are the same entry")
+	-- what it was built from changed: thrown away
+	walks = 0
+	Y.DT.DB.Base("questie", "2.0/1")
+	B2.Sift()
+	eq(next(B2.db.kept.keys), nil, "another QuestieDB: the kept list is gone"); eq(#B2.db.kept.order, 0, "and its keys")
+	Look(B2)
+	check(walks > 0 and #B2.db.kept.order == 1, "and is made anew from the index")
+	B2.db.kept.stamp = "another shape"
+	B2.Sift()
+	eq(next(B2.db.kept.keys), nil, "another stamp (the shape of the facts, the dungeon list): gone too")
+	-- the keys are capped
+	for lvl = 1, 10 do
+		B2.SetLevel(lvl)
+		for _ = 1, 6 do B2.Sift(); step(0.2) end
+	end
+	local n = 0
+	for _ in pairs(B2.db.kept.keys) do n = n + 1 end
+	eq(#B2.db.kept.order, 6, "only the last six keys are kept"); eq(n, 6, "and no more entries than keys")
+	check(B2.db.kept.order[1]:find("^10:"), "the one looked at last first")
+	leave(Y)
+	for id in pairs(GEAR) do ITEMS[id] = nil end
 end)()
 ;(function() -- the store: two installs that each learned something end with the same database
 	local P, R = NewClient("Pax"), NewClient("Rue")

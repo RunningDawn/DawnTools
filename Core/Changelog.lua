@@ -6,6 +6,33 @@
 local _, DT = ...
 
 DT.CHANGELOG = {
+	{ "0.50.5", "2026-11-20", {
+		"Enchanting: an enchantment's row shows the game's tooltip for it, and Shift-click links it in chat.",
+	} },
+	{ "0.50.4", "2026-11-20", {
+		"BiS: Pre-raid leaves out the gear of both Ahn'Qiraj raids too.",
+	} },
+	{ "0.50.3", "2026-11-20", {
+		"Quests: \"Hide done\" also hides a quest that can only be had during another, once that one is done (the second The Videre Elixir).",
+	} },
+	{ "0.50.2", "2026-11-20", {
+		"Quests: \"Hide done\" also hides the repeat of a quest you did once (Again With the Zapped Giants, after Zapped Giants).",
+	} },
+	{ "0.50.1", "2026-11-20", {
+		"BiS: Pre-raid no longer lists gear from raids (Naxxramas and the rest), and a dungeon boss's drop is called that at every level, not a world drop.",
+	} },
+	{ "0.50.0", "2026-11-19", {
+		"BiS: a level stepper (- and +, or type a level) and, at the last level, a list to pick the phase from.",
+		"BiS: the slot list scrolls, with weight, difference and percent in columns and the source in colour; the item you wear is set apart.",
+		"BiS opens at once after a reload: what it found is remembered.",
+		"BiS: Defense shows its skill and gear on a line under its bar.",
+	} },
+	{ "0.49.0", "2026-11-19", {
+		"BiS opens on your own class and spec, at your own level. Pick another level to see the best gear for it.",
+		"BiS: one ranked list per slot, best on top, what you wear in its place and a few worse below. Each row says what the item weighs, how much better or worse it is than yours, and where to get it.",
+		"BiS at the last level: choose Pre-raid or Everything. The tab opens on your whole set against a best set, shows each cap reached or short, and which piece to get next without dropping below a cap you meet now.",
+		"BiS: Defense shows as skill/maximum + gear.",
+	} },
 	{ "0.48.0", "2026-11-19", {
 		"Vendor prices, what quests give, dungeon loot counts and fishing catches now live in the game database and are shared with it. Dungeon loot is counted once. What you had is carried over at login.",
 		"Fishing: the Spots tab uses the guild's casts too, and says whose numbers they are.",

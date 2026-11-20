@@ -33,6 +33,11 @@ local function Key(name)
 end
 D.Key = Key
 
+-- the raids (the old world's): a dungeon of the list, by its key, is one of them or not
+local RAIDS = {}
+for _, name in ipairs({ "Molten Core", "Onyxia's Lair", "Blackwing Lair", "Zul'Gurub", "Ruins of Ahn'Qiraj", "Temple of Ahn'Qiraj", "Ahn'Qiraj", "Naxxramas" }) do RAIDS[Key(name)] = true end
+function D.IsRaid(d) return d and RAIDS[d.key or Key(d.name or "")] or false end
+
 -- AtlasLoot's table of dungeons and raids, its module loaded if it is not yet; nil where AtlasLoot is not there
 local function Atlas()
 	local AL = AtlasLoot

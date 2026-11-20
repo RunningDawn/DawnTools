@@ -369,6 +369,13 @@ local function SpellName(spell)
 	return ok and type(name) == "string" and name ~= "" and name or ("recipe " .. spell)
 end
 
+-- the game's own link of a recipe that makes no item; else the old client's enchant link, written out
+function Craft.SpellLink(spell, name)
+	local get = (C_Spell and C_Spell.GetSpellLink) or GetSpellLink
+	local ok, link = pcall(function() return get(spell) end)
+	return ok and type(link) == "string" and link or ("|cffffd000|Henchant:%d|h[%s]|h|r"):format(spell, name or ("recipe " .. spell))
+end
+
 -- the kind of thing an item is ("Armor", "Weapon", "Consumable"...), as the game names it
 local function KindOf(item)
 	local instant = C_Item and C_Item.GetItemInfoInstant or GetItemInfoInstant
@@ -519,13 +526,19 @@ local function NewView(prof)
 			local d = self.data
 			if not d then return end
 			GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-			if d.id then GameTooltip:SetHyperlink("item:" .. d.id) else GameTooltip:AddLine(d.name) end
+			-- (a recipe that makes no item, an enchantment: the game's own tooltip of the spell, where it gives one)
+			if d.id then GameTooltip:SetHyperlink("item:" .. d.id)
+			elseif not (GameTooltip.SetSpellByID and pcall(GameTooltip.SetSpellByID, GameTooltip, d.spell) and (GameTooltip:NumLines() or 0) > 0) then
+				GameTooltip:AddLine(d.name)
+			end
 			GameTooltip:AddLine(" ")
 			GameTooltip:AddLine(d.makers[1] and ("Can make it: " .. table.concat(d.makers, ", ")) or "Nobody known who can make it.", 1, 1, 1, true)
 			Craft.ProfitTip(GameTooltip, d.profit)
 			if d.id then
 				GameTooltip:AddLine("Shift-click: link in chat. Shift-right-click: its web page. Hold Shift: compare.", 0.5, 0.8, 1)
 				DT.Favs.Hint(GameTooltip, d.id)
+			else
+				GameTooltip:AddLine("Shift-click: link in chat. Shift-right-click: its web page.", 0.5, 0.8, 1)
 			end
 			GameTooltip:Show()
 			if d.id then DT:CompareTip(self) end
@@ -533,7 +546,8 @@ local function NewView(prof)
 		row:SetScript("OnLeave", function() GameTooltip:Hide() end)
 		row:SetScript("OnMouseUp", function(self, button)
 			local d = self.data
-			if d and d.id then DT:LinkClick(button, DT:GameItemLink(d.id, d.name), d.name, DT:ItemLink(d.id), d.id) end
+			if d and d.id then DT:LinkClick(button, DT:GameItemLink(d.id, d.name), d.name, DT:ItemLink(d.id), d.id)
+			elseif d then DT:LinkClick(button, Craft.SpellLink(d.spell, d.name), d.name, "https://www.wowhead.com/forever/spell=" .. d.spell) end
 		end)
 		v.rows[i] = row
 		return row
