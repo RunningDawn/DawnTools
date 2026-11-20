@@ -51,6 +51,7 @@ local reading
 local ready, missing = false, false
 local fromStore, stale = false, false -- read from DawnTools' own database; which has changed since
 local dirty = true
+local catalog -- the kinds of item there are, their groups, and the items of each group
 
 ---------------------------------------------------------------------------
 -- Reading QuestieDB (or the store, which answers the same way)
@@ -123,7 +124,7 @@ end
 function I.Start()
 	-- (read from the store, which has more now, or was empty: read anew)
 	if stale and not reading then
-		index, I.rewards = {}, {}
+		index, I.rewards, catalog = {}, {}, nil
 		ready, missing, stale, dirty = false, false, false, true
 	end
 	if not ready and not reading and not missing then
@@ -542,7 +543,6 @@ local panel, side, search, countText, bar, minBox, maxBox, statBox, qualityButto
 local rows, heads, sideButtons, list, sections, offset, sideOffset = {}, {}, {}, {}, {}, 0, 0
 local sortCol, sortDesc
 local searchAt, state = nil, { unknown = 0, of = 0 }
-local catalog -- the kinds of item there are, their groups, and the items of each group
 
 local function SlotName(k)
 	if not k or k.e == "" then return "" end

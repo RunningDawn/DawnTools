@@ -33,9 +33,9 @@ local function Key(name)
 end
 D.Key = Key
 
--- the raids (the old world's): a dungeon of the list, by its key, is one of them or not
+-- the raids: the old world's, and Forever's own (AtlasLoot's Forever list): a dungeon of the list, by its key, is one of them or not
 local RAIDS = {}
-for _, name in ipairs({ "Molten Core", "Onyxia's Lair", "Blackwing Lair", "Zul'Gurub", "Ruins of Ahn'Qiraj", "Temple of Ahn'Qiraj", "Ahn'Qiraj", "Naxxramas" }) do RAIDS[Key(name)] = true end
+for _, name in ipairs({ "Molten Core", "Onyxia's Lair", "Blackwing Lair", "Zul'Gurub", "Ruins of Ahn'Qiraj", "Temple of Ahn'Qiraj", "Ahn'Qiraj", "Naxxramas", "Mount Hyjal", "Barrow Deeps Raid", "Barrow Deeps" }) do RAIDS[Key(name)] = true end
 function D.IsRaid(d) return d and RAIDS[d.key or Key(d.name or "")] or false end
 
 -- AtlasLoot's table of dungeons and raids, its module loaded if it is not yet; nil where AtlasLoot is not there
@@ -110,9 +110,17 @@ function D.All()
 		if type(key) == "string" and key:sub(1, 2) ~= "__" and type(content) == "table" and type(content.items) == "table" then
 			local range = type(content.LevelRange) == "table" and content.LevelRange or {}
 			local name = type(content.name) == "string" and Clean(content.name) or key
-			if not byKey[Key(name)] then
+			-- (the same place under another name, "Scarlet Monastery" for its four wings, "Onyxias Lair" twice: known
+			-- by a boss that is in the list already)
+			local known = false
+			for _, boss in ipairs(content.items) do
+				local npc = type(boss) == "table" and (type(boss.npcID) == "table" and boss.npcID[1] or boss.npcID)
+				known = known or (npc ~= nil and byNpc[npc] ~= nil)
+			end
+			if not byKey[Key(name)] and not known then
 				for _, boss in ipairs(content.items) do
-					if type(boss) == "table" then
+					-- (not its lists of keys, tier sets and the like, which are no boss's drops)
+					if type(boss) == "table" and not boss.ExtraList and not boss.IgnoreAsSource then
 						-- what it drops: every list it has (the difficulties, the two sides), each item once, in their order
 						local items, seen, keys = {}, {}, {}
 						for k, v in pairs(boss) do
@@ -459,11 +467,14 @@ local function SideButton(i)
 	return b
 end
 
-function D.Refresh()
+-- scrolled = only the window moved: the lines are not worked out again (they ask the quest list and every item)
+function D.Refresh(scrolled)
 	if not panel then return end
-	dirty = false
 	local all = Listed()
-	Rebuild()
+	if scrolled ~= true then
+		dirty = false
+		Rebuild()
+	end
 	local picked = Picked()
 	-- the dungeons
 	local sfit = math.max(1, math.floor((panel:GetHeight() - 6) / SIDE_H))
@@ -525,7 +536,7 @@ local function Build(parent)
 	side:EnableMouseWheel(true)
 	side:SetScript("OnMouseWheel", function(_, delta)
 		sideOffset = sideOffset - delta * 3
-		D.Refresh()
+		D.Refresh(true)
 	end)
 
 	search = CreateFrame("EditBox", nil, panel, "SearchBoxTemplate")
@@ -626,12 +637,12 @@ local function Build(parent)
 		value = math.floor(value + 0.5)
 		if value == offset then return end -- (Refresh sets the bar too)
 		offset = value
-		D.Refresh()
+		D.Refresh(true)
 	end)
 	panel:EnableMouseWheel(true)
 	panel:SetScript("OnMouseWheel", function(_, delta)
 		offset = offset - delta * 3
-		D.Refresh()
+		D.Refresh(true)
 	end)
 	panel:SetScript("OnSizeChanged", D.Refresh)
 	local nextUpdate = 0

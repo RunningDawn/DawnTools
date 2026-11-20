@@ -11,7 +11,8 @@ DT.Comms = Comms
 local PREFIX = "DAWN"
 local MIN_PROTO = 1                  -- older messages are dropped
 local HELLO_EVERY = 600
-local RATE_N, RATE_WINDOW = 40, 60   -- messages taken from one sender per window
+-- (a market answer alone is up to 30 messages, beside hellos and pushes: 40 cut its tail off)
+local RATE_N, RATE_WINDOW = 100, 60  -- messages taken from one sender per window
 
 local AceComm = LibStub("AceComm-3.0")
 local LibDeflate = LibStub("LibDeflate")
@@ -98,10 +99,16 @@ function Comms:Send(module, kind, payload, bulk)
 end
 
 function Comms:Hello()
+	-- nothing goes to the guild before the player says yes (SetSharing sends the first one)
+	if not DT:Shares() then
+		stats.blocked, stats.why = stats.blocked + 1, "sharing is off" -- (so /dt sync says why nothing went)
+		return
+	end
 	local parts = { nonce, DT.VERSION }
 	for _, mod in DT:Enabled() do
-		local summary = mod.hello and mod:hello()
-		if summary then parts[#parts + 1] = mod.name .. "=" .. summary end
+		-- (one module's error must not silence the hello of all)
+		local ok, summary = pcall(function() return mod.hello and mod:hello() end)
+		if ok and summary then parts[#parts + 1] = mod.name .. "=" .. summary end
 	end
 	if self:Send("core", "HELLO", table.concat(parts, ";")) then
 		lastHello = GetTime()
@@ -155,7 +162,9 @@ local function OnHello(sender, payload)
 	end
 	-- known = heard before in this session of theirs (a new nonce means they logged in again)
 	local known = Comms.peers[sender] and Comms.peers[sender].nonce == fields[1]
-	local peer = { nonce = fields[1], version = fields[2] or "?", t = GetTime(), sum = {} }
+	-- (a version is shown as typed by somebody else: no colour or link escapes)
+	local version = tostring(fields[2] or "?"):gsub("[^%w%.%-_]", ""):sub(1, 20)
+	local peer = { nonce = fields[1], version = version, t = GetTime(), sum = {} }
 	for i = 3, #fields do
 		local name, summary = fields[i]:match("^(%w+)=(.*)$")
 		if name then peer.sum[name] = summary end
@@ -223,6 +232,7 @@ end
 function Comms:Start()
 	self:RegisterComm(PREFIX, "OnComm")
 	stats.started = true
-	C_Timer.After(8, function() Comms:Hello() end)
+	-- (not when the yes just sent one: a second hello would show what was merged since as news)
+	C_Timer.After(8, function() if GetTime() - lastHello > 60 then Comms:Hello() end end)
 	C_Timer.NewTicker(HELLO_EVERY, function() Comms:Hello() end)
 end

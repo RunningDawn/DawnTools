@@ -458,6 +458,9 @@ function DB.Referee(src, fn) referees[src] = fn end
 -- stands here and wherever the two meet from now on.
 function DB.Take(chunk, text)
 	if type(chunk) ~= "string" or type(text) ~= "string" then return 0 end
+	-- (a chunk name is what ChunkOf makes: letters, then a number or "s" and a sum; a peer's own names would grow the store without end)
+	local what, s, n = chunk:match("^(%a+):(s?)(%d+)$")
+	if not what or #what > 12 or tonumber(n) > (s == "" and 4000 or 63) then return 0 end
 	local theirs = {}
 	for key, row in pairs(L.Parse(text)) do
 		-- (only rows that belong in this chunk: a row filed elsewhere would never be found again)
@@ -495,7 +498,7 @@ function DB.Take(chunk, text)
 	if taken > 0 then
 		for key, row in pairs(theirs) do
 			local at, judge = mine[key], referees[row.src or ""]
-			if judge and at.t == row.t and at.v == row.v then
+			if judge and at and at.t == row.t and at.v == row.v then
 				local ok, want, t = pcall(judge, key)
 				if ok and type(want) == "string" and type(t) == "number" and row.t >= t and row.t < t + L.REPAIRS and L.Clean(want) ~= row.v then
 					mine[key] = { t = row.t + 1, src = row.src, v = L.Clean(want) }
@@ -504,6 +507,7 @@ function DB.Take(chunk, text)
 			end
 		end
 		Write(chunk, mine)
+		if chunk:find("^o?loot:") then DB.ForgetHolders() end
 	end
 	return taken
 end
@@ -723,6 +727,8 @@ local function Holders(item)
 	end
 	return byItem[item] or {}
 end
+
+function DB.ForgetHolders() byItem = nil end
 
 -- My own counter of a mob, chest or boss: its key, how many times, and { [item] = times seen }
 local function Mine(what, id)

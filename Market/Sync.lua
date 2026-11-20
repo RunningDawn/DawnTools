@@ -32,14 +32,14 @@ function Sync:Queue(ob)
 end
 
 local function Short(sender)
-	return Ambiguate and Ambiguate(sender, "guild") or sender
+	return DT.Name(sender)
 end
 
 -- my own observations go out as "=" (or nameless, if I prefer that)
 local function Wire(list)
 	local mine, out = M.db.settings.name and "=" or "", {}
 	for i, ob in ipairs(list) do
-		out[i] = { id = ob.id, p = ob.p, q = ob.q, t = ob.t, o = ob.o == DT.me and mine or ob.o }
+		out[i] = { id = ob.id, p = ob.p, q = ob.q, t = ob.t, o = (ob.o == DT.me or ob.o == DT.first) and mine or ob.o }
 	end
 	return out
 end
@@ -121,6 +121,12 @@ local function Merge(payload, sender)
 		end
 	end
 	Sync.last = now
+	-- (the 14 days and the cap hold within a session too, not only at login)
+	-- ponytail: a pass over the house every 5 minutes at most; a flood still grows it for that long
+	if not Sync.pruned or GetTime() - Sync.pruned > 300 then
+		Sync.pruned = GetTime()
+		L.Prune(items, now)
+	end
 	DT:Debug("market", "merged %d observations from %s (%d doubted as outliers)", taken, sender, doubted)
 end
 

@@ -416,6 +416,11 @@ function M:Enable(mod)
 	end
 	self.view = db.view == "X" and "X" or self.faction
 	self.items = self:House(self.view)
+	-- (the history as kept before 0.52, a table a price: turned into a line a day, once)
+	if db.hv ~= L.HISTORY_VERSION then
+		for _, items in pairs(db.houses) do L.Upgrade(items) end
+		db.hv = L.HISTORY_VERSION
+	end
 	for _, items in pairs(db.houses) do
 		L.Prune(items, DT.Now())
 		for id, item in pairs(items) do
@@ -444,6 +449,7 @@ function M:Enable(mod)
 	end)
 	DT:On("AUCTION_HOUSE_CLOSED", function()
 		M.ahOpen, M.at = false, nil
+		if not scan then M.scanStatus = nil end -- (a running scan says why it stopped on its next tick)
 		M:Touch()
 	end)
 	DT:On("GET_ITEM_INFO_RECEIVED", function(id, ok)

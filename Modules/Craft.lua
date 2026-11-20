@@ -73,7 +73,7 @@ local function Me()
 end
 
 local function Short(sender)
-	return Ambiguate and Ambiguate(sender, "guild") or sender
+	return DT.Name(sender)
 end
 
 ---------------------------------------------------------------------------
@@ -757,8 +757,15 @@ DT:RegisterModule("crafts", {
 		local first, surname = UnitName("player"), nil
 		if UnitFullName then first, surname = UnitFullName("player") end
 		me.name = (first or "?") .. (surname and surname ~= "" and (" " .. surname) or "")
-		DT:On("TRADE_SKILL_SHOW", function() C_Timer.After(1, ReadWindow) end)
-		DT:On("TRADE_SKILL_LIST_UPDATE", function() C_Timer.After(1, ReadWindow) end)
+		-- (the window fires both events in bursts: one read, a second after the first)
+		local pending
+		local function Soon()
+			if pending then return end
+			pending = true
+			C_Timer.After(1, function() pending = nil; ReadWindow() end)
+		end
+		DT:On("TRADE_SKILL_SHOW", Soon)
+		DT:On("TRADE_SKILL_LIST_UPDATE", Soon)
 		-- (prices changed, an item's name arrived: the sums and names are worked out again)
 		DT:On("DT_MARKET_UPDATE", Stale)
 		-- (only for an item one of these tabs asked about: the game sends this for every item anybody looks at)

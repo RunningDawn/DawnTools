@@ -26,6 +26,7 @@ DT.Combat = C
 local WINDOW = 10 -- seconds of damage before a death that count towards it
 local KEEP = 500  -- entries kept per list; the oldest go first
 local HITS = 30   -- of my hits on one target, the last so many are kept for its recap
+local FULL = 100  -- records (newest) that keep their hits; older ones keep who, what, where only
 local LISTED = 30 -- lines a recap lists one by one (the totals by ability cover all of them)
 local dirty = true
 
@@ -61,6 +62,11 @@ end
 local function Keep(list, rec)
 	list[#list + 1] = rec
 	while #list > KEEP do table.remove(list, 1) end
+	-- (the saved file stays small: only the newest FULL records keep their hits)
+	for i = #list - FULL, 1, -1 do
+		if not list[i].hits then break end
+		list[i].hits = nil
+	end
 	dirty = true
 end
 
@@ -341,7 +347,7 @@ end
 --   o  overkill (of a heal: overheal)
 --   m  how an attack missed ("dodged"); of an interrupt, the spell that was cut short
 --   i  the spell's number (for its icon)
-local function OnLog()
+local function OnLog() -- (reached through C.OnLog by the tests only; never registered, see onEnable)
 	local _, event, _, sGUID, sName, _, _, dGUID, dName = CombatLogGetCurrentEventInfo()
 	if not event then return end
 	-- (where the game hides the combat log from addons, nothing of it can be read: left alone)
@@ -421,6 +427,8 @@ local function OnLog()
 		end
 	end
 end
+
+C.OnLog = OnLog
 
 ---------------------------------------------------------------------------
 -- The tab
@@ -590,7 +598,7 @@ function C.Recap(rec, death)
 	if not hits or not hits[1] then
 		-- (a kill where the combat log is closed: the game tells who died, never what I hit them with)
 		Line("|cff888888" .. (not death and not C.open and "This server hides the hits of a kill from addons: only who, where and when are known."
-			or ("Nothing was recorded for this one" .. (hits and "." or ": it is from before the recap was kept."))) .. "|r")
+			or ("Nothing was recorded for this one" .. (hits and "." or ": its hits are no longer kept."))) .. "|r")
 		return rows
 	end
 	local total, by, order, from, attackers, landed, lastDamage = 0, {}, {}, {}, 0, 0, nil
@@ -1014,23 +1022,9 @@ DT:RegisterModule("combat", {
 		C.db = mod.db
 		C.db.deaths, C.db.kills = C.db.deaths or {}, C.db.kills or {}
 		me = UnitGUID("player")
-		-- Is the combat log open to addons? Not on a client that hides values from them (WoW Forever, and the
-		-- game from 12.0): there it is not even registered for, which would get the addon blocked.
-		C.open = CombatLogGetCurrentEventInfo ~= nil
-			and not (issecretvalue or C_CombatLogInternal or (C_CombatLog and C_CombatLog.IsCombatLogRestricted))
-		if C.open then
-			-- (this runs hundreds of times a second in a fight: should the game refuse us what is in it, that is
-			-- noted a few times and then left be, not reported for every single event)
-			local refused = 0
-			DT:On("COMBAT_LOG_EVENT_UNFILTERED", function()
-				if refused > 20 then return end
-				local ok, err = pcall(OnLog)
-				if not ok then
-					refused = refused + 1
-					DT:Debug("combat", "the combat log could not be read: %s", tostring(err))
-				end
-			end)
-		end
+		-- (the combat log is never registered for: on Forever that gets the addon blocked, and guessing from
+		-- missing globals whether a client is safe is not worth it. OnLog stays for the tests, which feed it.)
+		C.open = false
 		DT:On("PARTY_KILL", OnPartyKill)
 		DT:On("CHAT_MSG_COMBAT_HONOR_GAIN", OnHonor)
 		DT:On("PLAYER_TARGET_CHANGED", function() See("target") end)
@@ -1059,7 +1053,13 @@ DT:RegisterModule("combat", {
 			end
 			Try()
 		end)
-		if C_Timer and C_Timer.NewTicker then C_Timer.NewTicker(0.5, function() pcall(Watch) end) end
+		-- (only in a fight: out of one nobody is striking me, and the look at PLAYER_DEAD covers the rest)
+		if C_Timer and C_Timer.NewTicker then
+			C_Timer.NewTicker(0.5, function()
+				if UnitAffectingCombat and not UnitAffectingCombat("player") then return end
+				pcall(Watch)
+			end)
+		end
 	end,
 	selfTest = function(_, Try)
 		for _, v in ipairs({ "deaths", "kills" }) do

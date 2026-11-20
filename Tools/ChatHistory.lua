@@ -5,8 +5,8 @@
 -- no history of its own. It
 --   lets the plain arrow keys reach the chat line while it is open (the game's own switch, SetAltArrowKeyMode);
 --   keeps the sent lines across sessions and hands them back to the game's history at login.
--- Local only: nothing is sent. The lines kept (whispers and commands among them) are in the saved file of this
--- computer, in plain text.
+-- Local only: nothing is sent. The lines kept (chat only, no whispers or other commands) are in the saved file
+-- of this computer, in plain text.
 -- ponytail: one history for all chat windows, as lines only (not which channel each went to). While playing,
 -- the game's own depth applies (about 32 lines); the last KEEP are kept for the next login.
 
@@ -27,10 +27,22 @@ local function Boxes()
 	return out
 end
 
+-- Only chat is kept across sessions: plain text and the say/yell/guild/party/raid/emote/channel commands. Whispers
+-- and every other slash command (/console, /run, a pasted password after /w...) stay in the game's history for
+-- this session only.
+-- ponytail: an allow-list of command names, not of content; plain text goes to whatever channel the window is on.
+local CHAT = { s = 1, say = 1, y = 1, yell = 1, g = 1, guild = 1, o = 1, officer = 1, p = 1, party = 1, raid = 1,
+	ra = 1, rw = 1, i = 1, instance = 1, bg = 1, battleground = 1, e = 1, em = 1, emote = 1 }
+local function Keepable(text)
+	if text:sub(1, 1) ~= "/" then return true end
+	local cmd = (text:match("^/(%S+)") or ""):lower()
+	return CHAT[cmd] or cmd:match("^%d+$") ~= nil
+end
+
 -- a line the game added to its history: kept for the next login (the same line twice running, once)
 local function Record(text)
 	local s = H.db.settings
-	if restoring or not s.keep or type(text) ~= "string" or text == "" then return end
+	if restoring or not s.keep or type(text) ~= "string" or text == "" or not Keepable(text) then return end
 	local lines = H.db.lines
 	if lines[#lines] == text then return end
 	lines[#lines + 1] = text

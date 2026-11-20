@@ -781,22 +781,46 @@ local function BuildSettings(panel)
 	settingsBody = CreateFrame("Frame", nil, panel)
 	settingsBody:SetPoint("TOPLEFT", SECTION_W + 10, 0)
 	settingsBody:SetPoint("BOTTOMRIGHT", 0, 0)
-	-- a section for every module that has switches of its own
+	local function Switch(p, y, mod, s)
+		Toggle(p, 4, y, s.label,
+			function() return mod.db.settings[s.key] end,
+			function(on)
+				mod.db.settings[s.key] = on
+				DT:Fire("DT_SETTINGS", mod.name, s.key)
+			end)
+	end
+	-- every line DawnTools puts on a tooltip, all modules' together, in one section (a switch marked tooltip = true)
+	local tips = {}
+	for _, mod in DT:Enabled() do
+		for _, s in ipairs(mod.settings or {}) do
+			if s.tooltip then tips[#tips + 1] = { mod, s } end
+		end
+	end
+	if tips[1] then
+		UI:Section("tooltips", "Tooltips", 45, function(p)
+			Text(p, "GameFontNormal", 4, -2, "Tooltips")
+			local y = -24
+			for _, t in ipairs(tips) do
+				Switch(p, y, t[1], t[2])
+				y = y - 22
+			end
+		end)
+	end
+	-- a section for every module that has switches of its own (other than its tooltip lines)
 	local order = 50
 	for _, mod in DT:Enabled() do
-		if mod.settings then
+		local own = {}
+		for _, s in ipairs(mod.settings or {}) do
+			if not s.tooltip then own[#own + 1] = s end
+		end
+		if own[1] then
 			order = order + 1
 			UI:Section("module:" .. mod.name, mod.title or mod.name, order, function(p)
 				local y = -2
 				Text(p, "GameFontNormal", 4, y, mod.title or mod.name)
 				y = y - 22
-				for _, s in ipairs(mod.settings) do
-					Toggle(p, 4, y, s.label,
-						function() return mod.db.settings[s.key] end,
-						function(on)
-							mod.db.settings[s.key] = on
-							DT:Fire("DT_SETTINGS", mod.name, s.key)
-						end)
+				for _, s in ipairs(own) do
+					Switch(p, y, mod, s)
 					y = y - 22
 				end
 				if mod.status then

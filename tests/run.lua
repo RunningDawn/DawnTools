@@ -2,6 +2,24 @@
 -- guild channel. Run with:  cd tests && npm install && npm test   (needs Lua 5.2+ for loadfile's env; fengari is 5.3)
 
 local DIR = ADDON_DIR or ""
+-- As the game does: %d (and %i, %x, %c) takes a 32-bit number only; more is an error ("integer overflow
+-- attempting to store"). A price of ten million gold is more. (Every :format of the addon goes through this.)
+do
+	local real = string.format
+	string.format = function(f, ...)
+		local args, i = { ... }, 0
+		for spec in tostring(f):gmatch("%%[%-+ #0]*%d*%.?%d*([%a%%])") do
+			if spec ~= "%" then
+				i = i + 1
+				local v = args[i]
+				if (spec == "d" or spec == "i" or spec == "x" or spec == "X" or spec == "c") and type(v) == "number" and (v > 2147483647 or v < -2147483648) then
+					error(("integer overflow attempting to store %s (format %q)"):format(real("%.0f", v), f), 2)
+				end
+			end
+		end
+		return real(f, ...)
+	end
+end
 local checks = 0
 local function check(cond, what)
 	checks = checks + 1
@@ -65,6 +83,69 @@ do
 	eq(L.Median(items2[2], 7, now), 115, "an even count takes the middle of the middle two")
 	check(math.abs(L.Trend(items2[2], now) - (200 / 115 - 1)) < 1e-9, "trend against the 7-day median")
 	eq(L.Median(items2[2], 1, now), 200, "median over one day")
+
+	-- one line of text a day (0.52): what it holds, and what it does with a line that does not read
+	;(function()
+		local day = math.floor(now / DAY)
+		check(type(items[1].d[day]) == "string", "a day is one line of text")
+		local e = L.ReadDay(day, items[1].d[day])
+		eq(L.PackDay(day, e), items[1].d[day], "read and written back: the same line")
+		local negative = false
+		for _, p in pairs(e.o) do negative = negative or p < 0 end
+		check(negative, "an outlier is kept as such in the line (so it is not taken twice after a reload)")
+		eq(select(2, L.Observe(items, ob(1, 600, 1, now + 100, "M"), now)), "dup", "and still not taken twice")
+		-- a damaged line: an empty day, not an error, and pruned away
+		local bad = { t = now, p = 100, q = 1, d = { [day] = "5|x|garbage", [day - 1] = "nonsense", [day - 2] = { "a table" } } }
+		eq(L.Median(bad, 7, now), nil, "damaged lines give no median, and no error"); eq(#L.History(bad), 0, "nor history")
+		L.Prune({ [9] = bad }, now)
+		eq(next(bad.d), nil, "and are pruned away")
+		check(L.Observe({ [9] = bad }, ob(9, 50, 1, now - 1, "A"), now), "a damaged item still takes a new price")
+		-- a price past 32 bits (someone listed at ten million gold): written and read back whole
+		local rich = {}
+		check(L.Observe(rich, ob(11, 99999992200, 1, now - 3, "A"), now, true), "a price of ten million gold is taken")
+		eq(L.Median(rich[11], 7, now), 99999992200, "and kept to the copper"); L.Prune(rich, now); eq(L.History(rich[11])[1].min, 99999992200, "pruned too")
+		check(L.Upgrade({ [12] = { t = now, d = { [day] = { q = 1, o = { [now - 1] = 99999992200 } } } } }) == 1, "an old day with such a price is turned too")
+		-- a line with something odd in it: the good prices still count
+		eq(L.Median({ d = { [day] = "3||100:40,junk,200:60,300:x" } }, 7, now), 50, "the prices that read are taken")
+		-- the median kept in memory: worked out again once a price comes in
+		local it = { d = {} }
+		local its = { [5] = it }
+		L.Observe(its, ob(5, 100, 1, now - 30, "A"), now)
+		eq(L.Median(it, 7, now), 100, "a median"); eq(L.Median(it, 7, now), 100, "asked again: the same")
+		L.Observe(its, ob(5, 300, 1, now - 20, "A"), now, true)
+		eq(L.Median(it, 7, now), 200, "a new price: the median moves at once")
+	end)()
+	-- from the history of before 0.52 (a table a day): the same figures after
+	;(function()
+		local day = math.floor(now / DAY)
+		local old = { [7] = { p = 120, q = 2, t = now - 10, o = "A", d = {
+			[day] = { q = 4, n = 3, o = { [now - 10] = 120, [now - 20] = 100, [now - 30] = -900 } },
+			[day - 2] = { q = 1, n = 1, o = { [(day - 2) * DAY + 50] = 80 }, a = 90 },
+			[day - 3] = "junk", [day - 4] = { q = 1, n = 1, o = { [12] = 5 } } } } } -- (a price whose time is not of its day: left out)
+		eq(L.Upgrade(old), 3, "each day turned into a line")
+		local item = old[7]
+		eq(L.Median(item, 7, now), 95, "the median as before: 80, 90, 100, 120")
+		local h = L.History(item)
+		eq(#h, 2, "the history: the two days that read"); eq(h[1].min, 80, "with the Auctionator price of its day"); eq(h[2].n, 2, "the outlier still left out")
+		L.Prune(old, now)
+		eq(item.d[day - 3], nil, "a day that never read is dropped at the prune"); eq(L.Median(item, 7, now), 95, "and the median the same")
+		eq(L.Upgrade(old), 0, "turned once: nothing more to turn")
+	end)()
+	-- days older than a week: summed up, the week's median as it was
+	;(function()
+		local day, its = math.floor(now / DAY), {}
+		for k, p in ipairs({ 10, 20, 30, 40 }) do L.Observe(its, ob(8, p, k, (day - 9) * DAY + k, "A"), now) end
+		L.Observe(its, ob(8, 50, 1, now - 5, "A"), now)
+		local before = L.History(its[8])
+		L.Prune(its, now)
+		check(its[8].d[day - 9]:sub(1, 2) == "S|", "a day older than a week is summed up")
+		local after = L.History(its[8])
+		eq(after[1].min, before[1].min, "its lowest kept"); eq(after[1].median, before[1].median, "its median"); eq(after[1].n, 4, "how many it had"); eq(after[1].q, 4, "and the most listed")
+		eq(L.Median(its[8], 7, now), 50, "the 7-day median does not reach it")
+		eq(select(2, L.Observe(its, ob(8, 99, 1, (day - 9) * DAY + 77, "B"), now)), "summed", "a summed-up day takes nothing more")
+		eq(#L.Since(its, 0, 100), 1, "and is not passed on to the guild: only the price of the last week")
+		eq(L.Median(its[8], 14, now), 25, "a median over 14 days counts it at its median, four times: close, not exact")
+	end)()
 
 	-- the cap per day
 	local items3 = {}
@@ -198,6 +279,12 @@ do
 	eq(#BL.Solve(one, {}, prof)[11].ids, 1, "one ring is worn once")
 	local two = BL.Choices({ { id = 1, loc = "INVTYPE_FINGER", s = { sta = 5 }, n = 2 } }, prof)
 	eq(#BL.Solve(two, {}, prof)[11].ids, 2, "two of it, twice")
+	-- the off hand does half the damage of a weapon
+	local dw = BL.Choices({ { id = 1, loc = "INVTYPE_WEAPON", s = { dps = 10 }, n = 1 }, { id = 2, loc = "INVTYPE_WEAPON", s = { dps = 20 }, n = 1 } }, { w = { dps = 1 }, hands = { "dw" } })
+	local _, _, dwScore = BL.Solve(dw, {}, { w = { dps = 1 }, hands = { "dw" } })
+	eq(dwScore, 25, "two weapons: the slower in the off hand, at half")
+	eq(BL.Stats(nil, { "+30 Attack Power when fighting Undead" }).ap, nil, "a conditional attack power is not counted")
+	eq(BL.Stats(nil, { "+30 Attack Power" }).ap, 30, "a plain one is")
 end
 
 ---------------------------------------------------------------------------
@@ -330,7 +417,7 @@ local METHODS = {
 local function NewClient(name, opts)
 	opts = opts or {}
 	local c = {
-		name = name, wire = name .. "-Forever", widgets = {}, updaters = {}, listeners = {}, printed = {}, popups = {}, queries = {},
+		name = name, wire = name .. "-Smith", widgets = {}, updaters = {}, listeners = {}, printed = {}, popups = {}, queries = {},
 		guild = true, combat = false, instance = false, searched = {}, browse = {}, replicate = {}, bags = {},
 		browseQueries = {}, more = 0, pages = {}, bank = {},
 		npc = "Creature-0-1-2-3-8719-00001A", npcFaction = "Horde", -- the auctioneer talked to: a Horde one
@@ -626,6 +713,15 @@ local function wire(id, p, q, t, o) return ("%d,%d,%d,%d,%s"):format(id, p, q, t
 -- 3. One member, not sharing: capture, tooltip, API
 ---------------------------------------------------------------------------
 
+;(function() -- prices saved before 0.52 (a table a day): turned into a line a day at login, the median as it was
+	local day = math.floor(Now() / DAY)
+	local old = NewClient("Olga", { db = { market = { houses = { H = { [300] = { p = 120, q = 2, t = Now() - 10, o = "Olga", d = {
+		[day] = { q = 2, n = 3, o = { [Now() - 10] = 120, [Now() - 20] = 100, [Now() - 30] = 110 } } } } } } } } })
+	local M = old.DT.Market
+	check(type(M.db.houses.H[300].d[day]) == "string", "an old day is one line now"); eq(M.db.hv, L.HISTORY_VERSION, "and the saved prices say how they are kept")
+	eq(old.env.DawnMarket.API.GetMedian(300), 110, "the median as before")
+end)()
+
 local A = NewClient("Alice")
 local updates = 0
 A.env.DawnMarket.API.RegisterForUpdate(function() updates = updates + 1 end)
@@ -637,7 +733,7 @@ eq(A.DT.db.settings.share, nil, "and nothing is decided for the player")
 A.searched[100] = { { 50, 10 }, { 100, 10 } }
 A.fire("COMMODITY_SEARCH_RESULTS_UPDATED", 100)
 eq(A.items()[100].p, 50, "commodity: lowest unit price"); eq(A.items()[100].q, 20, "commodity: everything listed")
-eq(A.items()[100].o, "Alice", "seen by me"); eq(A.items()[100].t, Now(), "at server time")
+eq(A.items()[100].o, "Alice Smith", "seen by me, with my surname"); eq(A.items()[100].t, Now(), "at server time")
 
 A.searched[400] = { { 900, 1 }, { 300, 9 }, { 0, 1 } }
 A.fire("ITEM_SEARCH_RESULTS_UPDATED", { itemID = 400 })
@@ -678,21 +774,28 @@ check(updates > 0, "API listeners hear about new prices")
 
 local API = A.env.DawnMarket.API
 local p, q, t, o = API.GetLatest(100)
-eq(p, 45, "API price"); eq(q, 20, "API quantity"); eq(t, Now(), "API time"); eq(o, "Alice", "API observer")
+eq(p, 45, "API price"); eq(q, 20, "API quantity"); eq(t, Now(), "API time"); eq(o, "Alice Smith", "API observer")
 local each = 0
 API.Each(function(id, price, _, at) if id == 100 then each = price == p and at == t and 1 or -1 end end)
 eq(each, 1, "API: every latest price can be walked")
 eq(API.GetLatest(999), nil, "API: unknown item"); eq(API.GetMedian(100), 45, "API median")
 eq(API.GetMedian(999), nil, "API: no median"); eq(#API.GetHistory(100), 1, "API history"); eq(#API.GetHistory(999), 0, "API: no history")
 
+do -- the tooltip lines
+local function auctionLine(tip)
+	for _, l in ipairs(tip.lines) do if tostring(l):find("Auction", 1, true) then return l end end
+end
+A.env.GameTooltip.lines = {}
 A.tooltipHook(A.env.GameTooltip, { id = 100 })
-local line = A.env.GameTooltip.lines[#A.env.GameTooltip.lines]
-check(line:find("Guild AH 45c (just now)", 1, true) and line:find("7d median 45c", 1, true), "tooltip line: " .. tostring(line))
+local line = auctionLine(A.env.GameTooltip)
+check(line and line:find("DT:|r Auction (just now) 45c", 1, true), "tooltip line: " .. tostring(line))
+check(tostring(A.env.GameTooltip.lines[#A.env.GameTooltip.lines]):find("DT:|r Auction (7d median) 45c", 1, true), "the median on a line of its own, the prices under each other")
+A.env.GameTooltip.lines = {}
 A.tooltipHook(A.env.GameTooltip, { id = 999 })
-eq(#A.env.GameTooltip.lines, 1, "no line for an item without a price")
+eq(auctionLine(A.env.GameTooltip), nil, "no auction line for an item without a price")
 A.M.db.settings.tooltip = false
 A.tooltipHook(A.env.GameTooltip, { id = 100 })
-eq(#A.env.GameTooltip.lines, 1, "and none when switched off")
+eq(auctionLine(A.env.GameTooltip), nil, "and none when switched off")
 A.M.db.settings.tooltip = true
 do -- Shift over a stack: the price of all of it
 	local tip = A.env.GameTooltip
@@ -700,21 +803,27 @@ do -- Shift over a stack: the price of all of it
 	tip.lines, tip.GetOwner = {}, function() return { count = 20 } end
 	A.env.IsShiftKeyDown = function() return true end
 	A.tooltipHook(tip, { id = 100 })
-	check(tostring(tip.lines[1]):find("Guild AH 9s 0c x20", 1, true), "Shift over a stack of 20: twenty times the price: " .. tostring(tip.lines[1]))
+	check(tostring(auctionLine(tip)):find("DT:|r Auction (just now) 9s 0c x20", 1, true), "Shift over a stack of 20: twenty times the price: " .. tostring(auctionLine(tip)))
+	check(tostring(tip.lines[1]):find("Vendor (sell)", 1, true), "what a vendor pays comes first: " .. tostring(tip.lines[1]))
 	A.env.IsShiftKeyDown = nil
 	tip.lines = {}
 	A.tooltipHook(tip, { id = 100 })
-	check(tostring(tip.lines[1]):find("Guild AH 45c (", 1, true), "without Shift: the price of one")
+	check(tostring(auctionLine(tip)):find("DT:|r Auction (just now) 45c", 1, true), "without Shift: the price of one")
 	tip.lines, tip.GetOwner = lines, owner
 end
+end
 
--- not sharing: the core says hello, the market says nothing
+-- not sharing: nothing goes to the guild, not even a hello
 step(700)
-check(count("HELLO", "Alice") >= 2, "the core says hello now and then")
+eq(count("HELLO", "Alice"), 0, "no hello before a yes")
 for _, m in ipairs(sent) do check(not m.text:find("market", 1, true), "nothing about the market is sent before a yes") end
-eq(A.DT.Comms.self, "Alice-Forever", "my own hello tells me my name on the wire")
-eq(next(A.DT.Comms.peers), nil, "and I am not my own peer")
 eq(A.M.Sync.queued, 0, "nothing is even queued")
+A.env.StaticPopupDialogs.DAWNTOOLS_SHARE.OnAccept()
+step(5)
+check(count("HELLO", "Alice") >= 1, "the yes sends the first hello")
+eq(A.DT.Comms.self, "Alice-Smith", "my own hello tells me my name on the wire")
+eq(next(A.DT.Comms.peers), nil, "and I am not my own peer")
+A.DT.db.settings.share = nil
 
 ---------------------------------------------------------------------------
 -- 4. Two members sharing: HELLO, REQUEST, DATA, PUSH
@@ -726,11 +835,11 @@ eq(A.DT.db.settings.share, true, "Alice says yes")
 local B = NewClient("Bob")
 B.env.StaticPopupDialogs.DAWNTOOLS_SHARE.OnAccept()
 step(30)
-check(A.DT.Comms.peers["Bob-Forever"], "Alice heard Bob"); check(B.DT.Comms.peers["Alice-Forever"], "Bob heard Alice, who answered a newcomer")
-eq(B.DT.Comms.peers["Alice-Forever"].version, A.DT.VERSION, "with her version")
+check(A.DT.Comms.peers["Bob-Smith"], "Alice heard Bob"); check(B.DT.Comms.peers["Alice-Smith"], "Bob heard Alice, who answered a newcomer")
+eq(B.DT.Comms.peers["Alice-Smith"].version, A.DT.VERSION, "with her version")
 eq(count("REQUEST", "Bob"), 1, "Bob asks for what he missed"); eq(count("REQUEST", "Alice"), 0, "Alice has nothing to ask an empty Bob")
 eq(count("DATA", "Alice"), 1, "Alice answers")
-eq(B.items()[100] and B.items()[100].p, 45, "Bob has Alice's price"); eq(B.items()[100].o, "Alice", "and who saw it")
+eq(B.items()[100] and B.items()[100].p, 45, "Bob has Alice's price"); eq(B.items()[100].o, "Alice Smith", "and who saw it, with their surname")
 eq(B.items()[400].p, 300, "and the others"); eq(B.M.Sync.done, true, "Bob is in step")
 step(2)
 eq(B.items()[100].n, "Copper Bar", "names are looked up for merged items too")
@@ -745,7 +854,7 @@ A.searched[100][1][1] = 40
 A.fire("COMMODITY_SEARCH_RESULTS_UPDATED", 100)
 eq(B.items()[100].p, 45, "not at once")
 step(50)
-eq(count("PUSH", "Alice"), 1, "one push"); eq(B.items()[100].p, 40, "Bob has the new price"); eq(B.items()[100].o, "Alice", "from Alice")
+eq(count("PUSH", "Alice"), 1, "one push"); eq(B.items()[100].p, 40, "Bob has the new price"); eq(B.items()[100].o, "Alice Smith", "from Alice")
 eq(A.M.db.stats.n, aliceCount + 1, "Alice counted it once")
 step(100)
 eq(count("PUSH", "Alice"), 1, "nothing new, nothing sent")
@@ -756,7 +865,7 @@ A.searched[110] = { { 9, 30 } }
 A.fire("COMMODITY_SEARCH_RESULTS_UPDATED", 110)
 step(50)
 eq(B.items()[110].p, 9, "pushed without a name"); eq(B.items()[110].o, "", "Bob does not know who")
-eq(A.items()[110].o, "Alice", "Alice still does")
+eq(A.items()[110].o, "Alice Smith", "Alice still does")
 A.M.db.settings.name = true
 
 -- combat and instances: wait, then send
@@ -777,7 +886,7 @@ A.DT.db.settings.instances, A.instance = false, false
 B.searched[820] = { { 200, 30 } }
 B.fire("COMMODITY_SEARCH_RESULTS_UPDATED", 820)
 step(50)
-eq(A.items()[820].p, 200, "Alice has Bob's price"); eq(A.items()[820].o, "Bob", "seen by Bob")
+eq(A.items()[820].p, 200, "Alice has Bob's price"); eq(A.items()[820].o, "Bob Smith", "seen by Bob")
 
 ---------------------------------------------------------------------------
 -- 5. What is not believed
@@ -786,39 +895,39 @@ eq(A.items()[820].p, 200, "Alice has Bob's price"); eq(A.items()[820].o, "Bob", 
 local function inject(c, sender, text, distribution) c.hear("DAWN", text, distribution or "GUILD", sender) end
 local T = Now()
 
-inject(B, "Mallory-Forever", packed("PUSH", wire(7000, 5, 1, T + 1000, "=")))
+inject(B, "Mallory-Smith", packed("PUSH", wire(7000, 5, 1, T + 1000, "=")))
 eq(B.items()[7000], nil, "a price from the future is dropped")
-inject(B, "Mallory-Forever", packed("PUSH", wire(7000, 5, 1, T - 15 * DAY, "=")))
+inject(B, "Mallory-Smith", packed("PUSH", wire(7000, 5, 1, T - 15 * DAY, "=")))
 eq(B.items()[7000], nil, "and one older than the history")
-inject(B, "Mallory-Forever", packed("PUSH", wire(7000, 5, 1, T, "="), 0))
+inject(B, "Mallory-Smith", packed("PUSH", wire(7000, 5, 1, T, "="), 0))
 eq(B.items()[7000], nil, "and a message in a protocol older than supported")
-inject(B, "Mallory-Forever", packed("PUSH", wire(7000, 5, 1, T, "="), 99))
+inject(B, "Mallory-Smith", packed("PUSH", wire(7000, 5, 1, T, "="), 99))
 eq(B.items()[7000], nil, "and one in a protocol not yet known")
 check(B.printed[#B.printed]:find("update", 1, true), "which says an update is due")
-inject(B, "Mallory-Forever", packed("PUSH", wire(7000, 5, 1, T, "=")), "WHISPER")
+inject(B, "Mallory-Smith", packed("PUSH", wire(7000, 5, 1, T, "=")), "WHISPER")
 eq(B.items()[7000], nil, "and anything not on the guild channel")
-inject(B, "Mallory-Forever", "market\tPUSH\t1\tz\tnot deflate at all")
-inject(B, "Mallory-Forever", "nonsense")
-inject(B, "Mallory-Forever", packed("NOPE", "x"))
-inject(B, "Mallory-Forever", packed("PUSH", "x;y;;;1,2"))
-inject(B, "Mallory-Forever", packed("REQUEST", "nobody"))
+inject(B, "Mallory-Smith", "market\tPUSH\t1\tz\tnot deflate at all")
+inject(B, "Mallory-Smith", "nonsense")
+inject(B, "Mallory-Smith", packed("NOPE", "x"))
+inject(B, "Mallory-Smith", packed("PUSH", "x;y;;;1,2"))
+inject(B, "Mallory-Smith", packed("REQUEST", "nobody"))
 eq(B.items()[7000], nil, "garbage does no harm")
-inject(B, "Mallory-Forever", packed("PUSH", wire(7000, 5, 1, T, "=")))
-eq(B.items()[7000].p, 5, "a sound one is taken"); eq(B.items()[7000].o, "Mallory", "under the sender's name")
+inject(B, "Mallory-Smith", packed("PUSH", wire(7000, 5, 1, T, "=")))
+eq(B.items()[7000].p, 5, "a sound one is taken"); eq(B.items()[7000].o, "Mallory Smith", "under the sender's name")
 
 -- an outlier against a known price
-for i = 1, 3 do inject(B, "Carol-Forever", packed("PUSH", wire(100, 40 + i, 10, B.items()[100].t - 10 * i, "="))) end
+for i = 1, 3 do inject(B, "Carol-Smith", packed("PUSH", wire(100, 40 + i, 10, B.items()[100].t - 10 * i, "="))) end
 eq(B.items()[100].p, 40, "older observations do not move the latest")
-inject(B, "Mallory-Forever", packed("PUSH", wire(100, 4000, 10, T + 5, "=")))
-eq(B.items()[100].p, 40, "a hundred times the median is not believed"); eq(B.items()[100].o, "Alice", "the latest stands")
-inject(B, "Mallory-Forever", packed("PUSH", wire(100, 60, 10, T + 6, "=")))
+inject(B, "Mallory-Smith", packed("PUSH", wire(100, 4000, 10, T + 5, "=")))
+eq(B.items()[100].p, 40, "a hundred times the median is not believed"); eq(B.items()[100].o, "Alice Smith", "the latest stands")
+inject(B, "Mallory-Smith", packed("PUSH", wire(100, 60, 10, T + 6, "=")))
 eq(B.items()[100].p, 60, "a plausible change is")
 
 -- one sender flooding
-for i = 1, 60 do inject(B, "Spammer-Forever", packed("PUSH", wire(8000 + i, 5, 1, T, "="))) end
+for i = 1, 150 do inject(B, "Spammer-Smith", packed("PUSH", wire(8000 + i, 5, 1, T, "="))) end
 local flood = 0
 for id in pairs(B.items()) do if id > 8000 and id < 9000 then flood = flood + 1 end end
-eq(flood, 40, "a sender is heard so many times a minute")
+eq(flood, 100, "a sender is heard so many times a minute")
 
 ---------------------------------------------------------------------------
 -- 6. Logging out and in; sharing switched off; Auctionator
@@ -846,7 +955,7 @@ step(40)
 eq(count("REQUEST", "Bob"), requests, "nothing happened meanwhile: nothing for Bob to ask for")
 eq(count("REQUEST", "Alice"), 1, "Alice, who never caught up with anyone, asks Bob")
 eq(A.items()[7000] and A.items()[7000].p, 5, "and gets what Bob heard from others"); eq(A.M.Sync.done, true, "so she is in step too")
-check(B2.DT.Comms.peers["Alice-Forever"], "though Alice is heard")
+check(B2.DT.Comms.peers["Alice-Smith"], "though Alice is heard")
 
 -- Auctionator's history: every item and day it has, for me only
 local thread = B2.items()[830]
@@ -855,7 +964,7 @@ eq(thread.q, 7, "with the most it saw listed"); eq(thread.n, "Coarse Thread", "a
 check(thread.t < Now() - 3600 and thread.t > Now() - DAY, "placed within its day, not at this minute")
 local th = L.History(thread)
 eq(#th, 2, "one price per day Auctionator scanned"); eq(th[1].min, 20, "an older day: the lowest it saw"); eq(th[2].min, 21, "today")
-eq(B2.items()[820].p, 200, "a newer price of our own stays the latest"); eq(B2.items()[820].o, "Bob", "under its observer")
+eq(B2.items()[820].p, 200, "a newer price of our own stays the latest"); eq(B2.items()[820].o, "Bob Smith", "under its observer")
 eq(#L.History(B2.items()[820]), 2, "while Auctionator's earlier day joins its history")
 eq(B2.items()[300].p, 6, "days older than the history are left out"); eq(B2.items()[400].p, 300, "gear by item level is skipped")
 eq(B2.items()[110].p, 9, "and what is not a price record does no harm"); eq(B2.items()[600].p, 15, "nor one without days")
@@ -881,12 +990,12 @@ step(120)
 local B3 = NewClient("Bob", { db = B2.env.DawnToolsDB })
 step(40)
 eq(count("REQUEST", "Bob"), requests + 1, "Bob asks for what he missed"); eq(B3.items()[830].p, 25, "and gets it")
-eq(B3.items()[830].o, "Alice", "a real observation replaces the fill-in")
+eq(B3.items()[830].o, "Alice Smith", "a real observation replaces the fill-in")
 local answered = count("DATA", "Alice")
-inject(A, "Bob-Forever", "market\tREQUEST\t1\t-\tAlice-Forever;0")
+inject(A, "Bob-Smith", "market\tREQUEST\t1\t-\tAlice-Smith;0")
 step(5)
 eq(count("DATA", "Alice"), answered, "asking again within a minute gets no second answer")
-inject(A, "Dave-Forever", "market\tREQUEST\t1\t-\tSomeone-Else;0")
+inject(A, "Dave-Smith", "market\tREQUEST\t1\t-\tSomeone-Else;0")
 step(5)
 eq(count("DATA", "Alice"), answered, "a request for someone else is not mine to answer")
 
@@ -900,7 +1009,7 @@ A.searched[100] = { { 33, 10 } }
 A.fire("COMMODITY_SEARCH_RESULTS_UPDATED", 100)
 step(700)
 eq(count("PUSH", "Bob"), pushes, "nothing is sent with sharing off"); eq(B3.items()[100].p, 60, "and nothing is taken in")
-inject(B3, "Alice-Forever", "market\tREQUEST\t1\t-\tBob-Forever;0")
+inject(B3, "Alice-Smith", "market\tREQUEST\t1\t-\tBob-Smith;0")
 step(5)
 eq(count("DATA", "Bob"), answers, "nor are requests answered")
 check(not sent[#sent].text:find("market=", 1, true) or sent[#sent].from ~= "Bob", "Bob's hello no longer mentions the market")
@@ -1927,8 +2036,10 @@ end)()
 	-- what the game adds to its history is kept
 	one:AddHistoryLine("hello there")
 	one:AddHistoryLine("hello there")
-	two:AddHistoryLine("/dance")
-	eq(#H.db.lines, 2, "a line sent is kept; the same twice running, once"); eq(H.db.lines[2], "/dance", "from whichever chat window")
+	two:AddHistoryLine("/g hello guild")
+	eq(#H.db.lines, 2, "a line sent is kept; the same twice running, once"); eq(H.db.lines[2], "/g hello guild", "from whichever chat window")
+	for _, private in ipairs({ "/w Bob my password is x", "/console cvar 1", "/run Foo()", "/" }) do one:AddHistoryLine(private) end
+	eq(#H.db.lines, 2, "whispers and commands other than chat are not kept for the next login")
 	check(H.boxes.on and X.DT.Tools.Show, "(the page)")
 	for i = 1, 60 do one:AddHistoryLine("line " .. i) end
 	eq(#H.db.lines, 50, "the last fifty are kept"); eq(H.db.lines[50], "line 60", "the newest last"); eq(H.db.lines[1], "line 11", "the oldest gone")
@@ -2457,7 +2568,7 @@ end)()
 	local theirs
 	for _, d in ipairs(P2.DT.Craft.views[129].list) do if d.spell == 7934 then theirs = d[7] end end
 	eq(theirs, "Pat Smith", "on the tab too")
-	inject(P2, "Pat-Forever", (packed("KNOWN", "Pat Smith;rubbish", nil):gsub("^market", "crafts")))
+	inject(P2, "Pat-Smith", (packed("KNOWN", "Pat Smith;rubbish", nil):gsub("^market", "crafts")))
 	step(1)
 	check(P2.DT.Craft.db.guild["Pat Smith"].ids[7934], "a list that is no list is not taken")
 	-- Data Sync
@@ -2518,10 +2629,10 @@ A.fire("COMMODITY_SEARCH_RESULTS_UPDATED", 110)
 eq(M:House("X")[110].p, 9, "what is seen is still filed where I stand, whatever is shown")
 -- from the guild
 local function ob(id, p) return L.Encode({ { id = id, p = p, q = 1, t = A.DT.Now(), o = "=" } }) end
-M.Sync:OnMessage("PUSH", "X|" .. ob(7001, 5), "Zed-Forever")
+M.Sync:OnMessage("PUSH", "X|" .. ob(7001, 5), "Zed-Smith")
 check(M:House("X")[7001] and M:House("X")[7001].p == 5 and not M:House("H")[7001], "a guild price goes to the house it names")
-M.Sync:OnMessage("PUSH", ob(7002, 5), "Zed-Forever")
-M.Sync:OnMessage("PUSH", "Q|" .. ob(7002, 5), "Zed-Forever")
+M.Sync:OnMessage("PUSH", ob(7002, 5), "Zed-Smith")
+M.Sync:OnMessage("PUSH", "Q|" .. ob(7002, 5), "Zed-Smith")
 check(not M:House("X")[7002] and not M:House("H")[7002], "one that names none, or an unknown one, is dropped")
 A.DT.db.settings.share = nil
 -- putting the house right by hand
@@ -2950,7 +3061,7 @@ eq(foodRows(Fay)[1].id, 5003, "and back by level")
 	eq(VT(2692, 1), A.DT.Money(40) .. " at Kira Cook", "both known: the price and who")
 	tip.lines = {}
 	A.tooltipHook(tip, { id = 4599 })
-	check(tostring(tip.lines[1]):find("Vendor Kira Cook +2 more", 1, true), "and the tooltip says it: " .. tostring(tip.lines[1]))
+	check(tostring(tip.lines[1]):find("Vendor (buy) Kira Cook +2 more", 1, true), "and the tooltip says it: " .. tostring(tip.lines[1]))
 	A.env.LibQuestieDB = wasQ
 	tip.lines = lines
 	CS[5001], CS[5003] = nil, nil
@@ -2985,10 +3096,10 @@ step(2)
 check(GF.db.guild["Fay Smith"].ids[5002], "with sharing off nothing comes in")
 Gus.DT.db.settings.share = true
 local function foodMsg(payload) return table.concat({ "food", "KNOWN", 1, "z", LibDeflate:EncodeForWoWAddonChannel(LibDeflate:CompressDeflate(payload)) }, "\t") end
-inject(Gus, "Mallory-Forever", foodMsg("Gus Smith;5001,5002"))
+inject(Gus, "Mallory-Smith", foodMsg("Gus Smith;5001,5002"))
 check(not GF.db.guild["Gus Smith"], "nobody else speaks for my own characters")
-inject(Gus, "Mallory-Forever", foodMsg("no list here"))
-inject(Gus, "Mallory-Forever", foodMsg(("x"):rep(50) .. ";5001"))
+inject(Gus, "Mallory-Smith", foodMsg("no list here"))
+inject(Gus, "Mallory-Smith", foodMsg(("x"):rep(50) .. ";5001"))
 eq(GF.db.guild[("x"):rep(50)], nil, "and nonsense is dropped")
 leave(Fay) leave(Gus) leave(Hal)
 
@@ -3186,11 +3297,11 @@ do
 	-- Quests: read from QuestieDB the same way; what is open to me, and the chains
 	local Quest = B2.DT.Quest
 	local QUESTS = {
-		[100] = { name = "Fish for Gorak", requiredLevel = 5, questLevel = 8, zoneOrSort = 1637, startedBy = { { 10 } } },
+		[100] = { name = "Fish for Gorak", requiredLevel = 5, questLevel = 8, zoneOrSort = 1637, startedBy = { { 10 } }, objectives = { nil, nil, { { 5001, 3 } } } },
 		[101] = { name = "More Fish", requiredLevel = 8, questLevel = 10, zoneOrSort = 1637, preQuestSingle = { 100 }, startedBy = { { 10 } } },
 		[102] = { name = "The Big One", requiredLevel = 10, questLevel = 12, zoneOrSort = 17, preQuestSingle = { 101 }, requiredSkill = { 356, 50 }, startedBy = { { 11 } } },
 		[103] = { name = "Side Catch", requiredLevel = 1, questLevel = 10, zoneOrSort = 17, preQuestGroup = { 100, 104 } },
-		[104] = { name = "Alliance Errand", requiredLevel = 1, questLevel = 10, zoneOrSort = 12, requiredRaces = 1 },
+		[104] = { name = "Alliance Errand", requiredLevel = 1, questLevel = 10, zoneOrSort = 12, requiredRaces = 1, startedBy = { nil, nil, { 5002 } } },
 		[105] = { name = "Deadmines Run", requiredLevel = 15, questLevel = 20, zoneOrSort = 12 },
 		[106] = { name = "Mage Trial", requiredLevel = 1, questLevel = 10, zoneOrSort = -161, requiredClasses = 128 },
 		[107] = { name = "Daily Bread", requiredLevel = 1, questLevel = 5, zoneOrSort = 1637, questFlags = 4096 },
@@ -3234,6 +3345,26 @@ do
 	local function strip(text) return (text:gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", "")) end
 	eq(qnames(), "Daily Bread, Deadmines Run, Fish for Gorak, More Fish, Side Catch, The Big One", "the other side's and other classes' quests are left out to begin with")
 	check(btext("6 of 8 quests"), "with a count")
+	;(function() -- a quest item's tooltip: still needed, or safe to delete once its quests are done
+		B2.env.C_Item = B2.env.C_Item or {}
+		local was = B2.env.C_Item.GetItemInfoInstant
+		B2.env.C_Item.GetItemInfoInstant = function(id) return id, "Quest", "Quest", "", 1, (id == 5001 or id == 5002) and 12 or 7, 0 end
+		local function line(id)
+			local t = { lines = {} }
+			t.AddLine = function(self, l) self.lines[#self.lines + 1] = l end
+			Quest.OnTooltip(t, { id = id })
+			return t.lines[1] and strip(t.lines[1]) or ""
+		end
+		check(line(5001):find("DT: NOT safe to delete", 1, true) and line(5001):find("needed for Fish for Gorak", 1, true), "an item a quest of mine still asks for: " .. line(5001))
+		check(line(5002):find("DT: Safe to delete", 1, true), "one that starts the other side's quest: it may go")
+		qdone[100] = true; B2.fire("QUEST_TURNED_IN", 100)
+		check(line(5001):find("DT: Safe to delete", 1, true) and line(5001):find("Fish for Gorak", 1, true), "its quest done: safe to delete, and why: " .. line(5001))
+		qdone[100], Quest.db.turned = nil, nil; B2.fire("QUEST_REMOVED", 100) -- (the hand-in is remembered: forgotten again for the checks after)
+		eq(line(4444), "", "an item no quest uses: nothing said")
+		Quest.db.settings.itemTip = false
+		eq(line(5002), "", "the line can be switched off"); Quest.db.settings.itemTip = true
+		B2.env.C_Item.GetItemInfoInstant = was
+	end)()
 	-- nested: each quest under the one that opens it
 	local function nest()
 		local out = {}
@@ -3341,6 +3472,19 @@ do
 		env.ChatEdit_InsertLink, env.ChatFrame_OpenChat = wasInsert, wasOpen
 		env.IsShiftKeyDown, env.StaticPopup_Show = wasShift, wasPopup
 		Quest.chain:Hide()
+	end)()
+	;(function() -- a quest Questie itself hides as not in the game (the second The Videre Elixir) is not listed
+		local id
+		for _, r in ipairs(Quest.Find("", {})) do if r.e.name == "Side Catch" then id = r.e.id end end
+		B2.env.QuestieLoader = { ImportModule = function() return { hiddenQuests = { [id] = true } } end }
+		local gone = true
+		for _, r in ipairs(Quest.Find("", {})) do gone = gone and r.e.id ~= id end
+		check(gone, "a quest Questie hides is left out")
+		B2.env.QuestieLoader = { ImportModule = function() return { hiddenQuests = { [id] = "HIDE_ON_MAP" } } end }
+		local back = false
+		for _, r in ipairs(Quest.Find("", {})) do back = back or r.e.id == id end
+		check(back, "one it only keeps off the map stays")
+		B2.env.QuestieLoader = nil
 	end)()
 	;(function() -- an instance picked: a quest of it brings along the steps that lead up to it
 		local by = {}
@@ -3552,6 +3696,21 @@ do
 		step(1)
 		eq(Quest.Mark(run), nil, "one the game itself says is done is left as it is"); eq(Quest.Status(run), "done", "done")
 		qdone[run.id] = nil
+		B2.fire("QUEST_ACCEPTED")
+		step(1)
+	end)()
+	;(function() -- a prerequisite that was repeatable and only handed in while the addon looked still opens what follows
+		local run
+		for _, r in ipairs(Quest.Find("", {})) do if r.e.name == "Deadmines Run" then run = r.e end end
+		local guid, pre, min = B2.env.UnitGUID("player"), run.preAll, run.min
+		run.preAll, run.min = { 987654 }, 0
+		eq(select(2, Quest.Status(run)), "after: quest 987654", "(its prerequisite is not done)")
+		Quest.db.turned = Quest.db.turned or {}; Quest.db.turned[guid] = Quest.db.turned[guid] or {}
+		Quest.db.turned[guid][987654] = true
+		B2.fire("QUEST_ACCEPTED")
+		step(1)
+		eq(select(2, Quest.Status(run)) ~= "after: quest 987654", true, "handed in: no longer waits for it")
+		Quest.db.turned[guid][987654], run.preAll, run.min = nil, pre, min
 		B2.fire("QUEST_ACCEPTED")
 		step(1)
 	end)()
@@ -4657,7 +4816,8 @@ local ME_GUID = "Player-Alice"
 local function log(event, sGUID, sName, dGUID, dName, ...)
 	local extra = { ... }
 	A.log = { 0, event, false, sGUID, sName, 0, 0, dGUID, dName, 0, 0, extra[1], extra[2], extra[3], extra[4], extra[5], extra[6], extra[7], extra[8], extra[9], extra[10] }
-	A.fire("COMBAT_LOG_EVENT_UNFILTERED")
+	Combat.open = true -- (the module never registers for the log: the test feeds it)
+	Combat.OnLog()
 end
 A.env.GetRealZoneText = function() return "Stranglethorn Vale" end
 A.env.GetSubZoneText = function() return "Nesingwary's Expedition" end
@@ -4684,7 +4844,7 @@ eq(death.hits[2][5], nil, "a plain swing is not")
 ;(function()
 	local kills, deaths, wasOpen = #Combat.db.kills, #Combat.db.deaths, Combat.open
 	local oldGUID, oldName = A.env.UnitGUID, A.env.UnitName
-	eq(wasOpen, true, "a client with an open combat log reads it")
+	eq(wasOpen, true, "the log is fed by the test only")
 	Combat.open = false
 	A.env.UnitGUID = function(u) if u == "target" then return "Player-Enemy" end return oldGUID(u) end
 	A.env.UnitName = function(u) if u == "target" then return "Gankalot" end return oldName and oldName(u) end
@@ -4800,7 +4960,7 @@ check(recapOf:find("425 damage taken in the last 10 seconds, from 3 attackers.",
 check(recapOf:find("1x ; Zed: Fireball ; 300 ; 71%, biggest 300, 1 critical", 1, true), "by ability, biggest first")
 check(recapOf:find("-0.0 ; Zed: Ignite ; 60 ; killing blow", 1, true) and recapOf:find("-2.0 ; Zed: Fireball ; 300 ; critical", 1, true), "and hit by hit")
 eq(Combat.Recap(death, true).title, "Killed by |cffff4040Zed|r", "headed by the killer"); eq(death.hits[1].i, 133, "the spell's number is kept for its icon")
-check(recapText({ t = 0, zone = "Z", sub = "", killer = "Old", assists = {} }, true):find("from before the recap was kept", 1, true), "a death from before has none")
+check(recapText({ t = 0, zone = "Z", sub = "", killer = "Old", assists = {} }, true):find("its hits are no longer kept", 1, true), "a death with its hits dropped has none")
 step(5)
 log("ENVIRONMENTAL_DAMAGE", nil, nil, ME_GUID, "Alice", "Falling", 500)
 log("UNIT_DIED", nil, nil, ME_GUID, "Alice")
@@ -5205,9 +5365,12 @@ do
 		local loader = Zed.env.QuestieLoader
 		Zed.env.QuestieLoader = nil
 		Zed.env.loadstring = _G.load -- (the game has loadstring; "load" alone is a helper of this file)
-		Zed.env.LibQuestieDB.Support = { Get = function(name) return name == "ZoneDB" and { private = { areaIdToUiMapId = "return { [4242] = 1453 }" } } or nil end }
+		Zed.env.LibQuestieDB.Support = { Get = function(name) return name == "ZoneDB" and { private = { areaIdToUiMapId = "return { [4242] = 1453, [4243] = 1453 }" } } or nil end }
 		Zed.env.C_Map.GetMapInfo = function(map) return { mapID = map } end
 		eq(Zed.DT.Npc.MapOf(4242), 1453, "without Questie, QuestieDB's own table gives a zone's map")
+		-- Questie there but its ZoneDB not ready (nil, no error): the table still answers
+		Zed.env.QuestieLoader = { ImportModule = function() return { GetUiMapIdByAreaId = function() return nil end } end }
+		eq(Zed.DT.Npc.MapOf(4243), 1453, "Questie answering nil falls through to QuestieDB's table")
 		Zed.env.QuestieLoader = loader
 	end)()
 	eq(Zed.DT.Npc.MapOf(718), nil, "a map this game does not have is no map")
@@ -5226,7 +5389,7 @@ do
 	Pia.slash("settings")
 	local titles = {}
 	for i, b in ipairs(UI.sectionButtons) do titles[i] = (b.label.text:gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", "")) end
-	eq(table.concat(titles, " / "), "General / Profiles / Tabs & Modules / Built-ins / Market / BiS / Data Sync", "the Settings tab lists its sections: the fixed ones, then one per module with switches, Data Sync at the bottom")
+	eq(table.concat(titles, " / "), "General / Profiles / Tabs & Modules / Built-ins / Tooltips / Market / BiS / Data Sync", "the Settings tab lists its sections: the fixed ones, then one per module with switches, Data Sync at the bottom")
 	eq(db.settingsSection, "general", "General to begin with"); eq(UI.sectionPanels.general.shown, true, "its panel shown"); eq(UI.sectionPanels.profiles.shown, false, "the others not")
 	click(UI.sectionButtons[2])
 	eq(db.settingsSection, "profiles", "a click shows a section"); eq(UI.sectionPanels.profiles.shown, true, "its panel"); eq(UI.sectionPanels.general.shown, false, "the last one hidden")
@@ -5345,6 +5508,8 @@ end
 		[9014] = { "Dungeon Helm", "INVTYPE_HEAD", { ITEM_MOD_STAMINA_SHORT = 28 } },
 	}
 	for id, g in pairs(GEAR) do ITEMS[id] = { g[1], 2, 1, 100, false, 4, 0, slot = g[2] } end
+	GEAR[9015] = { "Lofty Helm", "INVTYPE_HEAD", { ITEM_MOD_STAMINA_SHORT = 90 } }
+	ITEMS[9015] = { "Lofty Helm", 2, 1, 100, false, 4, 0, slot = "INVTYPE_HEAD", lvl = 50 } -- (on the list, but not to be worn before level 50)
 	local worn = { [1] = 9001, [7] = 9007 }
 	local X = NewClient("Bis", { globals = function(env)
 		env.GetInventoryItemID = function(_, slot) return worn[slot] end
@@ -5382,7 +5547,7 @@ end
 	local prot = B.Profile()
 	eq(prot.id, "warrior-protection", "the spec picked"); eq(prot.caps.def.cap, 440, "defense 440"); eq(prot.caps.def.hard, true, "before anything else")
 	eq(prot.caps.hit.cap, 8, "hit 8%"); eq(prot.caps.exp.cap, 6.5, "expertise 6.5%")
-	X.DT.BisLists["warrior-protection"] = { [9003] = "quest", [9005] = "crafted", [9006] = "quest" }
+	X.DT.BisLists["warrior-protection"] = { [9003] = "quest", [9005] = "crafted", [9006] = "quest", [9015] = "quest" }
 	X.bags = { 9002, 9004, 100 }
 	X.fire("BAG_UPDATE_DELAYED")
 	B.Edit("def", "cap", 70) -- (a cap within reach of level 10)
@@ -5417,9 +5582,31 @@ end
 	step(1)
 	s = B.State()
 	eq(#s.upg, 1, "the legs on the list are worse than mine: one upgrade"); eq(s.upg[1].id, 9003, "the helm"); eq(s.rank[9003], 1, "numbered")
+	eq(B.Item(9015).lvl, 50, "a listed helm for level 50"); check(not s.rank[9015] and s.bis.rows[1] ~= 9015, "is no upgrade and not in the best set at level 10")
+	check(B.Gain(9015, true) == nil or (B.Gain(9015) and B.Gain(9015).level == 50), "its tooltip still says from which level")
+	-- the Upgrades filter: by where an item is from, or one dungeon
+	check(B.Passes(9003, "all"), "no filter: every upgrade")
+	eq(B.Passes(9003, B.Kind(9003) or "boe"), true, "its own kind passes"); eq(B.Passes(9003, "d:Nowhere"), false, "a dungeon that does not drop it does not")
+	-- the sets and upgrades are saved; worked out again from the very same, they are taken from there
+	check(B.db.saved[s.skey] and B.db.saved[s.skey].sig == s.sig, "the sets and upgrades are saved")
+	B.Stale()
+	local again = B.State()
+	check(again ~= s and #again.queue == 0 and again.upg[1] and again.upg[1].id == 9003 and again.at, "the same again: taken from what was saved, nothing to work out")
+	eq(again.bis.score, s.bis.score, "the same best set")
+	check(not B.db.saved[s.skey].bis.rows and not B.db.saved[s.skey].bis.swaps, "nothing of the views goes into the file")
+	B.Recalc()
+	eq(B.db.saved[s.skey], nil, "Recalculate drops it")
+	s = B.State()
+	step(1)
+	s = B.State()
 	tip.lines = {}
 	X.tooltipHook(tip, { id = 9003 })
 	check(tip.lines[#tip.lines]:find("#1 upgrade", 1, true), "and the tooltip says which upgrade it is")
+	tip.lines = {}
+	X.tooltipHook(tip, { id = 9002 })
+	check(tostring(tip.lines[#tip.lines]):find("in your best set", 1, true) and tostring(tip.lines[#tip.lines]):find("vs worn", 1, true), "one I own: in the best set, and what it does against the helm I wear: " .. tostring(tip.lines[#tip.lines]))
+	local _, d = B.VsWorn(s, 9002)
+	eq(math.floor(d * 10 + 0.5) / 10, math.floor((B.Worth(s, s.curGear, 9002, 9001) - B.Worth(s, s.curGear, 9001, 9001)) * 10 + 0.5) / 10, "against the worn helm's own weight")
 	-- rolled for
 	local before = #X.printed
 	X.fire("START_LOOT_ROLL", 1)
@@ -5475,15 +5662,17 @@ end
 	-- the right side: at the last level (here level 10 is the last) the whole set to begin with, in versions to compare
 	eq(G.head.text, "Whole set", "the last level opens on the whole set")
 	local L = G.lines
-	check(L[1].head.text:find("Score", 1, true) and L[1].head.text:find("the set you wear", 1, true), "its score, and that of the set worn")
-	check(L[2].head.text:find("Defense 70", 1, true) and L[2].head.text:find("you: ", 1, true) and L[2].head.text:find("this set: ", 1, true) and L[3].head.text:find("Expertise", 1, true) and L[4].head.text:find("Hit", 1, true), "then each cap, as I stand and as the set would: " .. L[2].head.text)
-	check(L[2].head.text:find("short by 10", 1, true) and L[2].head.text:find("reached", 1, true), "defense: ten short in what I wear, reached in the set")
-	check(L[5].n.text:find("Head", 1, true) and L[5].item.id == 9003 and L[5].from.text:find("Quest", 1, true) and L[5].diff.text:find("%+") and L[5].pct.text:find("%%"), "a line for each slot: the item, what it alone would gain, where it is from")
-	check(L[5].warn.text:find("#1", 1, true) and L[5].item.swap and L[5].item.swap[1]:find("Just this piece", 1, true), "where it comes in the order to buy in, and the detail on a hover")
-	check(L[13].n.text:find("Legs", 1, true) and L[13].item.id == 9005 and L[13].diff.text:find("-8.0", 1, true) and L[13].warn.text:find("#", 1, true), "a listed piece that is worse than what I wear is shown too, with what it costs: " .. L[13].diff.text)
+	local S = G.sum
+	check(S[2][1].text == "Score" and S[2][2].text ~= "" and S[2][3].text ~= "", "its score beside that of the set worn, in a table of their own above the items")
+	check(S[1][2].text:find("You now", 1, true) and S[1][3].text:find("Best set", 1, true), "headed: you now, and the set picked")
+	check(S[3][1].text:find("Defense", 1, true) and S[3][1].text:find("70", 1, true) and S[4][1].text:find("Expertise", 1, true) and S[5][1].text:find("Hit", 1, true), "then each cap: " .. S[3][1].text)
+	check(S[3][2].text:find("short by 10", 1, true) and S[3][3].text:find("reached", 1, true), "defense: ten short in what I wear, reached in the set")
+	check(L[1].n.text:find("Head", 1, true) and L[1].item.id == 9003 and L[1].from.text:find("Quest", 1, true) and L[1].diff.text:find("%+") and L[1].pct.text:find("%%"), "a line for each slot: the item, what it alone would gain, where it is from")
+	check(L[1].warn.text:find("#1", 1, true) and L[1].item.swap and L[1].item.swap[1]:find("Just this piece", 1, true), "where it comes in the order to buy in, and the detail on a hover")
+	check(L[9].n.text:find("Legs", 1, true) and L[9].item.id == 9005 and L[9].diff.text:find("-8.0", 1, true) and L[9].warn.text:find("#", 1, true), "a listed piece that is worse than what I wear is shown too, with what it costs")
 	eq(#X.DT.Bis.PERMS, 4, "the set worn and three more to compare"); eq(G.perms[1].shown, true, "a button each")
-	click(G.perms[3]); eq(B.perm, 3, "the third"); check(L[1].head.text:find("Score", 1, true), "is shown"); check(B.Perm(3).short.def == nil, "the one that reaches every cap, as the gear there is allows: defense is")
-	click(G.perms[4]); check(L[5].item.shown, "and the fourth"); click(G.perms[1]); check(L[5].item.id == 9001 and L[5].diff.text == "" and L[5].warn.text == "", "the set worn: its own items, no swaps")
+	click(G.perms[3]); eq(B.perm, 3, "the third"); check(G.sum[1][3].text:find("Every cap", 1, true), "is shown"); check(B.Perm(3).short.def == nil, "the one that reaches every cap, as the gear there is allows: defense is")
+	click(G.perms[4]); check(L[1].item.shown, "and the fourth"); click(G.perms[1]); check(L[1].item.id == 9001 and L[1].diff.text == "" and L[1].warn.text == "", "the set worn: its own items, no swaps"); eq(G.sum[1][3].text, "", "and no second column beside mine")
 	click(G.perms[2])
 	eq(G.back.shown, false, "no way back from the whole set")
 	click(G.slots[1])
@@ -5521,6 +5710,8 @@ end
 	B.Show("up")
 	check(B.up.rows[1].item.text.text:find("Helm of the List", 1, true) and B.up.rows[1].gain.text:find("+35.0", 1, true), "Upgrades lists what to get next")
 	eq(B.up.rows[1].icon.texture, 1000 + 9003, "with its picture")
+	eq(B.up.heads[5].text, "weight", "column titles, as on Gear"); check(B.up.rows[1].wt.text ~= "" and B.up.rows[1].diff.text ~= "" and B.up.rows[1].from.text ~= "", "weight, vs worn and the source filled in")
+	check(B.up.rows[1].slot.text:find("Head", 1, true), "and the slot it goes in")
 	B.Show("check")
 	local text = B.check.text.text
 	check(text:find("Old Helm", 1, true) and text:find("Stamina 10", 1, true), "Check shows what was read of each item worn")
@@ -5610,8 +5801,15 @@ end)()
 		B.Pick(raw.id)
 		local p = B.Profile()
 		local same = true
-		for word, n in pairs(raw.w) do same = same and p.w[word] == n end
-		for word, n in pairs(p.w) do same = same and (raw.w[word] == n or (raw.caps[word] and n == 0)) end
+		-- (weapon DPS with no ranged weight of its own: split between the melee and the ranged slot, checked below)
+		local split = raw.w.rdps == nil and raw.w.dps
+		local function kept(word) return not (split and (word == "dps" or word == "rdps")) end
+		for word, n in pairs(raw.w) do same = same and (not kept(word) or p.w[word] == n) end
+		for word, n in pairs(p.w) do same = same and (not kept(word) or raw.w[word] == n or (raw.caps[word] and n == 0)) end
+		if split then
+			local ranged = raw.class == "HUNTER" and raw.w.dps or raw.w.dps / 10
+			check(p.w.rdps == ranged, raw.id .. ": a ranged weapon's DPS weighed for its slot")
+		end
 		for word, cap in pairs(raw.caps) do
 			local at = p.caps[word]
 			same = same and at and at.cap == cap.cap and (at.over or 0) == (cap.over or 0) and at.hard == cap.hard
@@ -5726,6 +5924,7 @@ end)()
 	eq(heads, 6, "of ten cowls the best six go into the set"); eq(s.bis.rows[1], 9103, "the best of them is its head")
 	check(s.bis.score > 0, "a set for a class that has no list of its own")
 	-- my own class: the same, and what I do not own is an upgrade
+	e.CanDualWield = function() return true end -- (at level 10: the client says this warrior already wields two)
 	B.Pick("warrior-fury")
 	Look()
 	step(5)
@@ -5735,6 +5934,7 @@ end)()
 	eq(#rank.above, 2, "an empty slot: what is worth anything is above"); eq(rank.above[2].id, 9111, "the sold mail helm after the better one"); eq(B.Tag(9111, "vendor"), "Vendor", "and a vendor")
 	eq(#rank.below, 4, "four of the rest are shown under it"); eq(rank.worn, nil, "nothing worn to show"); eq(rank.above[1].new, true, "an empty slot: the gain is all new"); eq(rank.above[1].pct, nil, "and no percent")
 	eq(B.Rank(11, 14, 4).ref, 12, "two rings: the empty finger is the one to beat"); eq(B.Rank(11, 14, 4).above[1].id, 9131, "the better ring is above it")
+	step(2) -- (the tab is shut: the set was worked out when asked for just now, its gains come a frame each after)
 	eq(s.upg[1] and s.upg[1].id, 9110, "upgrades without a list: the helm gains the most"); eq(s.rank[9110], 1, "numbered")
 	-- the tooltip: where the item goes
 	local tip = e.GameTooltip
@@ -5750,7 +5950,9 @@ end)()
 	eq(B.Gain(9150).no, true, "though it is known not to be for me")
 	B.Pick("warrior-arms")
 	B.Compute()
-	check(Line(9142):find("Two-hand", 1, true), "a two-hander says so")
+	eq(Line(9142), nil, "a tooltip does not wait for a gain not yet worked out")
+	step(1)
+	check(Line(9142):find("Two-hand", 1, true), "a two-hander says so, a moment later")
 	B.Pick("warrior-fury")
 	B.Compute()
 	-- in a fight: nothing is asked of the game, nothing said of an item not seen
@@ -5971,16 +6173,16 @@ end)()
 	X.DT.UI:Show("bis")
 	local G = B.gear
 	eq(G.head.text, "Whole set", "the last level opens on the whole set"); eq(G.perms[4].shown, true, "with the set worn and three versions to compare")
+	step(2) -- (the upgrades a set is made of are worked out a frame each)
 	local set1, set2, set3 = B.Perm(2), B.Perm(3), B.Perm(4)
 	eq(set1.rows[1], 9305, "the best set has the best helm there is before the raids"); eq(set2.rows[1], 9305, "the one that reaches every cap too, there being none"); eq(set3.rows[1], 9305, "and the one of what I own and the best finds")
 	click(G.slots[1]); eq(G.head.text, "Head", "a slot clicked: its list"); click(G.back); eq(G.head.text, "Whole set", "and back")
-	B.SetPhase("all"); Look()
-	eq(B.Phase()[2], "Everything", "the other phase"); eq(List(), "9306,9305,9304,9307", "has the raid's drops too"); eq(B.finder.kind[9308], "boe", "that raid's as well"); eq(B.Perm(2).rows[1], 9306, "and the set the raid's helm")
-	B.SetPhase("pre"); eq(B.Phase()[1], "pre", "and back")
-	table.insert(B.PHASES, 2, { "one", "Tier 1", { "Onyxia's Lair" } }) -- (a tier is one more line: a name, and the raids out so far)
-	B.SetPhase("one"); Look()
-	eq(B.Phase()[2], "Tier 1", "a tier"); eq(List(), "9306,9305,9304,9307", "has the raids it names")
-	table.remove(B.PHASES, 2)
+	B.SetPhase("Onyxia's Lair"); Look()
+	eq(B.Phase()[2], "Pre-raid + Onyxia's Lair", "a raid ticked"); eq(List(), "9306,9305,9304,9307", "has its drops too"); eq(B.finder.kind[9308], nil, "not those of a raid not ticked (Naxxramas)"); eq(B.Perm(2).rows[1], 9306, "and the set the raid's helm")
+	B.SetPhase("Naxxramas"); Look()
+	eq(B.Phase()[2], "Pre-raid + Onyxia's Lair, Naxxramas", "a second one"); eq(B.finder.kind[9308], "boe", "and that raid's drop as well")
+	B.SetPhase("Naxxramas"); eq(B.Phase()[2], "Pre-raid + Onyxia's Lair", "clicked again: unticked")
+	B.SetPhase("pre"); eq(B.Phase()[1], "pre", "and back to none"); eq(B.db.phase[B.me], nil, "nothing kept of it")
 	B.db.phase[B.me] = nil
 	-- the controls: a box for the level, a way back, the phase button
 	X.DT.UI:Show("bis")
@@ -5991,9 +6193,9 @@ end)()
 	check(C.phase.menu.shown, "the phase button opens its list")
 	local named = {}
 	for _, row in ipairs(C.phase.menu.rows) do if row.shown and row.entry then named[#named + 1] = row.entry.text end end
-	eq(table.concat(named, ","), "Pre-raid,Everything", "the list has every phase")
+	eq(named[1], "Pre-raid only (no raids)", "the list: pre-raid, then every raid"); check(named[2]:find("Onyxia's Lair", 1, true) and named[3]:find("Mount Hyjal", 1, true) and named[5]:find("old world", 1, true), "Forever's own first, then the old world's: " .. named[5])
 	click(C.phase.menu.rows[2])
-	eq(B.Phase()[1], "all", "one picked from it"); eq(C.phase.label.text, "Everything", "and shown on the button"); eq(C.phase.menu.shown, false, "the list closes")
+	eq(B.Phase()[2], "Pre-raid + Onyxia's Lair", "one ticked from it"); eq(C.phase.label.text, "Onyxia's Lair", "and shown on the button"); eq(C.phase.menu.shown, false, "the list closes")
 	B.SetPhase("pre")
 	-- the level: - and + step it, the number can be typed, the list is made anew once it has settled
 	local calls, real = 0, B.SetLevel
@@ -6218,6 +6420,7 @@ end)()
 	-- my own counter never comes back in from the wire, however new it claims to be
 	local forged = ("loot:9000:%s\t%d\town\t%s"):format(a.Origin(), P.DT.Now() + 100, "999;872:999")
 	eq(a.Take("loot:35", forged), 0, "a counter of my own origin is not taken from another"); eq(a.Row("loot:9000:" .. a.Origin()).v, "4;872:1", "mine stands")
+	eq(a.Take("npc:99999", "npc:25500000	1	own	far"), 0, "nor a chunk a peer names out of the scheme")
 	eq(a.Take("npc:35", "item:5\t1\town\tfiled in the wrong chunk"), 0, "nor a row that does not belong in the chunk it came in")
 	local stats = a.Stats()
 	eq(stats.rows, 9, "the store says what it holds (the loot counted, and the item and the chest that were new, written down)"); check(stats.bytes > 0 and stats.chunks >= 3 and stats.root == a.Root(), "rows, chunks, size and hash")
@@ -6276,9 +6479,9 @@ end)()
 	eq(C1.DT.DB.Root(), b.Root(), "all of it")
 	-- only what was asked for is taken
 	local forged = "C=" .. LibDeflate:EncodeForWoWAddonChannel(LibDeflate:CompressDeflate("npc:35\nnpc:9000\t" .. (Now() + 50) .. "\tguild\tA lie"))
-	C1.hear("DAWND", forged, "WHISPER", "Ben-Forever")
+	C1.hear("DAWND", forged, "WHISPER", "Ben-Smith")
 	eq(C1.DT.DB.Row("npc:9000").v, "Gar'Thok;12;Durotar", "a chunk nobody asked for is not taken")
-	C1.hear("DAWND", forged, "GUILD", "Ben-Forever")
+	C1.hear("DAWND", forged, "GUILD", "Ben-Smith")
 	eq(C1.DT.DB.Row("npc:9000").v, "Gar'Thok;12;Durotar", "nor one that did not come as a whisper")
 	-- in a fight nothing is asked; afterwards it goes on
 	b.Put("npc:70001", "Mankrik")
@@ -6351,6 +6554,10 @@ end)()
 	X.bags = { 9300, 100 }
 	X.fire("BAG_UPDATE_DELAYED")
 	X.items()[9301] = { p = 5, q = 1, t = Now(), o = "", d = {}, n = "Auctioned Oddity" }
+	F.Sweep()
+	eq(D.Row("item:9301"), nil, "an item the game has not loaded yet: not noted with a guessed quality")
+	ITEMS[9301] = { "Auctioned Oddity", 2, 1, 100, false, 4, 0 }
+	X.fire("GET_ITEM_INFO_RECEIVED", 9301, true)
 	F.Sweep()
 	check(D.Row("item:9300").v:find("^Odd Trinket;"), "an item in my bags that is not known"); check(D.Row("item:9301").v:find("^Auctioned Oddity;"), "and one seen on the auction house")
 	local all = F.All(true)

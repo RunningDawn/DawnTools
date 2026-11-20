@@ -462,7 +462,7 @@ local function DrawDetail(now)
 	detail.text:SetText(table.concat(lines, "\n"))
 	detail.fav:SetText(M.db.favs[id] and "Unfavourite" or "Favourite")
 	detail.fav:Show()
-	detail.ah:SetEnabled(M.ahOpen and true or false)
+	detail.ah:SetEnabled(M.ahOpen and not M.scanning or false)
 	detail.ah:Show()
 end
 
@@ -525,7 +525,8 @@ local function Row(i)
 		if not self.id then return end
 		GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
 		GameTooltip:SetHyperlink("item:" .. self.id)
-		if VendorText(self.id) then GameTooltip:AddLine(VendorText(self.id), 1, 0.82, 0, true) end
+		-- (the item tooltip's own Vendor line says it, when on)
+		if not M.db.settings.tooltip and VendorText(self.id) then GameTooltip:AddLine(VendorText(self.id), 1, 0.82, 0, true) end
 		GameTooltip:Show()
 	end)
 	row:SetScript("OnLeave", function() GameTooltip:Hide() end)
@@ -666,7 +667,9 @@ end
 
 -- A search for exactly this item, so its price here is fresh. The player's click is what sends it.
 local function CheckPrice(id)
-	if not (M.ahOpen and C_AuctionHouse.SendSearchQuery and C_AuctionHouse.MakeItemKey) then return end
+	if not (M.ahOpen and not M.scanning and C_AuctionHouse.SendSearchQuery and C_AuctionHouse.MakeItemKey) then return end
+	local ready = C_AuctionHouse.IsThrottledMessageSystemReady
+	if ready and not ready() then return DT:Print("The auction house is busy: try again in a moment.") end
 	C_AuctionHouse.SendSearchQuery(C_AuctionHouse.MakeItemKey(id), {}, false)
 end
 
@@ -1003,7 +1006,9 @@ function V.TooltipText(id, n)
 	n = n and n > 1 and n or 1
 	local now = DT.Now()
 	local median = L.Median(item, 7, now)
-	return ("%s%s (%s)%s"):format(DT.Money(item.p * n), n > 1 and (" x" .. n) or "", L.Ago(now - item.t), median and (" · 7d median " .. DT.Money(median * n)) or "")
+	-- the latest price, how long ago it was seen, the 7-day median (nil without one): two lines of the tooltip, the prices under each other
+	local x = n > 1 and (" x" .. n) or ""
+	return DT.Money(item.p * n) .. x, L.Ago(now - item.t), median and (DT.Money(median * n) .. x) or nil
 end
 
 -- Who sells an item, by QuestieDB where that is installed: the first vendor's name and how many there are;
@@ -1036,7 +1041,8 @@ function V.VendorText(id, n)
 end
 
 local function OnTooltipItem(tip, data)
-	if not M.db.settings.tooltip or (tip ~= GameTooltip and tip ~= ItemRefTooltip) then return end
+	local set = M.db.settings
+	if (tip ~= GameTooltip and tip ~= ItemRefTooltip) or not (set.tooltip or set.vendorTip or set.craftTip) then return end
 	local id = data and data.id
 	if not id and tip.GetItem then
 		local _, link = tip:GetItem()
@@ -1050,14 +1056,35 @@ local function OnTooltipItem(tip, data)
 		local count = ok and type(owner) == "table" and owner.count
 		if type(count) == "number" and count > 1 and not (issecretvalue and issecretvalue(count)) then n = count end
 	end
-	local text = id and V.TooltipText(id, n)
-	if text then tip:AddDoubleLine("Guild AH", text, 0.78, 0.68, 0.37, 1, 1, 1) end
-	local sold = id and DT.DB.Vendor(id)
-	local band, profession = DT.CraftBand(id)
-	if band then tip:AddDoubleLine(profession, band, 0.78, 0.68, 0.37, 1, 1, 1) end
-	local unseen = id and not sold and V.VendorText(id, n)
-	if unseen then tip:AddDoubleLine("Vendor", unseen, 0.78, 0.68, 0.37, 1, 1, 1) end
-	if sold then tip:AddDoubleLine("Vendor", ("%s%s at %s, %s%s"):format(DT.Money(sold.p * n), n > 1 and (" x" .. n) or "", sold.v, sold.z, sold.l and " (limited)" or ""), 0.78, 0.68, 0.37, 1, 1, 1) end
+	-- in this order: what a vendor pays for it, what a vendor sells it for, the auction price, the recipes it goes into
+	local function Line(label, text) tip:AddDoubleLine(DT.TIP .. label, text, 0.78, 0.68, 0.37, 1, 1, 1) end
+	local pays = set.vendorTip and id and C_Item.GetItemInfo and select(11, C_Item.GetItemInfo(id))
+	if type(pays) == "number" and pays > 0 then Line("Vendor (sell)", DT.Money(pays * n) .. (n > 1 and (" x" .. n) or "")) end
+	local sold = set.vendorTip and id and DT.DB.Vendor(id)
+	local unseen = set.vendorTip and id and not sold and V.VendorText(id, n)
+	if unseen then Line("Vendor (buy)", unseen) end
+	if sold then Line("Vendor (buy)", ("%s%s at %s, %s%s"):format(DT.Money(sold.p * n), n > 1 and (" x" .. n) or "", sold.v, sold.z, sold.l and " (limited)" or "")) end
+	local price, ago, median = nil, nil, nil
+	if set.tooltip and id then price, ago, median = V.TooltipText(id, n) end
+	if price then Line(("Auction (%s)"):format(ago), price) end
+	if median then Line("Auction (7d median)", median) end
+	if set.craftTip and id then
+		local band, profession = DT.CraftBand(id)
+		if band then Line(profession, band) end
+		-- the recipes it is a material of: how many; with Shift held, their names
+		local used = DT.UsedIn(id)
+		if used then
+			local shift = IsShiftKeyDown and IsShiftKeyDown()
+			tip:AddLine(DT.TIP .. ("Used in %d recipe%s%s"):format(#used, #used == 1 and "" or "s", shift and "" or "  |cff888888(hold Shift)|r"), 0.78, 0.68, 0.37)
+			if shift then
+				local names = {}
+				for i, u in ipairs(used) do names[i] = { DT.RecipeName(u.spell, u.r), DT.ProfessionName(u.r[1]) or "" } end
+				table.sort(names, function(a, b) if a[2] ~= b[2] then return a[2] < b[2] end return a[1] < b[1] end)
+				for i = 1, math.min(#names, 15) do tip:AddDoubleLine("   " .. names[i][1], names[i][2], 1, 1, 1, 0.6, 0.6, 0.6) end
+				if #names > 15 then tip:AddLine(("   ...and %d more"):format(#names - 15), 0.6, 0.6, 0.6) end
+			end
+		end
+	end
 end
 
 ---------------------------------------------------------------------------
@@ -1077,12 +1104,14 @@ DT:RegisterModule("market", {
 		-- (whether anything is shared at all is the one switch of the core: DT:Shares)
 		name = true,
 		auctionator = true,
-		tooltip = true,
+		tooltip = true, vendorTip = true, craftTip = true,
 	},
 	settings = {
 		{ key = "name", label = "Show my name as the observer" },
 		{ key = "auctionator", label = "Use Auctionator's price history (for me only)" },
-		{ key = "tooltip", label = "Price, vendor and crafting-skill lines on item tooltips" },
+		{ key = "tooltip", label = "Market: the auction price (DT: Auction)", tooltip = true },
+		{ key = "vendorTip", label = "Vendor: what one pays for it, and what one sells it for (DT: Vendor)", tooltip = true },
+		{ key = "craftTip", label = "Professions: the recipes it goes into (Shift: their names), and the skill it is made at", tooltip = true },
 	},
 	slash = "/dtmarket",
 	tab = {

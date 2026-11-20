@@ -219,7 +219,7 @@ local function Read(text, at, depth, count)
 	elseif c == "n" then
 		local num, after = text:match("^([%d%.%-%+eE]+);()", at + 1)
 		num = tonumber(num)
-		if not num then error("odd number") end
+		if not num or num ~= num or num == math.huge or num == -math.huge then error("odd number") end
 		return num, after
 	elseif c == "T" then
 		return true, at + 1

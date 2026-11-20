@@ -71,7 +71,7 @@ local function Rebuild()
 		end
 		local shown = name or ("item " .. id)
 		local where = F.Where(id)
-		if q == "" or (shown .. " " .. where):lower():find(q, 1, true) then
+		if q == "" or (shown .. " " .. where):gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", ""):lower():find(q, 1, true) then
 			local color = quality and ITEM_QUALITY_COLORS and ITEM_QUALITY_COLORS[quality] and ITEM_QUALITY_COLORS[quality].hex or "|cffffffff"
 			local ah = api and api.GetLatest and (api.GetLatest(id)) or nil
 			local vendor = (api and api.GetVendor and (api.GetVendor(id))) or (DT.VendorPrice and DT.VendorPrice[id]) or nil

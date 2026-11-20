@@ -128,12 +128,13 @@ local function Loot()
 end
 
 -- an item by its number: written down with what the game says of it, where the game knows it
-local function Item(id, name)
-	if looked["item:" .. id] then return end
+-- (one the game does not know yet is asked once, not at every sweep: GET_ITEM_INFO_RECEIVED lifts the wait)
+local pending = {}
+local function Item(id)
+	if looked["item:" .. id] or pending[id] then return end
 	local info = (C_Item and C_Item.GetItemInfo) or GetItemInfo
-	local ok, known, _, quality = pcall(function() return info(id) end)
-	name = ok and known or name
-	if name then F.Seen("item", id, ("%s;%d"):format(name, tonumber(ok and quality) or 0)) end
+	local ok, name, _, quality = pcall(function() return info(id) end)
+	if ok and name then F.Seen("item", id, ("%s;%d"):format(name, tonumber(quality) or 0)) else pending[id] = true end
 end
 
 -- what I carry and bank (Inventory's count), what a vendor shows, what the auction house showed (Market's)
@@ -141,10 +142,10 @@ function F.Sweep()
 	local Inv = DT.Inventory
 	local mine = Inv and Inv.db and Inv.db.chars and Inv.db.chars[Inv.me]
 	for _, bag in ipairs({ mine and mine.bags or {}, mine and mine.bank or {} }) do
-		for id in pairs(bag) do Item(id, Inv.db.names and Inv.db.names[id]) end
+		for id in pairs(bag) do Item(id) end
 	end
 	for id, item in pairs(DT.Market and DT.Market.items or {}) do
-		if type(item) == "table" and item.n then Item(id, item.n) end
+		if type(item) == "table" and item.n then Item(id) end
 	end
 end
 
@@ -153,7 +154,7 @@ local function Merchant()
 	for i = 1, GetMerchantNumItems and GetMerchantNumItems() or 0 do
 		local link = GetMerchantItemLink and GetMerchantItemLink(i)
 		local id = type(link) == "string" and tonumber(link:match("item:(%d+)"))
-		if id then Item(id, link:match("%[(.-)%]")) end
+		if id then Item(id) end
 	end
 end
 
@@ -322,5 +323,8 @@ DT:RegisterModule("finds", {
 		DT:On("QUEST_DETAIL", Quest)
 		DT:On("LOOT_OPENED", Loot)
 		DT:On("DT_DB_UPDATE", function() dirty = true end) -- (a member's finds came in)
+		DT:On("GET_ITEM_INFO_RECEIVED", function(id, success)
+			if pending[id] and success ~= false then pending[id], dirty = nil, true end
+		end)
 	end,
 })

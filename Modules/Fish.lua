@@ -397,7 +397,9 @@ end
 -- ponytail: learned recipes only (the game is not asked about the others)
 local function ReadCooking()
 	local T = C_TradeSkillUI
-	if not (T and T.GetBaseProfessionInfo and T.GetAllRecipeIDs) then return end
+	if not (T and T.GetBaseProfessionInfo and T.GetAllRecipeIDs and T.GetRecipeInfo and T.GetRecipeSchematic) then return end
+	-- (somebody else's linked window is not what this account can cook)
+	if (T.IsTradeSkillLinked and T.IsTradeSkillLinked()) or (T.IsTradeSkillGuild and T.IsTradeSkillGuild()) then return end
 	local base = T.GetBaseProfessionInfo()
 	if not base or not (base.profession == 5 or base.professionName == (PROFESSIONS_COOKING or "Cooking")) then return end
 	local basic = Enum.CraftingReagentType and Enum.CraftingReagentType.Basic or 1

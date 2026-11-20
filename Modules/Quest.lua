@@ -13,7 +13,7 @@ DT.Quest = Q
 Q.BATCH = 200 -- quests read per frame where the client has no clock to time the reading by
 local FIELDS = { "name", "requiredLevel", "questLevel", "requiredRaces", "requiredClasses", "zoneOrSort", "preQuestGroup", "preQuestSingle",
 	"nextQuestInChain", "questFlags", "specialFlags", "exclusiveTo", "requiredSkill", "startedBy", "parentQuest", "breadcrumbForQuestId",
-	"requiredMinRep", "requiredMaxLevel" }
+	"requiredMinRep", "requiredMaxLevel", "objectives", "sourceItemId", "requiredSourceItems" }
 
 -- The game's own tag of a quest, where it has one
 local TAGS = { [1] = "Group", [41] = "PvP", [62] = "Raid", [81] = "Dungeon", [82] = "World event", [83] = "Legendary", [84] = "Escort", [85] = "Heroic" }
@@ -53,6 +53,7 @@ local TYPE_ORDER = { "Open world", "Dungeon", "Raid", "Group", "PvP", "Escort", 
 
 local index, byId = {}, {} -- every quest: see Entry; and by its number
 local followers = {}        -- [quest] = { the quests it opens }
+local itemQuests = {}       -- [item] = { the quests that need it: to gather, to start them, or given for them }
 local reading
 local ready, missing = false, false
 local fromStore, stale = false, false -- read from DawnTools' own database; which has changed since
@@ -184,12 +185,31 @@ local function Entry(id, v)
 		e.crumb = v[16] -- (the quest this one only leads to)
 	end
 	if type(e.starts[3]) == "table" and e.starts[3][1] then t["From an item"] = true end
+	-- the items it needs: to gather (its objectives), the one that starts it, those given or needed for it
+	local items = {}
+	local obj = type(v[19]) == "table" and type(v[19][3]) == "table" and v[19][3] or {}
+	for _, o in ipairs(obj) do
+		if type(o) == "table" and type(o[1]) == "number" then items[#items + 1] = o[1] end
+	end
+	for _, list in ipairs({ type(e.starts[3]) == "table" and e.starts[3] or {}, type(v[21]) == "table" and v[21] or {}, { v[20] } }) do
+		for _, id in ipairs(list) do
+			if type(id) == "number" and id > 0 then items[#items + 1] = id end
+		end
+	end
+	if items[1] then e.items = items end
 	if e.zone > 0 and not (t.Dungeon or t.Raid or t.PvP) then t["Open world"] = true end
 	return e
 end
 
 -- after all are read: who opens whom, where chains start, and the words to search each quest by
 local function Link()
+	itemQuests = {}
+	for _, e in ipairs(index) do
+		for _, id in ipairs(e.items or {}) do
+			itemQuests[id] = itemQuests[id] or {}
+			if itemQuests[id][#itemQuests[id]] ~= e then table.insert(itemQuests[id], e) end
+		end
+	end
 	for _, e in ipairs(index) do
 		local seen = {}
 		for _, list in ipairs({ e.preAny, e.preAll }) do
@@ -258,7 +278,7 @@ local function ReadAll(lib)
 		end
 	end
 	Link()
-	ready = true
+	ready, me = true, nil -- (what is done is read anew: Rebuild may have read it before the race masks were known)
 	-- (left out quests are a fault of this addon, not something to pass over in silence)
 	Q.dropped = dropped
 	if dropped > 0 then DT:Print("Quests: %d could not be read and are missing from the list (first: %s). Please report this.", dropped, firstError) end
@@ -398,13 +418,13 @@ function Q.Status(e)
 	if m.level < e.min then return "later", ("needs level %d"):format(e.min) end
 	for _, pre in ipairs(e.preAll) do
 		-- (a quest done in place of it, one of those that shut each other out, counts for it)
-		local met = m.done(pre)
+		local met = m.done(pre) or m.turned[pre] -- (a repeatable one handed in counts: the game may not flag it)
 		for _, alt in ipairs(not met and byId[pre] and byId[pre].excl or {}) do met = met or m.done(alt) end
 		if not met then return "later", "after: " .. QuestName(pre) end
 	end
 	if e.preAny[1] then
 		local any = false
-		for _, pre in ipairs(e.preAny) do any = any or m.done(pre) end
+		for _, pre in ipairs(e.preAny) do any = any or m.done(pre) or m.turned[pre] or false end
 		if not any then return "later", "after: " .. QuestName(e.preAny[1]) end
 	end
 	if e.parent and e.parent > 0 and byId[e.parent] and not m.on(e.parent) then return "later", "during: " .. QuestName(e.parent) end
@@ -425,15 +445,25 @@ function Q.Side(e)
 	return a and not h and "A" or h and not a and "H" or ""
 end
 
+-- The quests Questie itself hides as not in the game (old copies, duplicates: the second The Videre Elixir), read
+-- from the Questie addon while the game runs; {} where it is not installed. Its "hide on map" ones stay.
+-- ponytail: Questie only. A member without it still sees them; put a mark in the store at import if that matters.
+function Q.Hidden()
+	local ok, hidden = pcall(function() return QuestieLoader:ImportModule("QuestieCorrections").hiddenQuests end)
+	return ok and type(hidden) == "table" and hidden or {}
+end
+
 -- the quests that fit the filters and the search, best first: { e = entry, score =, status =, why = }
 -- (f.side = "A" / "H": only that side's quests and those open to both; for the Dungeons tab)
 function Q.Find(text, f)
+	local hidden = Q.Hidden()
 	local words = {}
 	for word in text:lower():gmatch("%S+") do words[#words + 1] = word end
 	local here = f.zoneOnly and GetRealZoneText and GetRealZoneText() or nil
 	local pool, state = {}, {}
 	-- (the switches on what I have done and may do: every quest listed passes them, pulled in or not)
 	local function Take(e)
+		if hidden[e.id] == true then return end
 		if f.side and Q.Side(e) ~= "" and Q.Side(e) ~= f.side then return end
 		local status, why = Q.Status(e)
 		-- ("mine only" also leaves out a quest shut while I carry its twin: that one is in the list already)
@@ -1523,7 +1553,7 @@ end
 function Q.Start()
 	-- (read from the store, which has more now, or was empty: read anew)
 	if stale and not reading then
-		index, byId, followers, origins = {}, {}, {}, {}
+		index, byId, followers, origins, itemQuests = {}, {}, {}, {}, {}
 		ready, missing, stale, dirty, me = false, false, false, true, nil
 	end
 	if not ready and not reading and not missing then
@@ -1559,6 +1589,47 @@ function Q.All()
 	return index
 end
 
+-- What the quests say of an item in the bags: nil where no quest uses it (or the quests are not read yet), else
+-- safe (every quest that uses it is behind me or never mine: done, other side or class, too high a level), and
+-- the words to say it: why it may go, or the quest that still needs it.
+-- ponytail: Questie's word on which quests use it. An item it does not tie to any quest says nothing; one that a
+-- profession uses too is only said to be done with by the quests, not to be safe to delete.
+function Q.ItemUse(id)
+	local quests = ready and itemQuests[id]
+	if not quests then return nil end
+	local done, need = {}, nil
+	for _, e in ipairs(quests) do
+		if Q.Hidden()[e.id] ~= true then
+			local status, why = Q.Status(e)
+			local over = (status == "done" and not e.types.Repeatable and not e.types.Daily)
+				or (status == "never" and not why:find("^shut"))
+			if over then done[#done + 1] = e else need = need or e end
+		end
+	end
+	if need then return false, need.name, Q.Status(need) end
+	if not done[1] then return nil end
+	return true, #done == 1 and (done[1].name .. ": " .. select(2, Q.Status(done[1]))) or ("all %d quests that use it are done"):format(#done)
+end
+
+-- a line on an item's tooltip: a quest item no quest of mine needs any more may go
+local function TooltipLine(tip, data)
+	if not (Q.db and Q.db.settings and Q.db.settings.itemTip ~= false) or not (tip and tip.AddLine and data and type(data.id) == "number") then return end
+	-- (only the game's Quest items: cloth and herbs that quests ask for too would say it on every bag slot)
+	local class = C_Item and C_Item.GetItemInfoInstant and select(6, C_Item.GetItemInfoInstant(data.id))
+	if not ready or class ~= 12 then return end
+	local safe, text, status = Q.ItemUse(data.id)
+	if safe == nil then return end
+	if safe then
+		tip:AddLine(DT.TIP .. ("|cff40ff40Safe to delete|r  |cff888888(%s)|r"):format(text))
+	else
+		tip:AddLine(DT.TIP .. ("|cffff4040NOT safe to delete|r  |cff888888(needed for %s: %s)|r"):format(text, status == "log" and "in your log" or status == "open" and "not taken yet" or "not done"))
+	end
+end
+function Q.OnTooltip(tip, data)
+	local ok, err = pcall(TooltipLine, tip, data)
+	if not ok then DT:Debug("quest", "tooltip: %s", tostring(err)) end
+end
+
 -- a quest by its number (nil while the quests are not read, or for one there is not)
 function Q.Entry(id)
 	return ready and byId[id] or nil -- (half-read ones are not whole yet)
@@ -1573,6 +1644,8 @@ end
 DT:RegisterModule("quest", {
 	profile = { "types", "sub", "min", "max", "hideDone", "mine", "obtainable", "zoneOnly", "zone", "nested", "notLog", "onlyLog" }, -- (what of its saved table is how it is set up: goes with a profile)
 	title = "Quests",
+	defaults = { itemTip = true },
+	settings = { { key = "itemTip", label = "Quests: on a quest item, whether it is safe to delete (DT: Safe to delete)", tooltip = true } },
 	version = 1,
 	slash = "/dtquest",
 	held = function()
@@ -1610,8 +1683,14 @@ DT:RegisterModule("quest", {
 			DT:On(event, function() pcall(Q.SeeRewards) end)
 		end
 		DT:On("QUEST_TURNED_IN", function(id) Q.Turned(id) end) -- (before the handler below, which reads what is done anew)
+		if TooltipDataProcessor and TooltipDataProcessor.AddTooltipPostCall and Enum and Enum.TooltipDataType then
+			TooltipDataProcessor.AddTooltipPostCall(Enum.TooltipDataType.Item, Q.OnTooltip)
+		end
 		for _, event in ipairs({ "QUEST_TURNED_IN", "QUEST_ACCEPTED", "QUEST_REMOVED", "PLAYER_LEVEL_UP" }) do
-			DT:On(event, function() me, dirty = nil, true end)
+			DT:On(event, function()
+				me, dirty = nil, true
+				if chain and chain:IsShown() then DrawChain() end -- (an open chain shows the new standing)
+			end)
 		end
 	end,
 	selfTest = function(_, Try)

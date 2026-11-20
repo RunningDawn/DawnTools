@@ -79,9 +79,24 @@ local function Wake()
 	end
 end
 
+-- my hashes, to a member who asked for them
+local function Answer(to)
+	local lines = {}
+	for chunk, hash in pairs(DB.Hashes()) do lines[#lines + 1] = chunk .. "=" .. hash end
+	Say(to, "H=", table.concat(lines, "\n"))
+end
+-- ponytail: [name] = when they asked before I heard their hello; an entry per name that whispers, dropped at its hello
+local early = {}
+
 -- a member said the hash of their store
 function S.Heard(sender, root)
-	if not On() or type(root) ~= "string" or root == "" or root == DB.Root() then return end
+	if not On() then return end
+	-- (they asked before their hello reached me: answered now, if that was not long ago)
+	if early[sender] then
+		if GetTime() - early[sender] < 120 then Answer(sender) end
+		early[sender] = nil
+	end
+	if type(root) ~= "string" or root == "" or root == DB.Root() then return end
 	local p = peers[sender] or { want = {} }
 	peers[sender] = p
 	local now = GetTime()
@@ -90,20 +105,35 @@ function S.Heard(sender, root)
 		Wake()
 	end
 	if p.idle then Next(sender) end
+	p.root = root
+	if p.empty == root then return end -- (nothing of theirs I lacked, and they hold nothing new since: they ask me)
 	if p.out or p.idle or (p.asked and now - p.asked < RETRY) then return end
 	if Say(sender, "H?", "") then p.asked = now end
 end
 
+local heard = {} -- [sender .. kind] = when a request of theirs was last answered
+-- (a chunk is asked for only once the one before has come, so "C?" needs no gap: one would stall a fast transfer)
+local GAP = { ["H?"] = 60 }
+
 function comm:OnComm(prefix, text, distribution, sender)
 	if prefix ~= PREFIX or distribution ~= "WHISPER" or not On() or type(text) ~= "string" or type(sender) ~= "string" then return end
+	-- only guildmates (who have said hello on the guild channel), and no more than is worth unpacking
 	local kind = text:sub(1, 2)
+	if not DT.Comms.peers[sender] then
+		if kind == "H?" and #text <= 300 then early[sender] = GetTime() end -- (their hello may be on its way)
+		return
+	end
+	if #text > ((kind == "H?" or kind == "C?") and 300 or MAX_CHUNK) then return end
+	if GAP[kind] then
+		local now, key = GetTime(), sender .. kind
+		if heard[key] and now - heard[key] < GAP[kind] then return end
+		heard[key] = now
+	end
 	local packed = LibDeflate:DecodeForWoWAddonChannel(text:sub(3))
 	local body = packed and LibDeflate:DecompressDeflate(packed)
 	if type(body) ~= "string" then return end
 	if kind == "H?" then
-		local lines = {}
-		for chunk, hash in pairs(DB.Hashes()) do lines[#lines + 1] = chunk .. "=" .. hash end
-		Say(sender, "H=", table.concat(lines, "\n"))
+		Answer(sender)
 	elseif kind == "H=" then
 		local p = peers[sender]
 		if not p or not p.asked or p.out then return end -- (not asked for, or a transfer is under way)
@@ -120,6 +150,9 @@ function comm:OnComm(prefix, text, distribution, sender)
 			return a < b
 		end)
 		p.want = want
+		-- (spread the next ask so that all members do not ask all at once; nothing of theirs to take: not again until
+		-- what they hold changes)
+		p.asked, p.empty = GetTime() - math.random() * RETRY / 4, #want == 0 and p.root or nil
 		Next(sender)
 	elseif kind == "C?" then
 		local chunk = DB.Text(body)

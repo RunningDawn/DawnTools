@@ -122,7 +122,7 @@ end
 local function MapOf(area)
 	if maps[area] == nil then
 		local ok, map = pcall(function() return QuestieLoader:ImportModule("ZoneDB"):GetUiMapIdByAreaId(area) end)
-		if not ok then
+		if not (ok and map) then -- (Questie there but its ZoneDB not ready: nil, not an error; the same fallbacks)
 			map = FromTable(area) or MapByName(ZoneName(area))
 			if not map and not areaMaps then return nil end -- (nothing is ready yet: asked again, not held against the zone for good)
 		end
@@ -467,6 +467,8 @@ local function SideList(fit)
 	end
 end
 
+local vendorRows, byVendor -- DT.DB.Vendors() as last indexed, and its items by vendor name
+
 local function Tooltip(self)
 	local d = self.data
 	if not d then return end
@@ -515,9 +517,18 @@ local function Tooltip(self)
 	if starts + ends > 0 then GameTooltip:AddLine(("Starts %d quest%s, ends %d."):format(starts, starts == 1 and "" or "s", ends), 0.8, 0.8, 0.8) end
 	-- what DawnTools has itself seen it sell
 	local sells = {}
-	for id, v in pairs(DT.DB.Vendors()) do
-		if v.v == e.name and #sells < 6 then sells[#sells + 1] = (GetItemInfo and GetItemInfo(id)) or ("item " .. id) end
+	local rows = DT.DB.Vendors()
+	if vendorRows ~= rows then -- (the table is kept until the database changes: indexed by vendor once per change, not per hover)
+		vendorRows, byVendor = rows, {}
+		for id, v in pairs(rows) do
+			local at = byVendor[v.v]
+			if not at then at = {} byVendor[v.v] = at end
+			at[#at + 1] = id
+		end
 	end
+	local ids = byVendor[e.name] or {}
+	table.sort(ids)
+	for i = 1, math.min(6, #ids) do sells[i] = (GetItemInfo and GetItemInfo(ids[i])) or ("item " .. ids[i]) end
 	if sells[1] then GameTooltip:AddLine("Seen selling: " .. table.concat(sells, ", "), 0.5, 1, 0.5, true) end
 	GameTooltip:AddLine("Click: waypoint. Shift-click: its page. Star: favourite.", 0.5, 0.8, 1)
 	GameTooltip:Show()

@@ -4,7 +4,7 @@
 local ADDON, DT = ...
 _G.DawnTools = DT
 
-DT.VERSION = "0.50.5" -- keep in step with the .toc
+DT.VERSION = "0.52.0" -- keep in step with the .toc
 DT.LOGO = "Interface\\AddOns\\DawnTools\\logo"
 
 local DEFAULTS = {
@@ -73,6 +73,35 @@ function DT.CraftBand(item)
 		PROFESSION[b[1]] or "Profession"
 end
 
+function DT.ProfessionName(id) return PROFESSION[id] end
+
+-- The recipes an item goes into as a material: { { spell =, r = the recipe's row }, ... }, or nil for none.
+-- (DT.Recipes: r[9] = { reagent, count, ... }. Put together on the first ask, and again once the recipes are.)
+local usedIn, usedFrom
+function DT.UsedIn(item)
+	if usedFrom ~= DT.Recipes then
+		usedIn, usedFrom = {}, DT.Recipes
+		for spell, r in pairs(DT.Recipes or {}) do
+			local mats = type(r) == "table" and type(r[9]) == "table" and r[9] or {}
+			for i = 1, #mats, 2 do
+				local id = mats[i]
+				if type(id) == "number" then
+					usedIn[id] = usedIn[id] or {}
+					table.insert(usedIn[id], { spell = spell, r = r })
+				end
+			end
+		end
+	end
+	return usedIn[item]
+end
+
+-- a recipe's name: the game's name of its spell, else the item it makes
+function DT.RecipeName(spell, r)
+	local name = C_Spell and C_Spell.GetSpellName and C_Spell.GetSpellName(spell) or (GetSpellInfo and GetSpellInfo(spell))
+	if not name and r and r[7] and C_Item and C_Item.GetItemInfo then name = C_Item.GetItemInfo(r[7]) end
+	return name or ("recipe " .. tostring(spell))
+end
+
 function DT.Money(copper)
 	if not (DT.db and DT.db.settings.coins) then return DT.Logic.Money(copper) end
 	local c = math.floor(math.abs(copper) + 0.5)
@@ -82,6 +111,15 @@ function DT.Money(copper)
 		or s > 0 and ("%d%s %d%s"):format(s, COIN[2], c, COIN[3]) or ("%d%s"):format(c, COIN[3])
 	return copper < 0 and "-" .. text or text
 end
+
+-- A character as shown: "First Surname". On Forever the surname is what other clients give as the realm, so a
+-- sender "First-Surname" is written with a space; one without a surname stays as it is.
+function DT.Name(sender)
+	return (tostring(sender or ""):gsub("%-", " ", 1))
+end
+
+-- what begins every line DawnTools puts on an item's tooltip, in gold: "DT: Auction", "DT: Vendor"
+DT.TIP = "|cffffd100DT:|r "
 
 -- server time: the same clock for every guild member
 function DT.Now()
@@ -192,8 +230,11 @@ local function Init()
 	if type(db.tabs.rank) ~= "table" then db.tabs.rank = {} end
 	if type(db.tabs.hidden) ~= "table" then db.tabs.hidden = {} end
 	if type(db.tabs.sub) ~= "table" then db.tabs.sub = nil end
-	if type(db.pos) ~= "table" or type(db.pos[1]) ~= "string" or type(db.pos[2]) ~= "string" or type(db.pos[3]) ~= "number" or type(db.pos[4]) ~= "number" then db.pos = nil end
-	if type(db.size) ~= "table" or type(db.size[1]) ~= "number" or type(db.size[2]) ~= "number" then db.size = nil end
+	-- (nested too: a rank is compared as a number, a position or size is a finite one)
+	local function Num(n) return type(n) == "number" and n == n and n ~= math.huge and n ~= -math.huge end
+	for id, n in pairs(db.tabs.rank) do if not Num(n) then db.tabs.rank[id] = nil end end
+	if type(db.pos) ~= "table" or type(db.pos[1]) ~= "string" or type(db.pos[2]) ~= "string" or not Num(db.pos[3]) or not Num(db.pos[4]) then db.pos = nil end
+	if type(db.size) ~= "table" or not Num(db.size[1]) or not Num(db.size[2]) then db.size = nil end
 	if type(db.lastTab) ~= "string" then db.lastTab = nil end
 	if type(db.settingsSection) ~= "string" then db.settingsSection = nil end
 	for key, value in pairs(DEFAULTS) do
@@ -240,8 +281,9 @@ local function Probe()
 	DT:Print("probe: %d of %d functions exist.%s", #names - #missing, #names,
 		#missing > 0 and (" Missing: " .. table.concat(missing, ", ")) or "")
 
+	-- (not COMBAT_LOG_EVENT*: registering it gets the addon blocked here)
 	local events = { "COMMODITY_SEARCH_RESULTS_UPDATED", "ITEM_SEARCH_RESULTS_UPDATED", "AUCTION_HOUSE_BROWSE_RESULTS_UPDATED",
-		"AUCTION_HOUSE_BROWSE_RESULTS_ADDED", "REPLICATE_ITEM_LIST_UPDATE", "GET_ITEM_INFO_RECEIVED", "CHAT_MSG_ADDON", "BAG_UPDATE_DELAYED", "BANKFRAME_OPENED", "BANKFRAME_CLOSED", "COMBAT_LOG_EVENT_UNFILTERED", "MERCHANT_SHOW", "LOOT_READY", "TRADE_SKILL_SHOW" }
+		"AUCTION_HOUSE_BROWSE_RESULTS_ADDED", "REPLICATE_ITEM_LIST_UPDATE", "GET_ITEM_INFO_RECEIVED", "CHAT_MSG_ADDON", "BAG_UPDATE_DELAYED", "BANKFRAME_OPENED", "BANKFRAME_CLOSED", "MERCHANT_SHOW", "LOOT_READY", "TRADE_SKILL_SHOW" }
 	local unknown, tester = {}, CreateFrame("Frame")
 	for _, event in ipairs(events) do
 		local ok
@@ -571,6 +613,8 @@ function DT:SetSharing(on)
 	self.db.settings.share = on and true or false
 	-- (the modules that send what they hold when sharing begins hear it as a change of their setting)
 	if on then
+		-- (the first hello: none went out before the yes)
+		if DT.Comms then DT.Comms:Hello() end
 		for _, mod in DT:Enabled() do DT:Fire("DT_SETTINGS", mod.name, "share") end
 	end
 end
@@ -599,7 +643,11 @@ StaticPopupDialogs.DAWNTOOLS_SHARE = {
 }
 
 DT:On("PLAYER_LOGIN", function()
-	DT.me = UnitName("player")
+	-- (me with my surname, as the guild sees me; first = the name alone, as observations before 0.52 have it)
+	DT.first = UnitName("player")
+	local first, last = DT.first, nil
+	if UnitFullName then first, last = UnitFullName("player") end
+	DT.me = (first or DT.first or "?") .. (type(last) == "string" and last ~= "" and (" " .. last) or "")
 	DT:Print("version %s loaded. /dt opens the window.", DT.VERSION)
 	C_Timer.After(5, function() DT:AskToShare() end)
 

@@ -26,7 +26,7 @@ local function On()
 end
 
 local function Short(sender)
-	return Ambiguate and Ambiguate(sender, "guild") or sender
+	return DT.Name(sender)
 end
 
 local function Count(set)
@@ -309,11 +309,14 @@ local function Cooks(id)
 	return names
 end
 
+-- (an item the game has not loaded yet: the list is drawn again when its name comes)
+local awaited = {}
 local function Rebuild()
 	local q, me, counts = (search:GetText() or ""):lower(), Me(), {}
 	list = {}
 	for id in pairs(Food.db.foods) do
 		local name, _, quality, _, level, _, _, _, _, icon = C_Item.GetItemInfo(id)
+		if not name then awaited[id] = true end
 		local kind, known = Type(id), me.ids[id] or false
 		-- (what Cooking makes for the camp, the campfires and the like, is listed on the Campsite tab, not here)
 		local camp = DT.Craft and DT.Craft.IsCampItem and DT.Craft.IsCampItem(id)
@@ -331,7 +334,10 @@ local function Rebuild()
 				-- the recipe item that teaches it; none: a trainer does
 				local scroll = b and b[6] and b[6] > 0 and b[6] or nil
 				local sName, _, sQuality = nil, nil, nil
-				if scroll then sName, _, sQuality = C_Item.GetItemInfo(scroll) end
+				if scroll then
+					sName, _, sQuality = C_Item.GetItemInfo(scroll)
+					if not sName then awaited[scroll] = true end
+				end
 				local sColor = sQuality and ITEM_QUALITY_COLORS and ITEM_QUALITY_COLORS[sQuality] and ITEM_QUALITY_COLORS[sQuality].hex or "|cffffffff"
 				local recipe = scroll and (sColor .. (sName or ("item " .. scroll)) .. "|r") or b and "|cff888888trainer|r" or ""
 				-- where to get the recipe: a vendor, a mob, a quest; a recipe without an item is taught by a trainer
@@ -615,8 +621,19 @@ DT:RegisterModule("food", {
 		if UnitFullName then first, surname = UnitFullName("player") end
 		me.name = (first or "?") .. (surname and surname ~= "" and (" " .. surname) or "")
 
-		DT:On("TRADE_SKILL_SHOW", function() C_Timer.After(1, ReadCooking) end)
-		DT:On("TRADE_SKILL_LIST_UPDATE", function() C_Timer.After(1, ReadCooking) end)
+		-- (the window fires both events in bursts: one read, a second after the first)
+		local pending
+		local function Soon()
+			if pending then return end
+			pending = true
+			C_Timer.After(1, function() pending = nil; ReadCooking() end)
+		end
+		DT:On("TRADE_SKILL_SHOW", Soon)
+		DT:On("TRADE_SKILL_LIST_UPDATE", Soon)
+		DT:On("GET_ITEM_INFO_RECEIVED", function(id)
+			if awaited[id] then awaited[id], dirty = nil, true end
+		end)
+		DT:On("DT_MARKET_UPDATE", function() dirty = true end) -- (the profit columns)
 		DT:On("DT_SETTINGS", function(name, key)
 			if name == "food" and key == "share" then Send() end
 		end)

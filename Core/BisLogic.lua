@@ -105,6 +105,8 @@ function BL.Stats(game, lines)
 				local n, second = line:match(t[1])
 				local school = t.school and n
 				n = tonumber(t.school and second or n)
+				-- (a bonus that holds against some foes only is not counted: "+30 Attack Power when fighting Undead")
+				if n and (t[2] == "ap" or t[2] == "rap") and (line:find(" when ") or line:find(" against ") or line:find(" while ") or line:find(" versus ")) then break end
 				if n then
 					local word = t.school and (t[2] .. school) or t[2]
 					if t.spell and line:find("spell", 1, true) then word = t.spell end
@@ -180,12 +182,17 @@ local function Weigh(s, prof)
 	return lin
 end
 
-local function Cand(items, prof)
+local function Cand(items, prof, hands)
 	local c = { ids = {}, s = {} }
 	for i, item in ipairs(items) do
 		c.ids[i] = item.id
 		BL.Add(c.s, item.s)
 	end
+	-- (two weapons: the off hand does half the damage; of two that could be either, the slower is in it)
+	local a, b = items[1], items[2]
+	local off = b
+	if b and MAIN[a.loc] and MAIN[b.loc] and (a.s.dps or 0) < (b.s.dps or 0) then off = a end
+	if hands and off and off.s.dps then c.s.dps = c.s.dps - off.s.dps / 2 end
 	c.lin = Weigh(c.s, prof)
 	return c
 end
@@ -229,7 +236,7 @@ function BL.Choices(items, prof)
 						-- (a pair of two alike: once, and only where there are two of it)
 						local alike = first[b.loc] and second[a.loc]
 						if second[b.loc] and (a ~= b or (a.n or 1) > 1) and not (alike and b.id < a.id) and not (a == b and not alike) then
-							cands[#cands + 1] = Cand({ a, b }, prof)
+							cands[#cands + 1] = Cand({ a, b }, prof, slot.hands)
 						end
 					end
 					-- (one hand full, the other empty: better than nothing)
