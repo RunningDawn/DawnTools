@@ -6,6 +6,10 @@
 local _, DT = ...
 
 DT.CHANGELOG = {
+	{ "0.54.4", "2026-11-21", {
+		"Guild sharing: the game database goes in short whispers of plain letters and digits, as Forever lets through; the long ones of 0.54.3 never arrived whole. Everyone needs this version to share it.",
+		"Settings, Data Sync: counts the whisper pieces that came in, messages lost part-way or unreadable, and the bytes sent; Sync now asks every member who shares.",
+	} },
 	{ "0.54.3", "2026-11-21", {
 		"Guild sharing: the game database now really passes between members (0.54.2 still dropped the answers: the game names a whisper's sender First Surname, and only First-Surname can be whispered to).",
 		"Settings: Data Sync now shows the game database's requests each way (lists and chunks asked for, answered, rows taken in, whispers turned away) and, for each member, whether their database matches yours and what is being fetched.",

@@ -1827,7 +1827,7 @@ click(section("All items"))
 	local first = #sent + 1
 	local function whispers() -- (the store's sync: whispers of the game database since this block began)
 		local n = 0
-		for i = first, #sent do if sent[i].prefix == "DAWND" then n = n + 1 end end
+		for i = first, #sent do if sent[i].prefix == "DAWNW" then n = n + 1 end end
 		return n
 	end
 	local d1, d2 = V1.DT.DB, V2.DT.DB
@@ -1981,7 +1981,7 @@ end)()
 	local first = #sent + 1
 	local function whispers()
 		local n = 0
-		for i = first, #sent do if sent[i].prefix == "DAWND" then n = n + 1 end end
+		for i = first, #sent do if sent[i].prefix == "DAWNW" then n = n + 1 end end
 		return n
 	end
 	local d1, d2, seen2 = Q1.DT.DB, Q2.DT.DB, Q2.DT.Quest.SeenAll
@@ -2342,7 +2342,7 @@ end)()
 	local first = #sent + 1
 	local function whispers()
 		local n = 0
-		for i = first, #sent do if sent[i].prefix == "DAWND" then n = n + 1 end end
+		for i = first, #sent do if sent[i].prefix == "DAWNW" then n = n + 1 end end
 		return n
 	end
 	step(700)
@@ -5541,7 +5541,7 @@ do
 	Pia.slash("settings")
 	local titles = {}
 	for i, b in ipairs(UI.sectionButtons) do titles[i] = (b.label.text:gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", "")) end
-	eq(table.concat(titles, " / "), "General / Profiles / Tabs & Modules / Built-ins / Tooltips / Market / BiS / Data Sync / Data Debug", "the Settings tab lists its sections: the fixed ones, then one per module with switches, Data Sync and Data Debug at the bottom")
+	eq(table.concat(titles, " / "), "General / Profiles / Tabs & Modules / Built-ins / Tooltips / Market / BiS / Data Sync / Data Storage / Data Debug", "the Settings tab lists its sections: the fixed ones, then one per module with switches, Data Sync, Data Storage and Data Debug at the bottom")
 	do -- Data Debug: a button puts lines to copy in the box
 		click(UI.sectionButtons[#UI.sectionButtons])
 		local mem
@@ -6654,7 +6654,7 @@ end)()
 		local n = 0
 		for i = first, #sent do
 			local m = sent[i]
-			if m.prefix == "DAWND" and (not from or m.from == from) then n = n + 1 end
+			if m.prefix == "DAWNW" and (not from or m.from == from) then n = n + 1 end
 		end
 		return n
 	end
@@ -6682,7 +6682,7 @@ end)()
 	check(whispers("Ada") > 0 and whispers("Ben") > 0, "by whisper, each to the other")
 	for i = first, #sent do
 		local m = sent[i]
-		if m.prefix == "DAWND" then check(m.distribution == "WHISPER" and not m.text:find("Ada", 1, true) and not m.text:find("Ben", 1, true), "no name in any of it, and none of it on the guild channel") end
+		if m.prefix == "DAWNW" then check(m.distribution == "WHISPER" and not m.text:find("Ada", 1, true) and not m.text:find("Ben", 1, true), "no name in any of it, and none of it on the guild channel") end
 	end
 	local before = whispers()
 	step(1300)
@@ -6695,10 +6695,10 @@ end)()
 	eq(C1.DT.DB.Row("npc:9000").v, "Gar'Thok;12;Durotar", "a newcomer gets from one member what another, now offline, found")
 	eq(C1.DT.DB.Root(), b.Root(), "all of it")
 	-- only what was asked for is taken
-	local forged = "C=" .. LibDeflate:EncodeForWoWAddonChannel(LibDeflate:CompressDeflate("npc:35\nnpc:9000\t" .. (Now() + 50) .. "\tguild\tA lie"))
-	C1.hear("DAWND", forged, "WHISPER", "Ben-Smith")
+	local forged = "C=1:1:1;" .. LibDeflate:EncodeForPrint(LibDeflate:CompressDeflate("npc:35\nnpc:9000\t" .. (Now() + 50) .. "\tguild\tA lie"))
+	C1.hear("DAWNW", forged, "WHISPER", "Ben-Smith")
 	eq(C1.DT.DB.Row("npc:9000").v, "Gar'Thok;12;Durotar", "a chunk nobody asked for is not taken")
-	C1.hear("DAWND", forged, "GUILD", "Ben-Smith")
+	C1.hear("DAWNW", forged, "GUILD", "Ben-Smith")
 	eq(C1.DT.DB.Row("npc:9000").v, "Gar'Thok;12;Durotar", "nor one that did not come as a whisper")
 	-- in a fight nothing is asked; afterwards it goes on
 	b.Put("npc:70001", "Mankrik")
@@ -7071,12 +7071,24 @@ end)()
 		local asked = { Hal = 0, Hedda = 0 }
 		for i = before + 1, #sent do
 			local m = sent[i]
-			if m.prefix == "DAWND" and m.from == "Nia" and m.text:sub(1, 2) == "C?" then
+			if m.prefix == "DAWNW" and m.from == "Nia" and m.text:sub(1, 2) == "C?" then
 				for _, other in ipairs(clients) do if other.wire == m.to then asked[other.name] = asked[other.name] + 1 end end
 			end
 		end
 		eq(asked.Hal + asked.Hedda, chunks, ("each chunk was asked for once, of one member or the other (%d of Hal, %d of Hedda)"):format(asked.Hal, asked.Hedda))
 		check(asked.Hal > 0 and asked.Hedda > 0, ("and both were asked: %d of Hal, %d of Hedda"):format(asked.Hal, asked.Hedda))
+		-- every whisper is one short piece of letters, digits and brackets; a long answer goes in several
+		local longest, multi, odd = 0, false, nil
+		for i = before + 1, #sent do
+			local m = sent[i]
+			if m.prefix == "DAWNW" then
+				longest = math.max(longest, #m.text)
+				if not m.text:match("^%u[%?=]%d+:%d+:%d+;[%w%(%)]*$") then odd = m.text end
+				local n = tonumber(m.text:match("^..%d+:%d+:(%d+);"))
+				if n and n > 1 then multi = true end
+			end
+		end
+		check(longest <= 250, "no whisper longer than one piece: " .. longest); eq(odd, nil, "and every one in the plain form"); check(multi, "a long answer went in several pieces, and came whole")
 		leave(H1) leave(H2) leave(N2)
 	end)()
 	-- names as Forever gives them (with a space, though a whisper must be addressed with a hyphen): the store still passes on
@@ -7099,7 +7111,7 @@ end)()
 		step(120)
 		check(F2.DT.DB.Root() ~= F1.DT.DB.Root(), "it does not come by itself within two minutes")
 		F2.slash("db sync")
-		check(F2.printed[#F2.printed]:find("1 member whose", 1, true), "Sync now asks her at once: " .. F2.printed[#F2.printed])
+		check(F2.printed[#F2.printed]:find("1 member who shares", 1, true), "Sync now asks her at once: " .. F2.printed[#F2.printed])
 		step(60)
 		eq(F2.DT.DB.Root(), F1.DT.DB.Root(), "and it has come")
 		F2.DT.db.settings.share = false

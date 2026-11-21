@@ -4,7 +4,7 @@
 local ADDON, DT = ...
 _G.DawnTools = DT
 
-DT.VERSION = "0.54.3" -- keep in step with the .toc
+DT.VERSION = "0.54.4" -- keep in step with the .toc
 DT.LOGO = "Interface\\AddOns\\DawnTools\\logo"
 
 local DEFAULTS = {

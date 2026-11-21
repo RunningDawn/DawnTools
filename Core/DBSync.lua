@@ -8,7 +8,7 @@
 --   3. and then, one at a time, for each chunk whose hash differs:                                  C?  ->  C=
 --      A chunk received is laid into mine row by row, the newer row kept (DB.Take). The other side does the
 --      same towards me when it hears my hello, so both end with what either knew.
--- A whisper carries two letters of kind and the rest packed. Measured on Forever 2026-11-19: about 700 bytes a
+-- A message is two letters of kind and the rest packed, in whispers of its pieces (below). Measured on Forever 2026-11-19: about 700 bytes a
 -- second get through from one sender, none lost; a character is addressed by its name as the game gives it.
 -- Chunks are asked for in the order of FIRST: what the tabs cannot do without (recipes, dungeons) before the
 -- long lists of NPCs, items and quests.
@@ -20,12 +20,22 @@
 
 local _, DT = ...
 local DB, L = DT.DB, DT.DBLogic
-local S = { sent = 0, taken = 0, out = {}, inn = {}, turned = 0, unasked = 0 } -- (out/inn: [kind] = whispers this session; turned: from no guildmate)
+local S = { sent = 0, taken = 0, out = {}, inn = {}, turned = 0, unasked = 0, bytes = {}, pieces = 0, lost = 0, unread = 0 }
+-- (out/inn: [kind] = messages this session; turned: from no guildmate; bytes: [kind] = sent, unpacked; pieces:
+-- whispers of ours that came in; lost: messages begun and never finished; unread: whole, and could not be unpacked)
 DT.DBSync = S
 
-local PREFIX = "DAWND"
+-- A message goes as whispers of its own pieces, each a single whisper of letters, digits and brackets:
+--   kind id:i:n;piece      (kind "H?", "H=", "C?", "C="; id numbers the messages of one sender; piece i of n)
+-- Measured on Forever 2026-11-21: such whispers arrive, 200 of 200, where a long message the library cuts up
+-- itself (a control byte before each piece, any byte in it) never came whole. Its prefix is not 0.54's ("DAWND").
+local PREFIX, PIECE = "DAWNW", 230
+local seq = 0
 local RETRY, TIMEOUT = 600, 90
 local MAX_HASHES, MAX_CHUNK = 20000, 400000 -- (lines of a hash list, bytes of a chunk: more is not believed)
+local MAX_PIECES = math.ceil(MAX_CHUNK / PIECE) -- (packed, a chunk is far smaller than that)
+local parts = {} -- [member .. ":" .. id] = a message of theirs coming in: { kind, n, got, at, [i] = piece }
+local STALE = 60 -- (seconds a message may lie unfinished: then it is counted lost)
 local FIRST = { fp = 0, base = 1, enum = 2, boss = 3, recipe = 4, vprice = 5, zone = 6, loot = 7, oloot = 7 }
 local LibDeflate = LibStub("LibDeflate")
 local comm = {}
@@ -42,8 +52,14 @@ local function Who(name) return (name:gsub(" ", "-")) end
 
 local function Say(to, kind, body)
 	if DT.Comms:Why() then return false end -- (not in a fight, nor where addon messages are not wanted)
-	comm:SendCommMessage(PREFIX, kind .. LibDeflate:EncodeForWoWAddonChannel(LibDeflate:CompressDeflate(body or "")), "WHISPER", to, "BULK")
+	local data = LibDeflate:EncodeForPrint(LibDeflate:CompressDeflate(body or ""))
+	local n = math.max(1, math.ceil(#data / PIECE))
+	seq = seq % 9999 + 1
+	for i = 1, n do
+		comm:SendCommMessage(PREFIX, ("%s%d:%d:%d;%s"):format(kind, seq, i, n, data:sub((i - 1) * PIECE + 1, i * PIECE)), "WHISPER", Who(to), "BULK")
+	end
 	S.sent, S.out[kind] = S.sent + 1, (S.out[kind] or 0) + 1
+	S.bytes[kind] = (S.bytes[kind] or 0) + #(body or "")
 	return true
 end
 
@@ -124,23 +140,39 @@ local GAP = { ["H?"] = 60 }
 function comm:OnComm(prefix, text, distribution, sender)
 	if prefix ~= PREFIX or distribution ~= "WHISPER" or not On() or type(text) ~= "string" or type(sender) ~= "string" then return end
 	-- only guildmates (who have said hello on the guild channel), and no more than is worth unpacking
-	local kind = text:sub(1, 2)
+	local kind, id, i, n, piece = text:match("^(%u[%?=])(%d+):(%d+):(%d+);([%w%(%)]*)$")
+	i, n = tonumber(i), tonumber(n)
 	local member = DT.Comms.peers[sender] or DT.Comms.peers[(sender:gsub("%-", " "))]
 	sender = Who(sender)
 	if not member then
-		if kind == "H?" and #text <= 300 then early[sender] = GetTime() end -- (their hello may be on its way)
+		if kind == "H?" then early[sender] = GetTime() end -- (their hello may be on its way)
 		S.turned, S.turnedWho = S.turned + 1, sender
 		return
 	end
-	if #text > ((kind == "H?" or kind == "C?") and 300 or MAX_CHUNK) then return end
+	-- (a request is one piece; an answer no more pieces than a chunk of the most that is believed)
+	if not kind or i < 1 or i > n or n > ((kind == "H?" or kind == "C?") and 1 or MAX_PIECES) then S.unread = S.unread + 1 return end
+	S.pieces = S.pieces + 1
+	local key, now = sender .. ":" .. id, GetTime()
+	local part = parts[key]
+	if not part then
+		for k, old in pairs(parts) do
+			if now - old.at > STALE then parts[k], S.lost = nil, S.lost + 1 end
+		end
+		part = { kind = kind, n = n, got = 0, at = now }
+		parts[key] = part
+	end
+	if part.kind ~= kind or part.n ~= n or part[i] then return end
+	part[i], part.got, part.at = piece, part.got + 1, now
+	if part.got < n then return end
+	parts[key] = nil
 	if GAP[kind] then
 		local now, key = GetTime(), sender .. kind
 		if heard[key] and now - heard[key] < GAP[kind] then return end
 		heard[key] = now
 	end
-	local packed = LibDeflate:DecodeForWoWAddonChannel(text:sub(3))
+	local packed = LibDeflate:DecodeForPrint(table.concat(part, "", 1, n))
 	local body = packed and LibDeflate:DecompressDeflate(packed)
-	if type(body) ~= "string" then return end
+	if type(body) ~= "string" then S.unread = S.unread + 1 return end
 	S.inn[kind] = (S.inn[kind] or 0) + 1
 	if kind == "H?" then
 		Answer(sender)
@@ -180,18 +212,22 @@ function comm:OnComm(prefix, text, distribution, sender)
 	end
 end
 
--- Sync now (the Data Sync page, /dt db sync): every wait dropped, a hello sent, and every member whose store
--- differs asked for their list at once. A pull, not a push: what comes in is still only what I asked for.
--- A transfer under way goes on as it was. Returns how many were asked, or nil with sharing off.
+-- Sync now (the Data Sync page, /dt db sync): every wait dropped, a hello sent, and every member who shares
+-- asked for their list at once, whatever their last hello said (they may have learned something since). A pull,
+-- not a push: what comes in is still only what I asked for. A transfer under way goes on as it was.
+-- Returns how many were asked, or nil with sharing off.
 function S.Now()
 	if not On() then return nil end
 	for _, p in pairs(peers) do p.asked, p.empty = nil, nil end
 	DT.Comms:Hello()
-	local before = S.out["H?"] or 0
+	local n, now = 0, GetTime()
 	for name, peer in pairs(DT.Comms.peers) do
-		if peer.sum.gamedb then S.Heard(name, peer.sum.gamedb) end
+		local who = Who(name)
+		local p = peers[who] or { want = {} }
+		peers[who] = p
+		if peer.sum.gamedb and not (p.out or p.idle) and Say(who, "H?", "") then p.asked, n = now, n + 1 end
 	end
-	return (S.out["H?"] or 0) - before
+	return n
 end
 
 -- What the whispers did this session, as lines for the Data Sync page: requests and answers each way, and each
@@ -202,6 +238,7 @@ function S.Report()
 		("Asked of others: %d lists of chunks, %d chunks. Came back: %d lists, %d chunks (%d rows taken in)."):format(o["H?"] or 0, o["C?"] or 0, i["H="] or 0, i["C="] or 0, S.taken),
 		("Asked of me: %d lists, %d chunks. Sent back: %d lists, %d chunks."):format(i["H?"] or 0, i["C?"] or 0, o["H="] or 0, o["C="] or 0),
 	}
+	lines[#lines + 1] = ("Whispers in: %d pieces; %d messages lost part-way, %d that could not be read. Bytes sent: lists %d, chunks %d."):format(S.pieces, S.lost, S.unread, S.bytes["H="] or 0, S.bytes["C="] or 0)
 	if S.unasked > 0 then lines[#lines + 1] = ("%d answers not taken: not asked for, or another under way."):format(S.unasked) end
 	if S.turned > 0 then lines[#lines + 1] = ("%d whispers turned away: not from a member heard on the guild channel (last from %s)."):format(S.turned, tostring(S.turnedWho)) end
 	if not On() then lines[#lines + 1] = "Sharing is off: nothing is asked or answered." end

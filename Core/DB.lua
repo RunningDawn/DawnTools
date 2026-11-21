@@ -945,7 +945,7 @@ function DB.Slash(rest)
 	if (rest or ""):match("^%s*sync%s*$") then
 		local n = DT.DBSync and DT.DBSync.Now()
 		if n == nil then return DT:Print("db sync: sharing is off (/dt settings).") end
-		return DT:Print("db sync: a hello sent; %d member%s whose game database differs asked for theirs now. Settings, Data Sync shows how it goes.", n, n == 1 and "" or "s")
+		return DT:Print("db sync: a hello sent; %d member%s who shares asked for their game database list now. Settings, Data Sync shows how it goes.", n, n == 1 and "" or "s")
 	end
 	local cmd, a, b = (rest or ""):match("^%s*bench%s*(%S*)%s*(%d*)%s*(.-)%s*$")
 	if cmd == "make" then Make()
