@@ -3,7 +3,6 @@ docs export-ignore
 .gitignore export-ignore
 .gitattributes export-ignore
 AGENTS.md export-ignore
-tools export-ignore
 Tools/*.js export-ignore
 .github export-ignore
 .pkgmeta export-ignore
