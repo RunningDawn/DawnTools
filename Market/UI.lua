@@ -1029,15 +1029,15 @@ local function SoldBy(id)
 end
 
 -- The tooltip's word on a vendor for an item I never saw at one: the price where the shipped list has it, who
--- sells it where QuestieDB knows. Nothing when neither does.
+-- sells it where QuestieDB knows: the price (or that it is not seen yet), and who. Nothing when neither is known.
 -- ponytail: the game tells no price outside a vendor's window, and the shipped list is reagents only: for the
 -- rest the price is "not seen yet" until the player opens a vendor that sells it (it is recorded then).
 function V.VendorText(id, n)
 	local price, who, count = DT.VendorPrice and DT.VendorPrice[id], SoldBy(id)
 	if not (price or who) then return nil end
 	local at = who and (who .. (count > 1 and (" +%d more"):format(count - 1) or "")) or nil
-	if price then return DT.Money(price * n) .. (n > 1 and (" x" .. n) or "") .. (at and (" at " .. at) or "") end
-	return at .. " |cff888888(price not seen yet)|r"
+	if price then return DT.Money(price * n) .. (n > 1 and (" x" .. n) or ""), at end
+	return "|cff888888price not seen yet|r", at
 end
 
 local function OnTooltipItem(tip, data)
@@ -1061,9 +1061,13 @@ local function OnTooltipItem(tip, data)
 	local pays = set.vendorTip and id and C_Item.GetItemInfo and select(11, C_Item.GetItemInfo(id))
 	if type(pays) == "number" and pays > 0 then Line("Vendor (sell)", DT.Money(pays * n) .. (n > 1 and (" x" .. n) or "")) end
 	local sold = set.vendorTip and id and DT.DB.Vendor(id)
-	local unseen = set.vendorTip and id and not sold and V.VendorText(id, n)
-	if unseen then Line("Vendor (buy)", unseen) end
-	if sold then Line("Vendor (buy)", ("%s%s at %s, %s%s"):format(DT.Money(sold.p * n), n > 1 and (" x" .. n) or "", sold.v, sold.z, sold.l and " (limited)" or "")) end
+	-- (who sells it on the left, after the label; the price on the right, lined up with the others)
+	local function Buy(who, price) Line("Vendor (buy)" .. (who and who ~= "" and ("  |cffaaaaaa" .. who .. "|r") or ""), price) end
+	if set.vendorTip and id and not sold then
+		local price, who = V.VendorText(id, n)
+		if price then Buy(who, price) end
+	end
+	if sold then Buy(sold.v .. ", " .. sold.z, DT.Money(sold.p * n) .. (n > 1 and (" x" .. n) or "") .. (sold.l and " (limited)" or "")) end
 	local price, ago, median = nil, nil, nil
 	if set.tooltip and id then price, ago, median = V.TooltipText(id, n) end
 	if price then Line(("Auction (%s)"):format(ago), price) end

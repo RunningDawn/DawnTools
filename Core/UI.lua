@@ -771,6 +771,131 @@ UI:Section("sync", "Data Sync", 900, function(panel)
 	UI.syncReset = reset
 end)
 
+-- Data Debug: what the addons cost (memory, time), as lines to copy into a bug report. Reads, changes nothing.
+-- Per-addon time needs the game's script profiling (/console scriptProfile 1, then /reload; it slows everything:
+-- turn it off after).
+local Usage = {}
+DT.Usage = Usage
+local function Addons()
+	local A = C_AddOns or {}
+	local num, info, loaded = A.GetNumAddOns or GetNumAddOns, A.GetAddOnInfo or GetAddOnInfo, A.IsAddOnLoaded or IsAddOnLoaded
+	local out = {}
+	for i = 1, num and num() or 0 do
+		if loaded and loaded(i) then out[#out + 1] = { i = i, name = (info(i)) } end
+	end
+	return out
+end
+local function Gc(what) local ok, n = pcall(collectgarbage, what) return ok and n or 0 end -- (not in every Lua)
+local function Profiling() return GetCVar and GetCVar("scriptProfile") == "1" and UpdateAddOnCPUUsage and GetAddOnCPUUsage and true or false end
+local function Top(list, key, n, fmt)
+	table.sort(list, function(a, b) return a[key] > b[key] end)
+	local out = {}
+	for k = 1, math.min(n, #list) do out[#out + 1] = ("  %-28s " .. fmt):format(list[k].name, list[k][key]) end
+	return out
+end
+function Usage.Head()
+	local version, build = GetBuildInfo and GetBuildInfo()
+	return ("DawnTools %s, client %s (%s), %s"):format(DT.VERSION, tostring(version), tostring(build), date and date("%Y-%m-%d %H:%M") or "")
+end
+function Usage.Memory()
+	local list = Addons()
+	if UpdateAddOnMemoryUsage then UpdateAddOnMemoryUsage() end
+	for _, a in ipairs(list) do a.mb = (GetAddOnMemoryUsage and GetAddOnMemoryUsage(a.i) or 0) / 1024 end
+	local out = { ("Memory: %.1f MB in use by all addons (Lua)."):format(Gc("count") / 1024), "The most:" }
+	for _, line in ipairs(Top(list, "mb", 12, "%7.1f MB")) do out[#out + 1] = line end
+	local b = DT.Bis and DT.Bis.stats
+	if b then out[#out + 1] = ("DawnTools BiS since the /reload: worked out %d times (%d kept as they were), %d sets solved."):format(b.computes, b.kept, b.solves) end
+	return out
+end
+function Usage.Cpu()
+	if not Profiling() then
+		return { "Time per addon: script profiling is off. Type /console scriptProfile 1, /reload, play a few minutes, press again.",
+			"(It slows the game while on: /console scriptProfile 0 and /reload after.)" }
+	end
+	UpdateAddOnCPUUsage()
+	local list, secs = Addons(), GetTime and GetTime() or 1
+	for _, a in ipairs(list) do a.ms = GetAddOnCPUUsage(a.i) end
+	local out = { "Time per addon since the /reload (ms of script time):" }
+	for _, line in ipairs(Top(list, "ms", 12, "%9.0f ms")) do out[#out + 1] = line end
+	return out
+end
+-- The world map opened and timed: the opening itself, then the longest of the next frames (map pins are often
+-- drawn a frame or more later), the garbage made, and with profiling on what each addon spent in it all.
+local FRAMES = 10
+function Usage.Map(done)
+	if InCombatLockdown and InCombatLockdown() then return done({ "Map: not in a fight. Try again out of combat." }) end
+	if not (ToggleWorldMap and WorldMapFrame) then return done({ "Map: no world map to open." }) end
+	if WorldMapFrame:IsShown() then ToggleWorldMap() end
+	local list, cpu = Addons(), Profiling()
+	if cpu then
+		UpdateAddOnCPUUsage()
+		for _, a in ipairs(list) do a.was = GetAddOnCPUUsage(a.i) end
+	end
+	Gc("stop") -- (so a garbage collection step in between does not hide what was made)
+	local mem, t0 = Gc("count"), debugprofilestop()
+	ToggleWorldMap()
+	local open = debugprofilestop() - t0
+	local watch, frames, longest, last = CreateFrame("Frame"), 0, 0, debugprofilestop()
+	watch:SetScript("OnUpdate", function(self)
+		local now = debugprofilestop()
+		longest, last, frames = math.max(longest, now - last), now, frames + 1
+		if frames < FRAMES then return end
+		self:SetScript("OnUpdate", nil)
+		local made = (Gc("count") - mem) / 1024
+		Gc("restart")
+		local out = { ("Map: opened in %.0f ms; the longest of the next %d frames %.0f ms; %.1f MB of garbage made."):format(open, FRAMES, longest, math.max(0, made)) }
+		if cpu then
+			UpdateAddOnCPUUsage()
+			for _, a in ipairs(list) do a.ms = GetAddOnCPUUsage(a.i) - (a.was or 0) end
+			out[#out + 1] = "Script time per addon over it:"
+			for _, line in ipairs(Top(list, "ms", 8, "%7.1f ms")) do out[#out + 1] = line end
+		else
+			out[#out + 1] = "For each addon's share: /console scriptProfile 1, /reload, run it again (turn it off after)."
+		end
+		done(out)
+	end)
+end
+-- /dt map: the same, said in the chat
+function DT.MapTime()
+	Usage.Map(function(lines)
+		for _, line in ipairs(lines) do DT:Print("%s", line) end
+		DT.db.debugLog = Usage.Head() .. "\n" .. table.concat(lines, "\n")
+	end)
+end
+
+UI:Section("debug", "Data Debug", 910, function(panel)
+	Text(panel, "GameFontNormal", 4, -2, "Data Debug")
+	local note = Text(panel, "GameFontDisableSmall", 4, -22, "What the addons cost in memory and time. Press a button; the lines come in the box below. Click in it, Ctrl+A, Ctrl+C, and paste them where they are asked for.")
+	note:SetWidth(560)
+	note:SetWordWrap(true)
+	local back = panel:CreateTexture(nil, "BACKGROUND")
+	back:SetPoint("TOPLEFT", 4, -86)
+	back:SetPoint("BOTTOMRIGHT", -6, 8)
+	back:SetColorTexture(0, 0, 0, 0.35)
+	local scroll = CreateFrame("ScrollFrame", nil, panel, "UIPanelScrollFrameTemplate")
+	scroll:SetPoint("TOPLEFT", 8, -90)
+	scroll:SetPoint("BOTTOMRIGHT", -28, 12)
+	local box = CreateFrame("EditBox", nil, scroll)
+	box:SetMultiLine(true)
+	box:SetAutoFocus(false)
+	box:SetFontObject(GameFontHighlightSmall)
+	box:SetWidth(540)
+	box:SetScript("OnEscapePressed", function(self) self:ClearFocus() end)
+	scroll:SetScrollChild(box)
+	UI.debugBox = box
+	local function Show(lines)
+		local text = box:GetText() or ""
+		box:SetText((text ~= "" and (text .. "\n\n") or (Usage.Head() .. "\n")) .. table.concat(lines, "\n"))
+		DT.db.debugLog = box:GetText() -- (kept in the saved file at the next /reload: readable outside the game)
+	end
+	local x = 4
+	for _, b in ipairs({ { "Memory", 90, function() Show(Usage.Memory()) end }, { "Time (CPU)", 90, function() Show(Usage.Cpu()) end },
+		{ "Open the map", 110, function() Show({ "Map: opening..." }) Usage.Map(Show) end }, { "Clear", 70, function() box:SetText("") end } }) do
+		Button(panel, x, -54, b[2], b[1], b[3])
+		x = x + b[2] + 6
+	end
+end)
+
 local function BuildSettings(panel)
 	settingsPanel = panel
 	local side = panel:CreateTexture(nil, "BACKGROUND")

@@ -211,8 +211,13 @@ local function Link()
 		end
 	end
 	for _, e in ipairs(index) do
+		-- (one only to be had during another, Gregan's The Videre Elixir during Donova's: a step after that one in
+		-- its chain, though not a prerequisite to Status, which wants the other in the log, not done)
+		e.up = e.parent and e.parent > 0 and byId[e.parent] and { e.parent } or {}
+	end
+	for _, e in ipairs(index) do
 		local seen = {}
-		for _, list in ipairs({ e.preAny, e.preAll }) do
+		for _, list in ipairs({ e.preAny, e.preAll, e.up }) do
 			for _, pre in ipairs(list) do
 				if byId[pre] and not seen[pre] then
 					seen[pre] = true
@@ -233,7 +238,7 @@ local function Link()
 		end
 	end
 	for _, e in ipairs(index) do
-		if #e.preAny + #e.preAll > 0 then
+		if #e.preAny + #e.preAll + #e.up > 0 then
 			e.types["In chain"] = true
 		elseif followers[e.id] then
 			e.types["Chain start"] = true
@@ -427,7 +432,14 @@ function Q.Status(e)
 		for _, pre in ipairs(e.preAny) do any = any or m.done(pre) or m.turned[pre] or false end
 		if not any then return "later", "after: " .. QuestName(e.preAny[1]) end
 	end
-	if e.parent and e.parent > 0 and byId[e.parent] and not m.on(e.parent) then return "later", "during: " .. QuestName(e.parent) end
+	-- (say where that one is given and what stands before it: the two often share a name)
+	if e.parent and e.parent > 0 and byId[e.parent] and not m.on(e.parent) then
+		local p = byId[e.parent]
+		local status, why = Q.Status(p)
+		local o = Q.Origin(p)
+		local from = o and o.kind == "npc" and o.name and (" from " .. o.name) or ""
+		return "later", ("during: %s%s%s"):format(p.name, from, status == "later" and (" (" .. why .. ")") or "")
+	end
 	if e.skill and m.skills then
 		local name = SKILLS[e.skill[1]]
 		if name and (m.skills[name] or -1) < (e.skill[2] or 0) then return "later", ("needs %s %d"):format(name, e.skill[2] or 0) end
@@ -504,7 +516,7 @@ function Q.Find(text, f)
 	if dungeon then
 		local seen = {}
 		local function Up(e) -- every quest that has to be done before this one, and before those
-			for _, pres in ipairs({ e.preAny, e.preAll }) do
+			for _, pres in ipairs({ e.preAny, e.preAll, e.up or {} }) do
 				for _, pre in ipairs(pres) do
 					local p = byId[pre]
 					if p and not seen[p] then
@@ -537,7 +549,7 @@ function Q.Chain(e)
 		if seen[q] then return end
 		seen[q] = true
 		local any = false
-		for _, list in ipairs({ q.preAny, q.preAll }) do
+		for _, list in ipairs({ q.preAny, q.preAll, q.up or {} }) do
 			for _, pre in ipairs(list) do
 				if byId[pre] then
 					any = true
@@ -1107,7 +1119,7 @@ local function Nest(rowsOf)
 		if above[e] ~= nil then return above[e] or nil end
 		above[e] = false -- (a ring in the data ends here)
 		local best
-		for _, pres in ipairs({ e.preAny, e.preAll }) do
+		for _, pres in ipairs({ e.preAny, e.preAll, e.up or {} }) do
 			for _, pre in ipairs(pres) do
 				local p = byId[pre]
 				local hit = p and p ~= e and (rowsOf[p] and p or Above(p))
@@ -1612,11 +1624,32 @@ function Q.ItemUse(id)
 end
 
 -- a line on an item's tooltip: a quest item no quest of mine needs any more may go
+-- The quests not read yet this session (the tab never opened): read now, a little a frame, out of a fight; the
+-- tooltip says so meanwhile.
+function Q.ReadForTip(tip)
+	if not Q.Start() then return end
+	Q.background = Q.background or CreateFrame("Frame")
+	Q.background:SetScript("OnUpdate", function(self)
+		if InCombatLockdown and InCombatLockdown() then return end
+		if Q.Step(4) then self:SetScript("OnUpdate", nil) end
+	end)
+	tip:AddLine(DT.TIP .. "|cff888888reading the quests: hover again in a moment|r")
+end
+
 local function TooltipLine(tip, data)
 	if not (Q.db and Q.db.settings and Q.db.settings.itemTip ~= false) or not (tip and tip.AddLine and data and type(data.id) == "number") then return end
 	-- (only the game's Quest items: cloth and herbs that quests ask for too would say it on every bag slot)
 	local class = C_Item and C_Item.GetItemInfoInstant and select(6, C_Item.GetItemInfoInstant(data.id))
-	if not ready or class ~= 12 then return end
+	-- (and a quest's own paper the game files elsewhere, Bath'rah's Parchment: what no vendor buys, no trade good,
+	-- not made into anything)
+	local quest = class == 12
+	if not quest and class ~= 7 then
+		local info = (C_Item and C_Item.GetItemInfo) or GetItemInfo
+		local sell = info and select(11, info(data.id))
+		quest = sell == 0 and not (DT.UsedIn and next(DT.UsedIn(data.id) or {}))
+	end
+	if not quest then return end
+	if not ready then return Q.ReadForTip(tip) end
 	local safe, text, status = Q.ItemUse(data.id)
 	if safe == nil then return end
 	if safe then

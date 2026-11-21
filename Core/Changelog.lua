@@ -6,6 +6,25 @@
 local _, DT = ...
 
 DT.CHANGELOG = {
+	{ "0.53.0", "2026-11-21", {
+		"Tools: an FPS sub-tab: the game's frame rate as a small number on screen, to drag where it suits, lock and size.",
+		"Tools: a Chat Saver sub-tab: save your chat windows, tabs, sizes, places, what each shows, channels and colours by name, load them on any character; one can be put back at every login and /reload.",
+		"Tooltips: DT: Vendor (buy) names the vendor on the left and has the price on the right, in line with the other prices.",
+		"Quests: the safe-to-delete line on quest items works before the Quests tab is opened: the first such tooltip reads the quests in the background.",
+		"Quests: the line also shows on quest papers the game does not file as Quest items (Bath'rah's Parchment): what no vendor buys and no recipe uses.",
+		"BiS: selling junk at a vendor no longer starts the sets and upgrades over from the beginning on every sale (memory spiked while selling).",
+		"Quests: a quest only to be had during another (Gregan's The Videre Elixir in Feralas) now says whom to take that one from and what stands before it, and shows in its chain.",
+		"BiS: every boss drop of a dungeon for your level is looked at. Sunken Temple's gear at 60 (Warrior's Embrace, Eater of the Dead) was left out behind higher-level pieces of the same armor or weapon type.",
+		"BiS: Upgrades lists every find that beats what you wear, not only the best few of each slot.",
+		"BiS: gear worn with a random suffix (of the Bandit, of the Bear) counts with the suffix's stats.",
+		"BiS: Upgrades has an \"Only with upgrades\" box next to the source list: dungeons and raids with none are left out of it.",
+		"BiS: the gear found is looked through once more after this update.",
+		"BiS: Upgrades' source column gives a dungeon drop's dungeon, then its boss and drop chance lined up after it.",
+		"BiS: % says \"new\" only for a slot you wear nothing in; a dash where what you wear there counts for nothing for this spec.",
+		"Dungeons: an Upg column between Slot and Type: a green arrow on each drop that would improve your best set.",
+		"Settings: a Data Debug section below Data Sync: buttons for memory, time per addon and opening the map timed, with the lines in a box to copy (and kept in the saved file until the next press).",
+		"/dt map: opens the world map and says how long it took, the slowest frame after it and, with script profiling on, each addon's share.",
+	} },
 	{ "0.52.0", "2026-11-20", {
 		"BiS: the Upgrades view has a filter: by source (quest, crafted, vendor, world drop, any dungeon) or one dungeon or raid, with its levels and how many upgrades it drops.",
 		"BiS: Upgrades has column titles, and weight, vs worn, %, the slot and the full source, as Gear has.",

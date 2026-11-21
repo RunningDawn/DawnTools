@@ -235,7 +235,11 @@ end
 ---------------------------------------------------------------------------
 
 local ROW_H, SIDE_W, TOP_H, SIDE_H = 18, 230, 28, 18
-local COLS = { { "Boss / item", 290 }, { "Slot", 96 }, { "Type", 104 }, { "Chance", 64, true }, { "Seen by the guild", 132, true }, { "Auction", 0, true } }
+-- { title, width (0: to the right edge), right-justified, the line's field: its place, or a key }
+local COLS = { { "Boss / item", 290, false, 1 }, { "Slot", 96, false, 2 }, { "Upg", 34, false, "upg" }, { "Type", 104, false, 3 },
+	{ "Chance", 64, true, 4 }, { "Seen by the guild", 132, true, 5 }, { "Auction", 0, true, 6 } }
+-- a green arrow: an upgrade over my best set, by the BiS tab's reckoning
+local UPG = "|TInterface\\Buttons\\Arrow-Up-Up:14:14:0:0:32:32:0:32:0:32:64:255:64|t"
 local panel, side, search, note, bar
 local rows, sideButtons, heads, lines, offset, sideOffset = {}, {}, {}, {}, 0, 0
 local dirty = true
@@ -362,7 +366,7 @@ local function Rebuild()
 				local chance = D.Chance(boss, id)
 				local price = DawnMarket and DawnMarket.API.GetLatest and DawnMarket.API.GetLatest(id)
 				local times = seen[id] or 0
-				lines[#lines + 1] = { item = id, name = shown,
+				lines[#lines + 1] = { item = id, name = shown, upg = DT.Bis and DT.Bis.IsUpgrade and DT.Bis.IsUpgrade(id) and UPG or nil,
 					"    " .. (icon and ("|T%s:14|t "):format(icon) or "") .. color .. shown .. "|r" .. (not listed[id] and "  |cff66ccffseen by the guild|r" or ""),
 					slot and slot ~= "" and (_G[slot] or slot) or "", sub or kind or "",
 					chance and ("%s%%"):format(chance % 1 == 0 and ("%d"):format(chance) or ("%.1f"):format(chance)) or "|cff888888-|r",
@@ -508,7 +512,7 @@ function D.Refresh(scrolled)
 			row:SetShown(d and true or false)
 			row.shade:SetShown(d and d.shade and true or false)
 			if d and d.shade then row.shade:SetColorTexture(d.shade[1], d.shade[2], d.shade[3], d.shade[4]) end
-			for c, cell in ipairs(row.dcols) do cell:SetText(d and d[c] or "") end
+			for c, cell in ipairs(row.dcols) do cell:SetText(d and d[COLS[c][4]] or "") end
 		end
 	end
 	D.mineBox:SetChecked(D.db.mine and true or false)

@@ -347,7 +347,7 @@ local LibDeflate = {
 	end,
 }
 -- ("../DawnTools_Seed/": the data files, kept out of the addon: see Core/DBSeed.lua)
-local FILES = { "Core/Logic.lua", "Core/BisLogic.lua", "Core/Core.lua", "Core/Comms.lua", "Core/UI.lua", "Core/Builtins.lua", "Core/Profiles.lua", "Core/DBLogic.lua", "Core/DB.lua", "Core/DBImport.lua", "Core/DBSeed.lua", "Market/Capture.lua", "Market/Sync.lua", "Market/UI.lua", "../DawnTools_Seed/CraftSkill.lua", "../DawnTools_Seed/Dungeons.lua", "../DawnTools_Seed/BisProfiles.lua", "Data/BisLists.lua", "Modules/Inventory.lua", "Modules/Fish.lua", "Modules/Food.lua", "Modules/Craft.lua", "Modules/Npc.lua", "Modules/Quest.lua", "Modules/Item.lua", "Modules/Zone.lua", "Modules/Dungeon.lua", "Modules/Favs.lua", "Modules/Finds.lua", "Modules/Combat.lua", "Modules/Bis.lua", "Tools/Tools.lua", "Tools/Range.lua", "Tools/Mp5.lua", "Tools/Tracker.lua", "Tools/Enemies.lua", "Tools/Carrot.lua", "Tools/ChatHistory.lua", "Core/DBSync.lua", "Core/Changelog.lua", "Core/Home.lua" }
+local FILES = { "Core/Logic.lua", "Core/BisLogic.lua", "Core/Core.lua", "Core/Comms.lua", "Core/UI.lua", "Core/Builtins.lua", "Core/Profiles.lua", "Core/DBLogic.lua", "Core/DB.lua", "Core/DBImport.lua", "Core/DBSeed.lua", "Market/Capture.lua", "Market/Sync.lua", "Market/UI.lua", "../DawnTools_Seed/CraftSkill.lua", "../DawnTools_Seed/Dungeons.lua", "../DawnTools_Seed/BisProfiles.lua", "Data/BisLists.lua", "Modules/Inventory.lua", "Modules/Fish.lua", "Modules/Food.lua", "Modules/Craft.lua", "Modules/Npc.lua", "Modules/Quest.lua", "Modules/Item.lua", "Modules/Zone.lua", "Modules/Dungeon.lua", "Modules/Favs.lua", "Modules/Finds.lua", "Modules/Combat.lua", "Modules/Bis.lua", "Tools/Tools.lua", "Tools/Range.lua", "Tools/Mp5.lua", "Tools/Fps.lua", "Tools/Tracker.lua", "Tools/Enemies.lua", "Tools/Carrot.lua", "Tools/ChatHistory.lua", "Tools/ChatSaver.lua", "Core/DBSync.lua", "Core/Changelog.lua", "Core/Home.lua" }
 
 local function after(delay, fn, owner) timers[#timers + 1] = { at = now + delay, fn = fn, owner = owner } end
 local function Now() return BASE + math.floor(now) end
@@ -407,7 +407,8 @@ local BUTTON = Methods(FRAME, [[SetText GetText RegisterForClicks SetEnabled Ena
 local METHODS = {
 	Frame = FRAME, Button = BUTTON,
 	CheckButton = Methods(BUTTON, "SetChecked GetChecked"),
-	EditBox = Methods(FRAME, "SetText GetText SetAutoFocus SetNumeric SetFocus ClearFocus HasFocus"),
+	EditBox = Methods(FRAME, "SetText GetText SetAutoFocus SetNumeric SetFocus ClearFocus HasFocus SetMultiLine SetFontObject"),
+	ScrollFrame = Methods(FRAME, "SetScrollChild"),
 	FontString = Methods(REGION, "SetText GetText SetJustifyH SetWordWrap SetTextColor SetSpacing SetFont SetShadowColor SetShadowOffset GetStringWidth"),
 	Texture = Methods(REGION, "SetColorTexture SetTexture SetTexCoord SetAtlas"),
 	GameTooltip = Methods(FRAME, "SetOwner AddLine AddDoubleLine GetItem SetHyperlink"),
@@ -2171,6 +2172,17 @@ end)()
 	table.remove(r, 1)
 	check(r[1].data.boss and r[1].data[1]:find("Rhahk'Zor", 1, true) and r[1].data[1]:find("[-]", 1, true), "then a boss, open"); eq(r[2].data.item, 872, "then what it drops")
 	eq(r[2].data[5], "|cff888888-|r", "never seen to drop: a dash")
+	do -- an upgrade by the BiS tab's reckoning: a green arrow in the Upg column, between Slot and Type
+		local was = X.DT.Bis.IsUpgrade
+		X.DT.Bis.IsUpgrade = function(id) return id == 872 end
+		Dg.Refresh()
+		local rr = rows()
+		table.remove(rr, 1)
+		check(rr[2].data.upg and rr[2].data.upg:find("Arrow-Up", 1, true), "an upgrade has its arrow")
+		eq(rr[2].dcols[3].text, rr[2].data.upg, "in the third column"); eq(rr[2].dcols[4].text, rr[2].data[3], "and the type after it")
+		X.DT.Bis.IsUpgrade = was
+		Dg.Refresh()
+	end
 	-- a boss folds shut with a click, and that is remembered
 	r[1].scripts.OnMouseUp(r[1], "LeftButton")
 	eq(Dg.db.closed["644"], true, "a click on a boss folds it shut, and it is remembered")
@@ -2595,7 +2607,7 @@ V.vendorOnly = nil
 V:Refresh()
 A.env.GameTooltip.lines = {}
 A.tooltipHook(A.env.GameTooltip, { id = 100 })
-check(table.concat(A.env.GameTooltip.lines, "|"):find("30c at Kira, Booty Bay, Stranglethorn Vale", 1, true), "the item's tooltip says where a vendor sells it")
+check(table.concat(A.env.GameTooltip.lines, "|"):find("Vendor (buy)  |cffaaaaaaKira, Booty Bay, Stranglethorn Vale|r 30c", 1, true), "the item's tooltip says where a vendor sells it, the price on the right: " .. table.concat(A.env.GameTooltip.lines, "|"))
 
 -- Auction houses: my faction's and the cross-faction one keep their own prices
 local M = A.M
@@ -3057,11 +3069,13 @@ eq(foodRows(Fay)[1].id, 5003, "and back by level")
 	eq(VT(7938, 1), nil, "an item neither knows of: nothing")
 	A.env.LibQuestieDB = { Item = { Get = function(id, key) return key == "vendors" and (id == 4599 and { 11, 12, 13 } or id == 2692 and { 11 }) or nil end },
 		Npc = { Get = function(id, key) return key == "name" and id == 11 and "Kira Cook" or nil end } }
-	eq(VT(4599, 1), "Kira Cook +2 more |cff888888(price not seen yet)|r", "one QuestieDB says vendors sell: who, and that the price is not seen yet")
-	eq(VT(2692, 1), A.DT.Money(40) .. " at Kira Cook", "both known: the price and who")
+	local p1, w1 = VT(4599, 1)
+	eq(p1, "|cff888888price not seen yet|r", "one QuestieDB says vendors sell: the price not seen yet"); eq(w1, "Kira Cook +2 more", "and who")
+	local p2, w2 = VT(2692, 1)
+	eq(p2, A.DT.Money(40), "both known: the price"); eq(w2, "Kira Cook", "and who")
 	tip.lines = {}
 	A.tooltipHook(tip, { id = 4599 })
-	check(tostring(tip.lines[1]):find("Vendor (buy) Kira Cook +2 more", 1, true), "and the tooltip says it: " .. tostring(tip.lines[1]))
+	check(tostring(tip.lines[1]):find("Vendor (buy)  |cffaaaaaaKira Cook +2 more|r |cff888888price not seen yet|r", 1, true), "and the tooltip says it, the price on the right: " .. tostring(tip.lines[1]))
 	A.env.LibQuestieDB = wasQ
 	tip.lines = lines
 	CS[5001], CS[5003] = nil, nil
@@ -3357,6 +3371,30 @@ do
 		end
 		check(line(5001):find("DT: NOT safe to delete", 1, true) and line(5001):find("needed for Fish for Gorak", 1, true), "an item a quest of mine still asks for: " .. line(5001))
 		check(line(5002):find("DT: Safe to delete", 1, true), "one that starts the other side's quest: it may go")
+		do -- a quest's paper the game does not file as a Quest item (Bath'rah's Parchment): no vendor buys it
+			local instant, info = B2.env.C_Item.GetItemInfoInstant, B2.env.C_Item.GetItemInfo
+			local sell = 0
+			B2.env.C_Item.GetItemInfoInstant = function(id) return id, "", "", "", 1, 0, 0 end
+			B2.env.C_Item.GetItemInfo = function(id) return "Paper", "", 1, 1, 1, "", "", 1, "", 1, sell end
+			check(line(5001):find("safe to delete", 1, true), "an item no vendor buys, that a quest uses: the line too: " .. line(5001))
+			sell = 25
+			eq(line(5001), "", "one a vendor buys, not filed as a Quest item: nothing (a potion a quest asked for)")
+			B2.env.C_Item.GetItemInfoInstant, B2.env.C_Item.GetItemInfo = instant, info
+		end
+		do -- the quests not read yet (the tab never opened this session): read then, in the background
+			local start, step = Quest.Start, Quest.Step
+			local n = 0
+			Quest.Start, Quest.Step = function() return true end, function() n = n + 1 return true end
+			B2.env.InCombatLockdown = function() return false end
+			-- (the reading is asked of the module itself: not ready, it says so and reads on)
+			local t = { lines = {} }
+			t.AddLine = function(self, l) self.lines[#self.lines + 1] = l end
+			Quest.ReadForTip(t)
+			check(t.lines[1] and strip(t.lines[1]):find("reading the quests", 1, true), "not read yet: it says so")
+			Quest.background.scripts.OnUpdate(Quest.background)
+			eq(n, 1, "and reads them on, a little a frame")
+			Quest.Start, Quest.Step = start, step
+		end
 		qdone[100] = true; B2.fire("QUEST_TURNED_IN", 100)
 		check(line(5001):find("DT: Safe to delete", 1, true) and line(5001):find("Fish for Gorak", 1, true), "its quest done: safe to delete, and why: " .. line(5001))
 		qdone[100], Quest.db.turned = nil, nil; B2.fire("QUEST_REMOVED", 100) -- (the hand-in is remembered: forgotten again for the checks after)
@@ -3684,6 +3722,16 @@ do
 		local parent = run.parent
 		run.parent = 100
 		eq(select(2, Quest.Status(run)), "only during: Fish for Gorak (done)", "a quest only to be had during another is over once that one is done")
+		local was, min = qdone[100], run.min
+		qdone[100], run.min = nil, 0
+		B2.fire("QUEST_ACCEPTED")
+		step(1)
+		local status, why = Quest.Status(run)
+		eq(status, "later", "the other not taken: later")
+		eq(why:find("^during: Fish for Gorak") ~= nil, true, "and it names the quest to take first: " .. why)
+		qdone[100], run.min = was, min
+		B2.fire("QUEST_ACCEPTED")
+		step(1)
 		run.parent = parent
 	end)()
 	;(function() -- a quest the game does not remember: marked as done by hand, with a right-click
@@ -4688,6 +4736,92 @@ do
 	end)()
 end
 
+-- Chat Saver: the chat set up once, kept by name, put back (and at every login, where ticked)
+do
+	local calls = {}
+	local function Rec(name) return function(...) calls[#calls + 1] = { name, ... } end end
+	local function Fr(n)
+		return { n = n, GetPoint = function() return "BOTTOMLEFT", nil, "BOTTOMLEFT", 30, 40 end, GetWidth = function() return 400 end,
+			GetHeight = function() return 180 end, ClearAllPoints = function() end, SetPoint = Rec("SetPoint"), SetSize = Rec("SetSize"), Show = function() end }
+	end
+	local WIN = { { "General", 14, 0, 0, 0, 0.4, true, true, 1, false }, { "Combat Log", 12, 0, 0, 0, 0.4, true, true, 2, false },
+		{ "Trade", 12, 0, 0, 0, 0.3, true, false, nil, false } }
+	local Z = NewClient("Chatty", { globals = function(env)
+		env.NUM_CHAT_WINDOWS = 3
+		for i = 1, 3 do env["ChatFrame" .. i] = Fr(i) end
+		env.IsCombatLog = function(f) return f.n == 2 end
+		env.GetChatWindowInfo = function(i) local w = WIN[i] if w then return w[1], w[2], w[3], w[4], w[5], w[6], w[7], w[8], w[9], w[10] end end
+		env.GetChatWindowMessages = function(i) if i == 1 then return "SAY", "GUILD" end if i == 3 then return "WHISPER" end end
+		env.GetChatWindowChannels = function(i) if i == 3 then return "Trade - City", 0, "LookingForGroup", 0 end end
+		env.GetChannelList = function() return 1, "General", false, 2, "Trade - City", false end
+		env.ChatTypeInfo = { SAY = { r = 1, g = 1, b = 1 }, GUILD = { r = 0.2, g = 1, b = 0.2 } }
+		for _, name in ipairs({ "JoinPermanentChannel", "FCF_SetWindowName", "FCF_SetChatWindowFontSize", "FCF_SetWindowColor", "FCF_SetWindowAlpha",
+			"ChatFrame_RemoveAllMessageGroups", "ChatFrame_AddMessageGroup", "ChatFrame_RemoveAllChannels", "ChatFrame_AddChannel", "FCF_Close",
+			"SetChatWindowShown", "FCF_DockFrame", "FCF_UnDockFrame", "FCF_SavePositionAndDimensions", "FCF_SetLocked", "FCF_SetUninteractable",
+			"ChangeChatColor", "FCF_DockUpdate" }) do env[name] = Rec(name) end
+	end })
+	local C = Z.DT.ChatSaver
+	local function Count(name, arg2)
+		local n = 0
+		for _, c in ipairs(calls) do if c[1] == name and (arg2 == nil or c[3] == arg2) then n = n + 1 end end
+		return n
+	end
+	local L = C.Capture()
+	eq(L.windows[3].name, "Trade", "a window: its name"); eq(L.windows[3].docked, nil, "not docked"); eq(L.windows[3].pos[3], 30, "so its place is kept")
+	eq(L.windows[1].groups[2], "GUILD", "what it shows"); eq(L.windows[3].chans[2], "LookingForGroup", "and its channels")
+	eq(L.colors.GUILD[2], 1, "the colours"); eq(L.channels[2], "Trade - City", "the channels joined")
+	eq(C.Save("  "), false, "a layout needs a name")
+	eq(C.Save("Main"), true, "saved by name"); eq(C.db.layouts.Main.windows[1].name, "General", "and kept")
+	-- put back: on another character, where it is not so
+	C.db.layouts.Main.channels[3] = "LookingForGroup"
+	calls = {}
+	eq(C.Load("Main"), 3, "put back: three windows")
+	eq(Count("JoinPermanentChannel", nil), 1, "only a channel not joined is joined"); eq(calls[1][2], "LookingForGroup", "the missing one, first")
+	eq(Count("ChatFrame_AddMessageGroup"), 3, "what each window shows (not the combat log's filters)")
+	eq(Count("ChatFrame_AddChannel"), 2, "and its channels")
+	eq(Count("FCF_DockFrame"), 1, "the docked one docked again"); eq(Count("FCF_UnDockFrame"), 1, "the one placed apart, undocked"); eq(Count("SetSize"), 2, "and sized, as the first")
+	eq(Count("ChangeChatColor"), 2, "the colours")
+	-- at every login, where ticked
+	C.picked = "Main"
+	C.SetAuto(true)
+	eq(C.db.auto, "Main", "ticked: put back at login")
+	calls = {}
+	Z.fire("PLAYER_ENTERING_WORLD", false, false)
+	step(2)
+	eq(Count("FCF_SetWindowName"), 0, "not on a zone change")
+	Z.fire("PLAYER_ENTERING_WORLD", false, true)
+	step(2)
+	eq(Count("FCF_SetWindowName"), 3, "at a /reload, by itself")
+	C.Delete("Main")
+	eq(C.db.layouts.Main, nil, "deleted"); eq(C.db.auto, nil, "and no longer put back")
+	leave(Z)
+end
+
+-- FPS: the game's frame rate on screen, placed, locked and sized
+do
+	local Fps, f = A.DT.Fps, A.DT.Fps.f
+	Fps.Reset()
+	Fps.Set("on", false)
+	Fps.Set("locked", false)
+	eq(f.shown, false, "FPS is off to begin with")
+	A.env.GetFramerate = function() return 24.6 end
+	Fps.Set("on", true)
+	eq(f.shown, true, "switched on: shown"); eq(f.text.text, "25 fps", "the game's frame rate, rounded")
+	eq(f.box.shown, true, "unlocked: a box to drag"); eq(f.grip.shown, true, "and a corner to size it by")
+	f.scripts.OnUpdate(f, 1)
+	A.env.GetFramerate = function() return 60 end
+	f.scripts.OnUpdate(f, 1)
+	eq(f.text.text, "60 fps", "read again as it runs")
+	Fps.Resize(2)
+	eq(Fps.db.size, 16, "the wheel or + makes it bigger")
+	Fps.Set("locked", true)
+	eq(f.box.shown, false, "locked: no box"); eq(f.grip.shown, false, "nor corner")
+	Fps.Set("on", false)
+	eq(f.shown, false, "off: gone")
+	Fps.Reset()
+	A.env.GetFramerate = nil
+end
+
 -- MP5: the five-second rule, counted from my own casts of spells that cost mana
 do
 	local Tools, Mp5 = A.DT.Tools, A.DT.Mp5
@@ -5389,7 +5523,16 @@ do
 	Pia.slash("settings")
 	local titles = {}
 	for i, b in ipairs(UI.sectionButtons) do titles[i] = (b.label.text:gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", "")) end
-	eq(table.concat(titles, " / "), "General / Profiles / Tabs & Modules / Built-ins / Tooltips / Market / BiS / Data Sync", "the Settings tab lists its sections: the fixed ones, then one per module with switches, Data Sync at the bottom")
+	eq(table.concat(titles, " / "), "General / Profiles / Tabs & Modules / Built-ins / Tooltips / Market / BiS / Data Sync / Data Debug", "the Settings tab lists its sections: the fixed ones, then one per module with switches, Data Sync and Data Debug at the bottom")
+	do -- Data Debug: a button puts lines to copy in the box
+		click(UI.sectionButtons[#UI.sectionButtons])
+		local mem
+		for _, w in ipairs(Pia.widgets) do if w.kind == "Button" and w.text == "Memory" then mem = w end end
+		click(mem)
+		local text = UI.debugBox:GetText() or ""
+		check(text:find("^DawnTools ") and text:find("Memory: ", 1, true), "Memory: its lines in the box, after a line on the versions: " .. text)
+		click(UI.sectionButtons[1])
+	end
 	eq(db.settingsSection, "general", "General to begin with"); eq(UI.sectionPanels.general.shown, true, "its panel shown"); eq(UI.sectionPanels.profiles.shown, false, "the others not")
 	click(UI.sectionButtons[2])
 	eq(db.settingsSection, "profiles", "a click shows a section"); eq(UI.sectionPanels.profiles.shown, true, "its panel"); eq(UI.sectionPanels.general.shown, false, "the last one hidden")
@@ -5589,9 +5732,11 @@ end
 	eq(B.Passes(9003, B.Kind(9003) or "boe"), true, "its own kind passes"); eq(B.Passes(9003, "d:Nowhere"), false, "a dungeon that does not drop it does not")
 	-- the sets and upgrades are saved; worked out again from the very same, they are taken from there
 	check(B.db.saved[s.skey] and B.db.saved[s.skey].sig == s.sig, "the sets and upgrades are saved")
+	local kept, solves = B.stats.kept, B.stats.solves
 	B.Stale()
 	local again = B.State()
-	check(again ~= s and #again.queue == 0 and again.upg[1] and again.upg[1].id == 9003 and again.at, "the same again: taken from what was saved, nothing to work out")
+	eq(B.stats.kept, kept + 1, "nothing changed (junk sold, say): kept as it was"); eq(B.stats.solves, solves, "nothing solved again")
+	check(again == s and #again.queue == 0 and again.upg[1] and again.upg[1].id == 9003 and again.at, "the same again: nothing to work out")
 	eq(again.bis.score, s.bis.score, "the same best set")
 	check(not B.db.saved[s.skey].bis.rows and not B.db.saved[s.skey].bis.swaps, "nothing of the views goes into the file")
 	B.Recalc()
@@ -5970,6 +6115,23 @@ end)()
 	for _ = 1, 8 do step(5); B.Item(9160) end
 	eq(asks, 6, "asked again every few seconds, six times"); step(5); eq(B.Gone(9160), true, "and then known to be gone")
 	e.C_Item.RequestLoadItemDataByID, X.uncached[9160] = real, nil
+	do -- worn with a random suffix (Bonelink Armor of the Bandit): the stats of the link, not of the bare item
+		local link = "|cff1eff00|Hitem:9130:0:0:0:0:0:-12:0|h[Worn Ring of the Bandit]|h|r"
+		local stats, tip, info = e.GetItemStats, e.C_TooltipInfo, e.C_Item.GetItemInfo
+		e.GetInventoryItemLink = function(_, slot) return slot == 11 and link or nil end
+		e.GetItemStats = function(l) if l == link then return { ITEM_MOD_STRENGTH_SHORT = 5, ITEM_MOD_AGILITY_SHORT = 9 } end return stats(l) end
+		e.C_TooltipInfo = setmetatable({ GetHyperlink = function() return { lines = { { leftText = "Worn Ring of the Bandit" } } } end }, { __index = tip or {} })
+		e.C_Item.GetItemInfo = function(x, ...) if x == link then return "Worn Ring of the Bandit" end return info(x, ...) end
+		local bare = B.Item(9130).s.agi
+		B.Stale(); B.State()
+		eq(B.suffixed[9130], link, "a worn item with a suffix is known by its link")
+		eq(B.Item(9130).s.agi, 9, "and its stats are the link's (bare: " .. tostring(bare) .. ")")
+		eq(B.Item(9130).name, "Worn Ring of the Bandit", "with the suffix in its name")
+		e.GetInventoryItemLink = function(_, slot) return slot == 11 and "|Hitem:9130:0:0:0:0:0:0:0|h[Worn Ring]|h" or nil end
+		B.Stale(); B.State()
+		eq(B.Item(9130).s.agi, bare, "without a suffix: the bare item")
+		e.GetInventoryItemLink, e.GetItemStats, e.C_TooltipInfo, e.C_Item.GetItemInfo = nil, stats, tip, info
+	end
 	leave(X)
 	for id in pairs(GEAR) do ITEMS[id] = nil end
 end)()
@@ -6037,6 +6199,17 @@ end)()
 	B.Pick("warrior-fury")
 	for _ = 1, 20 do B.Sift(); step(0.2) end
 	step(3)
+	do -- (a boss's drop is never cut for higher pieces of its armor type: Sunken Temple's plate at 60)
+		local missing, Dg = {}, X.DT.Dungeon
+		for _, d in ipairs(Dg.All()) do
+			if (d.lo or 0) <= 60 and (d.hi or 99) >= 45 and not Dg.IsRaid(d) then
+				for _, boss in ipairs(d.bosses) do
+					for id in pairs(boss.has) do if B.finder.kind[id] ~= "dungeon" then missing[#missing + 1] = id end end
+				end
+			end
+		end
+		eq(#missing, 0, "every boss drop of a dungeon for the level is looked at (missing: " .. table.concat(missing, ", ") .. ")")
+	end
 	local s = B.State()
 	check(#B.finder.todo > 100, "most items are still to come")
 	check(s.bis and s.bis.rows[1] and s.bis.rows[1] > 49000 or error("DBG " .. tostring(B.Item(49001)) .. tostring(B.finder.kind[49001]) .. tostring(B.finder.gone) .. tostring(s.bis and s.bis.rows[1]) .. " got " .. #B.finder.got .. " todo " .. #B.finder.todo), "yet the best set is shown, with the best helm of those looked at")

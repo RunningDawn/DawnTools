@@ -4,7 +4,7 @@
 local ADDON, DT = ...
 _G.DawnTools = DT
 
-DT.VERSION = "0.52.0" -- keep in step with the .toc
+DT.VERSION = "0.53.0" -- keep in step with the .toc
 DT.LOGO = "Interface\\AddOns\\DawnTools\\logo"
 
 local DEFAULTS = {
@@ -344,6 +344,8 @@ local function Slash(input)
 		DT:Print("window back to its first size and place.")
 	elseif cmd == "probe" then
 		Probe()
+	elseif cmd == "map" then
+		DT.MapTime()
 	elseif cmd == "db" then
 		DT.DB.Slash(rest)
 	elseif cmd == "sync" then
