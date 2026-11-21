@@ -1,0 +1,28 @@
+# Pushing a tag (e.g. 0.11.1) packages the addon and publishes it:
+#   - always: a GitHub Release with the zip
+#   - CurseForge too, once DawnTools.toc has "## X-Curse-Project-ID: <id>" and the
+#     repository secret CF_API_KEY holds a CurseForge API token
+# If CurseForge has no game version for WoW: Forever (interface 16001), its upload fails
+# here; the GitHub Release is still made.
+name: Package and release
+
+on:
+  push:
+    tags:
+      - '*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: BigWigsMods/packager@v2
+        env:
+          CF_API_KEY: ${{ secrets.CF_API_KEY }}
+          GITHUB_OAUTH: ${{ secrets.GITHUB_TOKEN }}
