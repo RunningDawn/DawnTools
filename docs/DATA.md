@@ -95,7 +95,7 @@ slightly high.
 | AtlasLootClassic | GPL-2 (no "or later") | boss loot, drop rates | live only; never stored, shipped or sent |
 | Auctionator | (not to be read as a reference) | its price history, as a local fill-in | live only; never sent |
 | GatherMate2, Questie, TomTom | various | node counts, zone lookups, waypoints | live only |
-| (private) | not for publishing | stat weights for the BiS tab | the seed addon's `BisProfiles.lua`, read from there by `Modules/Bis.lua`. Not in the repository, not in the store, not sent: only the seed's keeper has a BiS tab |
+| (defaults) | owner's decision | stat weights for the BiS tab | `Data/BisProfiles.lua`, in the download as editable defaults. Not in the store, not sent |
 | CMaNGOS classic-db | said to be GPL-3 with carve-outs; **its licence files are not read yet** | **planned:** drop chances of old-world mobs | nothing taken yet |
 
 Never taken, in any way but a live read on the player's own machine: ForeverLevelingBiS, RareScanner,
@@ -105,8 +105,7 @@ Every copy is recorded in `THIRD_PARTY_LICENSES.txt`.
 **Not being in the download does not change what a licence allows.** A row passed from one member's machine to
 another's is a copy handed on, as a file in a zip is. For the GPL sources that is what their licence permits
 (the notice travels with the addon every member has: `THIRD_PARTY_LICENSES.txt` and `LICENSE`). For QuestieDB
-it rests on the Questie team's statement (decision D of the plan). It is why the stat weights of BiS, which are
-private, are kept out of the store.
+it rests on the Questie team's statement (decision D of the plan). The stat weights of BiS are kept out of the store.
 
 ### The seed addon
 

@@ -36,7 +36,7 @@ Licence:  GPL-3.0-or-later (its .toc "X-License" and its LICENSE.txt). The text 
 Upstream: OneForAll states its own sources in its DUNGEON_DATA_SOURCES.txt: the Forever client's tables
           (wago.tools), QuestieDB, and loot tables gathered from Wowhead and fan sites.
 
-BiS stat weights: NOT in this download, and never sent between players. Without them the BiS tab does not show.
+BiS stat weights (Data/BisProfiles.lua): default numbers, changeable in game and reset to these; never sent between players.
 
 NPCs, items, quests and objects (rows "npc:", "item:", "quest:", "object:", "zone:", "enum:", source "questie")
 --------------------------------------------------------------------------------------------------------------

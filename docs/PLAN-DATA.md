@@ -32,7 +32,7 @@ run the addon against a fake client and a fake guild. Step 1 is the first thing 
 | The model | Written down (22 relations in `DB.RELS`). `DT.DB` answers 6 as relations; the tabs read the rest of what they need through `DB.Lib()`. |
 | The store | Done: rows in chunks, hashed (`Core/DBLogic.lua`, `Core/DB.lua`). Measured: 60,000 rows are 2.5 MB of memory, 58 ms to read through. |
 | Base rows | Done in 0.45.0: QuestieDB's NPCs, items, quests and objects with what the tabs use of them (flags, places, who drops and sells, quest chains); recipes, vendor prices and dungeons from the seed addon. Not seen in game; size and import time not measured. |
-| Not in the download | Done in 0.45.0 for recipes, vendor prices and dungeons: they live in `DawnTools_Seed/` on the keeper's machine. `Data/QuestRewards.lua` went in 0.48.0. Still a file of the addon: `Data/BisLists.lua`. The BiS profiles are private to the keeper (decision E). |
+| Not in the download | Done in 0.45.0 for recipes, vendor prices and dungeons: they live in `DawnTools_Seed/` on the keeper's machine. `Data/QuestRewards.lua` went in 0.48.0. Still a file of the addon: `Data/BisLists.lua`. `Data/BisProfiles.lua` holds the BiS default weights (decision E). |
 | Learned in play | Loot of every mob, chest and node counted (seen working in game at 0.44.0). New NPCs, items, quests, chests written down, now with the map they were met on (not seen in game). |
 | Finds | World → Finds lists them; a click is a waypoint. They are in the NPC and Quests tabs too. |
 | Sync | Built; passes in the fake guild: a newcomer gets recipes, dungeons and a guildmate's QuestieDB rows, also from a member who only received them. Never run between two real players. Measured alone: about 700 bytes a second per sender by whisper, none lost. |
@@ -175,7 +175,7 @@ Needs a second player on this build.
 | B | Market answers a request with everything it holds, other members' observations and their names included. Say so in the popup, or strip the names from what is passed on? | Any time; it is how it works today |
 | C | CMaNGOS classic-db: read its licence files and, if they allow it, take its drop chances? | Step 7 |
 | D | The base rows rest on the Questie team's statement that reuse under GPL-3 is fine with them, not on every contributor's consent. Accepted 2026-11-19; to be looked at again before the addon goes on CurseForge. From 0.45.1 every field QuestieDB has of a thing is in those rows, bar translations. | Publishing |
-| E | The BiS stat weights are private: on the keeper's machine only, never in the repository, the download or the store. So only the keeper has a BiS tab. To give it to the guild: weights of our own, or ones whose source allows it. | Before BiS is for everyone |
+| E | The BiS stat weights ship in the download as defaults (`Data/BisProfiles.lua`, owner's decision, 0.54.0): every player can change them and reset them. Not in the store, not sent. | Done |
 | F | The one question of sharing is asked a little after login, since without it a member has no recipes, dungeons or lists. (Accepted with A.) | Done |
 | G | Who keeps the seed. One machine is enough for the guild to have the data, but only while members who got it are online to pass it on. A second keeper (the folder copied by hand) makes it sturdier. | Now |
 

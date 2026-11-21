@@ -1,7 +1,7 @@
 ## Interface: 16001
-## Title: |cffc6ad5eDawnTools|r|cFF00FF00 v0.53.1|r
+## Title: |cffc6ad5eDawnTools|r|cFF00FF00 v0.54.0|r
 ## Notes: Guild tools for Running Dawn: market, inventory, professions, world database, combat, BiS.
-## Version: 0.53.1
+## Version: 0.54.0
 ## X-License: GPL-3.0-or-later
 ## OptionalDeps: Auctionator, QuestieDB, Questie, TomTom, GatherMate2, AtlasLootClassic, OneForAll
 ## SavedVariables: DawnToolsDB
@@ -29,6 +29,7 @@ Core\DBSeed.lua
 Market\Capture.lua
 Market\Sync.lua
 Market\UI.lua
+Data\BisProfiles.lua
 Data\BisLists.lua
 Modules\Inventory.lua
 Modules\Fish.lua

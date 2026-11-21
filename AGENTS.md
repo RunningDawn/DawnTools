@@ -19,13 +19,13 @@ Core/           Logic (pure functions), Core (events, slash commands, minimap bu
                 Comms (guild messages), UI (window, tabs, settings), Profiles, Changelog, Home
 Market/         Capture (reading the auction house), Sync (guild sharing), UI
 Modules/        Inventory, Fish, Food, Npc, Quest, Item, Zone, Combat, Bis: one file, one tab; Craft: a tab for each profession
-                (Bis: its maths is Core/BisLogic.lua, pure; its stat-weight profiles are private to the keeper, in the
-                seed folder, never in this repository; its item lists Data/BisLists.lua, by hand)
+                (Bis: its maths is Core/BisLogic.lua, pure; its default stat-weight profiles Data/BisProfiles.lua,
+                written by the keeper's script, editable in game; its item lists Data/BisLists.lua, by hand)
 Tools/          Tools (the tab), Range, Mp5, Tracker: small tools as sub-tabs
-Data/           BisLists (by hand). No other game data is in the addon: it is in the store
+Data/           BisLists (by hand), BisProfiles (default weights). No other game data is in the addon: it is in the store
 ../DawnTools_Seed/   beside the addon, in no repository and no download: CraftSkill.lua and Dungeons.lua as
-                tools/craftskill.js and tools/dungeons.js write them, and the BiS profiles (private, not passed to
-                the guild either). The tests read them too
+                tools/craftskill.js and tools/dungeons.js write them
+                (the tests read them too)
 Libs/           third-party libraries, unchanged
 tests/          run.js starts fengari; run.lua is a fake client plus every check
 docs/           the spec; DATA.md: the data model, every source and its licence, what is stored and what is sent;

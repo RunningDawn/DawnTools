@@ -347,7 +347,7 @@ local LibDeflate = {
 	end,
 }
 -- ("../DawnTools_Seed/": the data files, kept out of the addon: see Core/DBSeed.lua)
-local FILES = { "Core/Logic.lua", "Core/BisLogic.lua", "Core/Core.lua", "Core/Comms.lua", "Core/UI.lua", "Core/Builtins.lua", "Core/Profiles.lua", "Core/DBLogic.lua", "Core/DB.lua", "Core/DBImport.lua", "Core/DBSeed.lua", "Market/Capture.lua", "Market/Sync.lua", "Market/UI.lua", "../DawnTools_Seed/CraftSkill.lua", "../DawnTools_Seed/Dungeons.lua", "../DawnTools_Seed/BisProfiles.lua", "Data/BisLists.lua", "Modules/Inventory.lua", "Modules/Fish.lua", "Modules/Food.lua", "Modules/Craft.lua", "Modules/Npc.lua", "Modules/Quest.lua", "Modules/Item.lua", "Modules/Zone.lua", "Modules/Dungeon.lua", "Modules/Favs.lua", "Modules/Finds.lua", "Modules/Combat.lua", "Modules/Bis.lua", "Tools/Tools.lua", "Tools/Range.lua", "Tools/Mp5.lua", "Tools/Fps.lua", "Tools/Tracker.lua", "Tools/Enemies.lua", "Tools/Carrot.lua", "Tools/ChatHistory.lua", "Tools/ChatSaver.lua", "Core/DBSync.lua", "Core/Changelog.lua", "Core/Home.lua" }
+local FILES = { "Core/Logic.lua", "Core/BisLogic.lua", "Core/Core.lua", "Core/Comms.lua", "Core/UI.lua", "Core/Builtins.lua", "Core/Profiles.lua", "Core/DBLogic.lua", "Core/DB.lua", "Core/DBImport.lua", "Core/DBSeed.lua", "Market/Capture.lua", "Market/Sync.lua", "Market/UI.lua", "../DawnTools_Seed/CraftSkill.lua", "../DawnTools_Seed/Dungeons.lua", "Data/BisProfiles.lua", "Data/BisLists.lua", "Modules/Inventory.lua", "Modules/Fish.lua", "Modules/Food.lua", "Modules/Craft.lua", "Modules/Npc.lua", "Modules/Quest.lua", "Modules/Item.lua", "Modules/Zone.lua", "Modules/Dungeon.lua", "Modules/Favs.lua", "Modules/Finds.lua", "Modules/Combat.lua", "Modules/Bis.lua", "Tools/Tools.lua", "Tools/Range.lua", "Tools/Mp5.lua", "Tools/Fps.lua", "Tools/Tracker.lua", "Tools/Enemies.lua", "Tools/Carrot.lua", "Tools/ChatHistory.lua", "Tools/ChatSaver.lua", "Core/DBSync.lua", "Core/Changelog.lua", "Core/Home.lua" }
 
 local function after(delay, fn, owner) timers[#timers + 1] = { at = now + delay, fn = fn, owner = owner } end
 local function Now() return BASE + math.floor(now) end
@@ -5688,7 +5688,7 @@ end
 	eq(order.bis, order.combat + 1, "the BiS tab is right of Combat")
 	eq(#X.DT.BisProfiles, 40, "a profile for every spec"); eq(#B.Mine(), 3, "three of them a warrior's")
 	for _, p in ipairs(X.DT.BisProfiles) do
-		check(#p.src > 0 and p.src[1]:find("^https://"), p.id .. " says where its values are from")
+		check(p.src == nil, p.id .. " names no source")
 		for word in pairs(p.w) do check(B.LABEL[word], p.id .. ": a stat we have a word for (" .. word .. ")") end
 		for word, cap in pairs(p.caps) do check(p.w[word] and cap.cap > 0, p.id .. ": a cap on a weighted stat") end
 	end
@@ -5888,7 +5888,7 @@ end
 	check(text:find("Defense 60", 1, true) and text:find("so 10 comes from talents", 1, true), "and what is left without gear")
 	B.Show("weights")
 	eq(B.weights.rows.def.cap.text, "70", "Weights shows the cap"); eq(B.weights.rows.sta.w.text, "1", "and what a point is worth")
-	check(B.weights.note.text:find("https://", 1, true) and B.weights.note.text:find("1.60.1", 1, true) and B.weights.note.text:find("changed by you", 1, true), "with where the values are from, for which client")
+	check(not B.weights.note.text:find("https://", 1, true) and B.weights.note.text:find("1.60.1", 1, true) and B.weights.note.text:find("changed by you", 1, true), "for which client, no source named")
 	local box = B.weights.rows.sta.w
 	box.text = "0"
 	box.scripts.OnEnterPressed(box)

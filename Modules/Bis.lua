@@ -4,9 +4,8 @@
 --   What I am without gear = the character sheet less what the gear I wear gives: talents and racials are in
 --     it without being known one by one. Enchants are in it too (an item's stats are those of the bare item).
 --   A profile says what a point of each stat is worth and where its caps are; its weights and caps can be
---     changed on the Weights view (kept per profile). The profiles are NOT in the addon or its download: a
---     separate, unpublished addon may hand them over (global DawnToolsSeed.BisProfiles), on its keeper's
---     machine only; they are not passed to the guild. Without them there is no BiS tab.
+--     changed on the Weights view (kept per profile), and reset there to the defaults (Data/BisProfiles.lua).
+--     They are not passed to the guild.
 --   The best set is found exactly (Core/BisLogic.lua), never in a fight.
 -- Any class and spec can be looked at; my own gear is rated for a spec of my own class.
 -- Shown: the tab (Gear, Upgrades, Weights, Check), a line on item tooltips, a chat line when an item is rolled for.
@@ -18,13 +17,6 @@ local BL = DT.BisLogic
 local unpack = unpack or table.unpack
 local B = {}
 DT.Bis = B
--- the profiles, from a seed addon where one is installed (it may load after DawnTools: looked for again)
-local function Profiles()
-	if type(DawnToolsSeed) == "table" then
-		DT.BisProfiles, DT.BisBuild = DT.BisProfiles or DawnToolsSeed.BisProfiles, DT.BisBuild or DawnToolsSeed.BisBuild
-	end
-	return type(DT.BisProfiles) == "table" and DT.BisProfiles[1] ~= nil
-end
 
 local LABEL = {
 	str = "Strength", agi = "Agility", sta = "Stamina", int = "Intellect", spi = "Spirit", armor = "Armor",
@@ -2366,9 +2358,9 @@ local function DrawWeights(_, s)
 	local raw = s.prof.raw
 	local edit = B.db.edit[raw.id]
 	local edited = edit and (next(edit.w or {}) or next(edit.caps or {})) and "  |cffff8040(changed by you)|r" or ""
-	-- (four lines, none wrapped: the rows begin right under them)
-	weights.note:SetText(("|cffffd100%s %s|r%s  |cff888888client %s|r\n|cff888888Per 1%%: hit, crit, haste, expertise, dodge, parry, block; the rest per point. A cap is the sheet's total. Buffs: what consumables and buffs give at level 60. Enter takes a change, an empty box the default.|r\n|cff888888%s|r\n|cff888888%s|r")
-		:format(ClassName(raw.class), raw.title, edited, DT.BisBuild or "?", table.concat(raw.src or {}, "   "), raw.note or ""))
+	-- (three lines, none wrapped: the rows begin right under them)
+	weights.note:SetText(("|cffffd100%s %s|r%s  |cff888888client %s|r\n|cff888888Per 1%%: hit, crit, haste, expertise, dodge, parry, block; the rest per point. A cap is the sheet's total. Buffs: what consumables and buffs give at level 60. Enter takes a change, an empty box the default.|r\n|cff888888%s|r")
+		:format(ClassName(raw.class), raw.title, edited, DT.BisBuild or "?", raw.note or ""))
 	for word, row in pairs(weights.rows) do
 		local cap = s.prof.caps[word]
 		if not row.w:HasFocus() then row.w:SetText(s.prof.w[word] and Fmt(s.prof.w[word]) or "") end
@@ -2447,7 +2439,6 @@ local function SpecButton(i)
 		GameTooltip:SetOwner(self, "ANCHOR_BOTTOMRIGHT")
 		GameTooltip:AddLine(ClassName(raw.class) .. ": " .. raw.title)
 		if raw.note then GameTooltip:AddLine(raw.note, 0.7, 0.7, 0.7, true) end
-		for _, url in ipairs(raw.src or {}) do GameTooltip:AddLine(url, 0.5, 0.7, 1) end
 		GameTooltip:AddLine(DT.BisLists and DT.BisLists[raw.id] and "Has a pre-raid list." or "No pre-raid list yet: weights and caps only.", 1, 1, 1)
 		GameTooltip:Show()
 	end)
@@ -2697,12 +2688,6 @@ end
 -- The module
 ---------------------------------------------------------------------------
 
--- (no profiles on this machine: no tab, no tooltip line, nothing. An addon loaded after this one may bring them:
--- all are loaded before login, when the modules are switched on)
-local registered = false
-local function Register()
-	if registered or not Profiles() then return end
-	registered = true
 DT:RegisterModule("bis", {
 	title = "BiS",
 	version = 1,
@@ -2753,6 +2738,3 @@ DT:RegisterModule("bis", {
 		Try("bis", function() B.Compute() end)
 	end,
 })
-end
-Register()
-DT:On("ADDON_LOADED", Register)

@@ -277,7 +277,7 @@ A tab right of Combat, local only (nothing sent).
 
 - **Item stats** are read from the game per item number (`GetItemStats`, then the tooltip's lines for what it leaves out); "Use" and "Chance on hit" lines are not stats. Rating is kept as what it buys (hit, crit, haste, expertise in percent; 10, 14, 10, 10 rating a percent on client 1.60.1).
 - **Without gear** = character sheet less the worn gear's stats, for the capped stats. Talents, racials and enchants are in it unnamed. Never read in a fight; kept per character.
-- **Profiles** are data, private to the keeper (from the seed addon, never in the repository): weights and caps per spec, with source and client build. Spell hit cap 17%. Weights and caps can be changed per profile on the Weights view.
+- **Profiles** are data (`Data/BisProfiles.lua`, defaults made by the keeper's script): weights and caps per spec, with client build. Spell hit cap 17%. Weights and caps can be changed per profile on the Weights view.
 - **Score**: weight x stat; a capped stat counts its weight up to the cap (from where the character stands without gear) and its "over" value past it. A hard cap (defense 440 for shield tanks) is reached before anything else counts.
 - **Solver** (`Core/BisLogic.lua`): exact, slot after slot, keeping the best worth for every amount of the capped stats reached. Two rings, two trinkets and the two hands are one choice each. Checked against trying every combination.
 - **Lists** (`Data/BisLists.lua`): item numbers and a source word, by hand. Protection warrior only so far.

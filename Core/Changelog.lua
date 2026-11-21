@@ -6,6 +6,9 @@
 local _, DT = ...
 
 DT.CHANGELOG = {
+	{ "0.54.0", "2026-11-21", {
+		"BiS comes with the addon: default stat weights and caps for every class and spec. Change any of them on the Weights view; Reset to default brings them back.",
+	} },
 	{ "0.53.1", "2026-11-21", {
 		"Licences: the Ace3 licence now comes with AceComm and CallbackHandler (Libs/Ace3-LICENSE.txt).",
 		"No other addon is named in the load order beyond the public ones DawnTools reads from.",
