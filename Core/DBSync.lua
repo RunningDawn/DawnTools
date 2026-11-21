@@ -20,7 +20,7 @@
 
 local _, DT = ...
 local DB, L = DT.DB, DT.DBLogic
-local S = { sent = 0, taken = 0 }
+local S = { sent = 0, taken = 0, out = {}, inn = {}, turned = 0, unasked = 0 } -- (out/inn: [kind] = whispers this session; turned: from no guildmate)
 DT.DBSync = S
 
 local PREFIX = "DAWND"
@@ -35,14 +35,15 @@ S.peers, S.flying = peers, flying
 
 local function On() return S.db ~= nil and DT:Shares() end
 
--- On Forever the guild channel names a member "First Surname", a whisper "First-Surname" (and a whisper
--- addressed with the space does not arrive): one member is kept, and whispered to, under the second
+-- On Forever a member is named "First Surname" by the guild channel and as the sender of a whisper, but a whisper
+-- arrives only addressed "First-Surname": one member is kept, and whispered to, under that form, whichever
+-- way the game wrote the name that came in
 local function Who(name) return (name:gsub(" ", "-")) end
 
 local function Say(to, kind, body)
 	if DT.Comms:Why() then return false end -- (not in a fight, nor where addon messages are not wanted)
 	comm:SendCommMessage(PREFIX, kind .. LibDeflate:EncodeForWoWAddonChannel(LibDeflate:CompressDeflate(body or "")), "WHISPER", to, "BULK")
-	S.sent = S.sent + 1
+	S.sent, S.out[kind] = S.sent + 1, (S.out[kind] or 0) + 1
 	return true
 end
 
@@ -124,8 +125,11 @@ function comm:OnComm(prefix, text, distribution, sender)
 	if prefix ~= PREFIX or distribution ~= "WHISPER" or not On() or type(text) ~= "string" or type(sender) ~= "string" then return end
 	-- only guildmates (who have said hello on the guild channel), and no more than is worth unpacking
 	local kind = text:sub(1, 2)
-	if not (DT.Comms.peers[sender] or DT.Comms.peers[(sender:gsub("%-", " "))]) then
+	local member = DT.Comms.peers[sender] or DT.Comms.peers[(sender:gsub("%-", " "))]
+	sender = Who(sender)
+	if not member then
 		if kind == "H?" and #text <= 300 then early[sender] = GetTime() end -- (their hello may be on its way)
+		S.turned, S.turnedWho = S.turned + 1, sender
 		return
 	end
 	if #text > ((kind == "H?" or kind == "C?") and 300 or MAX_CHUNK) then return end
@@ -137,11 +141,12 @@ function comm:OnComm(prefix, text, distribution, sender)
 	local packed = LibDeflate:DecodeForWoWAddonChannel(text:sub(3))
 	local body = packed and LibDeflate:DecompressDeflate(packed)
 	if type(body) ~= "string" then return end
+	S.inn[kind] = (S.inn[kind] or 0) + 1
 	if kind == "H?" then
 		Answer(sender)
 	elseif kind == "H=" then
 		local p = peers[sender]
-		if not p or not p.asked or p.out then return end -- (not asked for, or a transfer is under way)
+		if not p or not p.asked or p.out then S.unasked = S.unasked + 1 return end -- (not asked for, or a transfer is under way)
 		local mine, want, n = DB.Hashes(), {}, 0
 		p.hash = {}
 		for chunk, hash in body:gmatch("([^=\n]+)=(%x+)") do
@@ -165,7 +170,7 @@ function comm:OnComm(prefix, text, distribution, sender)
 	elseif kind == "C=" then
 		local p = peers[sender]
 		local chunk, rows = body:match("^([^\n]+)\n(.*)$")
-		if not (p and chunk and p.out == chunk) or #rows > MAX_CHUNK then return end -- (only what I asked for)
+		if not (p and chunk and p.out == chunk) or #rows > MAX_CHUNK then S.unasked = S.unasked + 1 return end -- (only what I asked for)
 		local taken = DB.Take(chunk, rows)
 		S.taken = S.taken + taken
 		if taken > 0 then DT:Fire("DT_DB_UPDATE", chunk) end
@@ -173,6 +178,51 @@ function comm:OnComm(prefix, text, distribution, sender)
 		Next(sender)
 		Wake()
 	end
+end
+
+-- Sync now (the Data Sync page, /dt db sync): every wait dropped, a hello sent, and every member whose store
+-- differs asked for their list at once. A pull, not a push: what comes in is still only what I asked for.
+-- A transfer under way goes on as it was. Returns how many were asked, or nil with sharing off.
+function S.Now()
+	if not On() then return nil end
+	for _, p in pairs(peers) do p.asked, p.empty = nil, nil end
+	DT.Comms:Hello()
+	local before = S.out["H?"] or 0
+	for name, peer in pairs(DT.Comms.peers) do
+		if peer.sum.gamedb then S.Heard(name, peer.sum.gamedb) end
+	end
+	return (S.out["H?"] or 0) - before
+end
+
+-- What the whispers did this session, as lines for the Data Sync page: requests and answers each way, and each
+-- member heard: whether their store is the same as mine, and what is being fetched from them.
+function S.Report()
+	local o, i = S.out, S.inn
+	local lines = {
+		("Asked of others: %d lists of chunks, %d chunks. Came back: %d lists, %d chunks (%d rows taken in)."):format(o["H?"] or 0, o["C?"] or 0, i["H="] or 0, i["C="] or 0, S.taken),
+		("Asked of me: %d lists, %d chunks. Sent back: %d lists, %d chunks."):format(i["H?"] or 0, i["C?"] or 0, o["H="] or 0, o["C="] or 0),
+	}
+	if S.unasked > 0 then lines[#lines + 1] = ("%d answers not taken: not asked for, or another under way."):format(S.unasked) end
+	if S.turned > 0 then lines[#lines + 1] = ("%d whispers turned away: not from a member heard on the guild channel (last from %s)."):format(S.turned, tostring(S.turnedWho)) end
+	if not On() then lines[#lines + 1] = "Sharing is off: nothing is asked or answered." end
+	local mine, now, names = DB.Root(), GetTime(), {}
+	for name in pairs(DT.Comms.peers) do names[#names + 1] = name end
+	table.sort(names)
+	for _, name in ipairs(names) do
+		local root, p = DT.Comms.peers[name].sum.gamedb, peers[Who(name)]
+		local what
+		if not root then what = "says no hash (sharing off, or an older version)"
+		elseif root == mine then what = "the same as mine"
+		elseif not p then what = "differs; not asked yet (at their next hello)"
+		elseif p.out then what = ("differs; fetching %s, %d more to fetch"):format(p.out, #p.want)
+		elseif p.idle then what = ("differs; waiting on a chunk another member is sending, %d to fetch"):format(#p.want)
+		elseif p.empty == root then what = "differs; nothing of theirs I lack (they fetch from me)"
+		elseif p.hash then what = "differs; fetched what their list showed, asked again within 10 minutes"
+		elseif p.asked then what = ("differs; their list asked for %ds ago, no answer yet"):format(math.floor(now - p.asked))
+		else what = "differs" end
+		lines[#lines + 1] = ("%s: %s"):format(name, what)
+	end
+	return lines
 end
 
 DT:RegisterModule("gamedb", { -- (not "db": that key of the saved file is the store itself)

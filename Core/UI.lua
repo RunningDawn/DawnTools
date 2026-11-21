@@ -622,7 +622,7 @@ UI:Section("tabs", "Tabs & Modules", 30, function(panel)
 	end
 end)
 
--- Data Sync: what has gone to the guild and come from it, counted (Comms:Totals), and what is held
+-- Data Sync: what has gone to the guild and come from it, counted (Comms:Totals); Data Storage: what is held
 local function Size(bytes)
 	if bytes < 1024 then return bytes .. " B" end
 	if bytes < 1024 * 1024 then return ("%.1f KB"):format(bytes / 1024) end
@@ -644,8 +644,20 @@ function UI:SyncReport()
 		lines[#lines + 1] = Line(name == "core" and "Who has the addon" or DT.modules[name] and DT.modules[name].title or name, m)
 	end
 	lines[#lines + 1] = names[1] and Line("Total", all) or "|cff888888Nothing sent or received yet.|r"
+	if DT.DBSync and DT.DBSync.Report then
+		lines[#lines + 1] = " "
+		lines[#lines + 1] = "Game database, by whisper (this session):"
+		for _, line in ipairs(DT.DBSync.Report()) do lines[#lines + 1] = "|cffaaaaaa" .. line .. "|r" end
+	end
 	lines[#lines + 1] = " "
-	lines[#lines + 1] = "Held on this computer:"
+	lines[#lines + 1] = "This session:"
+	for _, line in ipairs(DT.Comms:Report()) do lines[#lines + 1] = "|cffaaaaaa" .. line .. "|r" end
+	return table.concat(lines, "\n")
+end
+
+-- Data Storage: what is held on this computer, and the other addons it is read from
+function UI:StorageReport()
+	local lines = { "Held on this computer:" }
 	local held = false
 	for _, mod in DT:Enabled() do
 		if mod.held then
@@ -660,9 +672,6 @@ function UI:SyncReport()
 	for _, dep in ipairs(UI.DEPS) do
 		lines[#lines + 1] = ("|cffffd100%s|r  %s  |cffaaaaaa%s|r"):format(dep[1], STATE[UI:AddonState(dep[1])], dep[2])
 	end
-	lines[#lines + 1] = " "
-	lines[#lines + 1] = "This session:"
-	for _, line in ipairs(DT.Comms:Report()) do lines[#lines + 1] = "|cffaaaaaa" .. line .. "|r" end
 	return table.concat(lines, "\n")
 end
 
@@ -702,11 +711,33 @@ end
 local BAR_X, BAR_W, BAR_H = 250, 220, 14
 UI:Section("sync", "Data Sync", 900, function(panel)
 	Text(panel, "GameFontNormal", 4, -2, "Data Sync")
-	local note = Text(panel, "GameFontDisableSmall", 4, -22, "How complete each kind of data is on this computer, and what DawnTools has sent to the guild and received from it. Only what you agreed to share is ever sent: see each module's section.")
+	local note = Text(panel, "GameFontDisableSmall", 4, -22, "What DawnTools has sent to the guild and received from it, and the game database's requests each way. Only what you agreed to share is ever sent: see each module's section.")
+	note:SetWidth(560)
+	note:SetWordWrap(true)
+	local report = Text(panel, "GameFontHighlightSmall", 4, -52)
+	report:SetWidth(560)
+	report:SetWordWrap(true)
+	report:SetSpacing(3)
+	report.Load = function(self) self:SetText(UI:SyncReport()) end
+	controls[#controls + 1] = report
+	UI.syncText = report
+	local reset = Button(panel, 4, -8, 150, "Start counting anew", function() DT.Comms:ResetTotals() end)
+	reset:ClearAllPoints()
+	reset:SetPoint("BOTTOMLEFT", 4, 8)
+	UI.syncReset = reset
+	local now = Button(panel, 4, -8, 150, "Sync now", function() DT.DB.Slash("sync") if UI.Refresh then UI:Refresh() end end)
+	now:ClearAllPoints()
+	now:SetPoint("BOTTOMLEFT", 160, 8)
+	UI.syncNow = now
+end)
+
+UI:Section("storage", "Data Storage", 905, function(panel)
+	Text(panel, "GameFontNormal", 4, -2, "Data Storage")
+	local note = Text(panel, "GameFontDisableSmall", 4, -22, "How complete each kind of data is on this computer, what is held, and the other addons it is read from.")
 	note:SetWidth(560)
 	note:SetWordWrap(true)
 	local bars = {}
-	UI.syncBars = bars
+	UI.storageBars = bars
 	local function Bar(i)
 		local b = CreateFrame("Frame", nil, panel)
 		b:SetSize(700, 20)
@@ -735,7 +766,7 @@ UI:Section("sync", "Data Sync", 900, function(panel)
 	report:SetSpacing(3)
 	report.Load = function(self)
 		-- (worked out only while the page is the one looked at: counting goes through the long lists)
-		if DT.db.settingsSection ~= "sync" then return end
+		if DT.db.settingsSection ~= "storage" then return end
 		local rows = UI:SyncProgress()
 		for i = 1, math.max(#rows, #bars) do
 			local row, b = rows[i], bars[i] or (rows[i] and Bar(i))
@@ -761,14 +792,10 @@ UI:Section("sync", "Data Sync", 900, function(panel)
 		end
 		self:ClearAllPoints()
 		self:SetPoint("TOPLEFT", 4, -54 - #rows * 21 - 12)
-		self:SetText(UI:SyncReport())
+		self:SetText(UI:StorageReport())
 	end
 	controls[#controls + 1] = report
-	UI.syncText = report
-	local reset = Button(panel, 4, -8, 150, "Start counting anew", function() DT.Comms:ResetTotals() end)
-	reset:ClearAllPoints()
-	reset:SetPoint("BOTTOMLEFT", 4, 8)
-	UI.syncReset = reset
+	UI.storageText = report
 end)
 
 -- Data Debug: what the addons cost (memory, time), as lines to copy into a bug report. Reads, changes nothing.

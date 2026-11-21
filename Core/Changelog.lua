@@ -6,6 +6,12 @@
 local _, DT = ...
 
 DT.CHANGELOG = {
+	{ "0.54.3", "2026-11-21", {
+		"Guild sharing: the game database now really passes between members (0.54.2 still dropped the answers: the game names a whisper's sender First Surname, and only First-Surname can be whispered to).",
+		"Settings: Data Sync now shows the game database's requests each way (lists and chunks asked for, answered, rows taken in, whispers turned away) and, for each member, whether their database matches yours and what is being fetched.",
+		"Settings: a new Data Storage page has the bars of how complete each kind of data is, what is held on this computer, and the other addons DawnTools reads.",
+		"Settings, Data Sync: a Sync now button (or /dt db sync) asks every member whose game database differs for theirs at once, instead of waiting up to ten minutes.",
+	} },
 	{ "0.54.2", "2026-11-21", {
 		"Guild sharing: recipes, dungeons and the rest of the game database now reach other members (they never arrived: a whisper names a member First-Surname, the guild channel First Surname).",
 		"Chat Saver: loading a layout no longer closes docked tabs (the Combat Log among them); they stay docked where they were.",

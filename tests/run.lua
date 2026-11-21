@@ -332,8 +332,8 @@ end
 ---------------------------------------------------------------------------
 
 local now, timers, clients, sent = 0, {}, {}, {}
--- FOREVER.names: as on Forever, the guild channel names a sender "Name Smith", a whisper "Name-Smith", and only
--- a whisper addressed "Name-Smith" arrives (off: "Name-Smith" everywhere)
+-- FOREVER.names: as on Forever, a sender is named "Name Smith" (guild channel and whisper alike), and only a
+-- whisper addressed "Name-Smith" arrives (off: "Name-Smith" everywhere)
 local FOREVER = { names = false }
 -- A stand-in for LibDeflate: the real one compresses correctly under fengari but does not inflate (not even a
 -- stored block), so it cannot run here. It is checked in the game instead, by /dt selftest ("message packing").
@@ -643,7 +643,7 @@ local function NewClient(name, opts)
 			after(0.1, function()
 				for _, other in ipairs(clients) do
 					if other.guild and other.hear and (distribution ~= "WHISPER" or other.wire == to) then
-						other.hear(prefix, text, distribution, FOREVER.names and distribution == "GUILD" and (c.wire:gsub("%-", " ")) or c.wire)
+						other.hear(prefix, text, distribution, FOREVER.names and (c.wire:gsub("%-", " ")) or c.wire)
 					end
 				end
 			end)
@@ -1882,9 +1882,11 @@ click(section("All items"))
 	local text = V1.DT.UI.syncText.text
 	check(not text:find("Vendor price sharing", 1, true), "the Data Sync page has no line of their own: " .. text)
 	check(text:find("Total|r  sent", 1, true) and text:find("Who has the addon", 1, true), "with the hellos and a total")
-	check(text:find("%d+ vendor prices"), "and what is held: " .. text)
-	-- how complete each kind of data is, as bars
-	local bars, by = V1.DT.UI.syncBars, {}
+	check(text:find("Game database, by whisper", 1, true), "and the game database's requests each way: " .. text)
+	-- Data Storage: what is held, how complete, as bars
+	V1.DT.UI:ShowSection("storage")
+	check(V1.DT.UI.storageText.text:find("%d+ vendor prices"), "Data Storage says what is held: " .. V1.DT.UI.storageText.text)
+	local bars, by = V1.DT.UI.storageBars, {}
 	for _, b in ipairs(bars) do if b.shown then by[b.label.text] = b end end
 	check(by["Auction prices"] and by["Vendor prices"] and by["Cooking recipes heard of"] and by["Quest rewards seen at a quest giver"], "a bar for each kind of data")
 	check(by["Vendor prices"].count.text:find("of ?", 1, true), "what cannot be counted yet says so: " .. by["Vendor prices"].count.text); eq(by["Vendor prices"].fill.shown, false, "and has no bar")
@@ -1914,7 +1916,7 @@ click(section("All items"))
 	V1.env.GetAddOnInfo = function(name) if name == "TomTom" then return name, name, "", false, "DISABLED" end return name, nil, nil, false, "MISSING" end
 	eq(V1.DT.UI:AddonState("QuestieDB"), "loaded", "an addon that is loaded"); eq(V1.DT.UI:AddonState("TomTom"), "off", "one installed but switched off"); eq(V1.DT.UI:AddonState("Auctionator"), "missing", "one not there")
 	V1.DT.UI:Refresh()
-	local deps = V1.DT.UI.syncText.text
+	local deps = V1.DT.UI.storageText.text
 	check(deps:find("QuestieDB|r  |cff40ff40installed|r", 1, true) and deps:find("TomTom|r  |cffffd100installed, switched off|r", 1, true) and deps:find("Auctionator|r  |cff888888not installed|r", 1, true), "the page lists them with what they are for")
 	V1.env.IsAddOnLoaded, V1.env.GetAddOnInfo = nil, nil
 	-- Built-ins: the game's own switches
@@ -7077,7 +7079,7 @@ end)()
 		check(asked.Hal > 0 and asked.Hedda > 0, ("and both were asked: %d of Hal, %d of Hedda"):format(asked.Hal, asked.Hedda))
 		leave(H1) leave(H2) leave(N2)
 	end)()
-	-- names as Forever gives them (a space on the guild channel, a hyphen in a whisper): the store still passes on
+	-- names as Forever gives them (with a space, though a whisper must be addressed with a hyphen): the store still passes on
 	;(function()
 		FOREVER.names = true
 		local F1 = NewClient("Fay", { globals = seed, noData = true })
@@ -7086,6 +7088,23 @@ end)()
 		step(700)
 		check(F2.DT.Comms.peers["Fay Smith"], "the guild channel names her with the space")
 		eq(F2.DT.DB.Root(), F1.DT.DB.Root(), "and the newcomer has the store all the same"); check(F2.DT.Recipes and F2.DT.Recipes[7934], "recipes and all")
+		-- the Data Sync page says what the whispers did, each way, and how each member stands
+		local said = table.concat(F2.DT.DBSync.Report(), " | ")
+		check(said:find("Came back: [1-9]%d* lists, [1-9]%d* chunks %([1-9]"), "the newcomer asked, and lists and chunks came back: " .. said)
+		check(said:find("Fay Smith: the same as mine", 1, true), "and the member is now the same: " .. said)
+		local gave = table.concat(F1.DT.DBSync.Report(), " | ")
+		check(gave:find("Sent back: [1-9]%d* lists, [1-9]%d* chunks"), "the other side says what it answered: " .. gave)
+		-- something new on her side: no ask for ten minutes, unless Sync now
+		eq(F1.DT.DB.Take("loot:2", ("loot:645:aaaaaa	%d	guild	3;1:9"):format(F1.DT.Now())), 1, "she learns something new")
+		step(120)
+		check(F2.DT.DB.Root() ~= F1.DT.DB.Root(), "it does not come by itself within two minutes")
+		F2.slash("db sync")
+		check(F2.printed[#F2.printed]:find("1 member whose", 1, true), "Sync now asks her at once: " .. F2.printed[#F2.printed])
+		step(60)
+		eq(F2.DT.DB.Root(), F1.DT.DB.Root(), "and it has come")
+		F2.DT.db.settings.share = false
+		F2.slash("db sync")
+		check(F2.printed[#F2.printed]:find("sharing is off", 1, true), "with sharing off it says so, and asks nothing")
 		FOREVER.names = false
 		leave(F1) leave(F2)
 	end)()

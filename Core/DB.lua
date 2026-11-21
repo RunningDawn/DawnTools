@@ -942,6 +942,11 @@ local function Got()
 end
 
 function DB.Slash(rest)
+	if (rest or ""):match("^%s*sync%s*$") then
+		local n = DT.DBSync and DT.DBSync.Now()
+		if n == nil then return DT:Print("db sync: sharing is off (/dt settings).") end
+		return DT:Print("db sync: a hello sent; %d member%s whose game database differs asked for theirs now. Settings, Data Sync shows how it goes.", n, n == 1 and "" or "s")
+	end
 	local cmd, a, b = (rest or ""):match("^%s*bench%s*(%S*)%s*(%d*)%s*(.-)%s*$")
 	if cmd == "make" then Make()
 	elseif cmd == "read" then Read()
@@ -962,7 +967,7 @@ function DB.Slash(rest)
 		if (DB.refused or 0) > 0 then DT:Print("db: %d rows offered by guild members were not taken: they did not add up to what their source should give.", DB.refused) end
 		if (DB.repaired or 0) > 0 then DT:Print("db: %d rows that came from the guild were wrong by this machine's own source, and were put right.", DB.repaired) end
 		DT:Print("db: %d loot windows seen since the last /reload (%d of them empty when looked at), %d corpses, chests or nodes counted; the last that held something: %s.", DB.lootSeen, DB.lootEmpty, DB.lootCounted, DB.lootSaid)
-		DT:Print("/dt db bench make | read | clear | send [count] [name] | got")
+		DT:Print("/dt db sync | bench make | read | clear | send [count] [name] | got")
 	end
 end
 
