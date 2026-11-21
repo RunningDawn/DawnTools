@@ -3,6 +3,7 @@
 ## Notes: Guild tools for Running Dawn: market, inventory, professions, world database, combat, BiS.
 ## Version: 0.54.0
 ## X-License: GPL-3.0-or-later
+## X-Curse-Project-ID: 1804432
 ## OptionalDeps: Auctionator, QuestieDB, Questie, TomTom, GatherMate2, AtlasLootClassic, OneForAll
 ## SavedVariables: DawnToolsDB
 ## IconTexture: Interface\AddOns\DawnTools\logo
