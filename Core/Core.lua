@@ -4,7 +4,7 @@
 local ADDON, DT = ...
 _G.DawnTools = DT
 
-DT.VERSION = "0.54.0" -- keep in step with the .toc
+DT.VERSION = "0.54.1" -- keep in step with the .toc
 DT.LOGO = "Interface\\AddOns\\DawnTools\\logo"
 
 local DEFAULTS = {
@@ -77,7 +77,7 @@ function DT.ProfessionName(id) return PROFESSION[id] end
 
 -- The recipes an item goes into as a material: { { spell =, r = the recipe's row }, ... }, or nil for none.
 -- (DT.Recipes: r[9] = { reagent, count, ... }. Put together on the first ask, and again once the recipes are.)
-local usedIn, usedFrom
+local usedIn, usedFrom = {}, nil -- (empty, not nil: a new member has no recipes yet, and DT.Recipes nil == usedFrom)
 function DT.UsedIn(item)
 	if usedFrom ~= DT.Recipes then
 		usedIn, usedFrom = {}, DT.Recipes

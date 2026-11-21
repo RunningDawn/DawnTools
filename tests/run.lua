@@ -2408,6 +2408,7 @@ end)()
 	-- it passes to a member who has no OneForAll, with the rest of the store
 	Z2.DT.db.settings.share = true
 	local M1 = NewClient("Mo2", { noData = true })
+	eq(M1.DT.Recipes, nil, "a new member has no recipes yet"); check(pcall(M1.DT.UsedIn, 2589), "and an item's tooltip gives no error")
 	M1.DT.db.settings.share = true
 	step(700)
 	eq(M1.DT.DB.Root(), Z2.DT.DB.Root(), "shared: both hold the same"); check(M1.DT.Dungeon.DropOf(888003), "a member without OneForAll has the new dungeon")

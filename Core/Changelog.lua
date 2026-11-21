@@ -6,6 +6,9 @@
 local _, DT = ...
 
 DT.CHANGELOG = {
+	{ "0.54.1", "2026-11-21", {
+		"Fixed an error on item tooltips for a new player whose guild had not yet passed on any recipes.",
+	} },
 	{ "0.54.0", "2026-11-21", {
 		"BiS comes with the addon: default stat weights and caps for every class and spec. Change any of them on the Weights view; Reset to default brings them back.",
 	} },
