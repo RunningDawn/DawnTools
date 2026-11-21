@@ -1,14 +1,10 @@
 package-as: DawnTools
 
-# kept out of the addon zip (development only)
-# (the scripts of tools/ lie in the folder the game knows as Tools/, beside the addon's own Lua files there:
-# named one by one, so that a packager that tells capitals apart leaves the Lua files in)
+# kept out of the addon zip (development only); files starting with a dot are left out anyway
+# (the scripts are named one by one: Tools/ also holds the addon's own Lua files)
 ignore:
   - tests
   - docs
-  - Tools/*.js
-  - tools/*.js
+  - Tools/craftskill.js
+  - Tools/dungeons.js
   - AGENTS.md
-  - .gitattributes
-  - .gitignore
-  - .github

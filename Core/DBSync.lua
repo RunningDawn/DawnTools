@@ -35,6 +35,10 @@ S.peers, S.flying = peers, flying
 
 local function On() return S.db ~= nil and DT:Shares() end
 
+-- On Forever the guild channel names a member "First Surname", a whisper "First-Surname" (and a whisper
+-- addressed with the space does not arrive): one member is kept, and whispered to, under the second
+local function Who(name) return (name:gsub(" ", "-")) end
+
 local function Say(to, kind, body)
 	if DT.Comms:Why() then return false end -- (not in a fight, nor where addon messages are not wanted)
 	comm:SendCommMessage(PREFIX, kind .. LibDeflate:EncodeForWoWAddonChannel(LibDeflate:CompressDeflate(body or "")), "WHISPER", to, "BULK")
@@ -91,6 +95,7 @@ local early = {}
 -- a member said the hash of their store
 function S.Heard(sender, root)
 	if not On() then return end
+	sender = Who(sender)
 	-- (they asked before their hello reached me: answered now, if that was not long ago)
 	if early[sender] then
 		if GetTime() - early[sender] < 120 then Answer(sender) end
@@ -119,7 +124,7 @@ function comm:OnComm(prefix, text, distribution, sender)
 	if prefix ~= PREFIX or distribution ~= "WHISPER" or not On() or type(text) ~= "string" or type(sender) ~= "string" then return end
 	-- only guildmates (who have said hello on the guild channel), and no more than is worth unpacking
 	local kind = text:sub(1, 2)
-	if not DT.Comms.peers[sender] then
+	if not (DT.Comms.peers[sender] or DT.Comms.peers[(sender:gsub("%-", " "))]) then
 		if kind == "H?" and #text <= 300 then early[sender] = GetTime() end -- (their hello may be on its way)
 		return
 	end

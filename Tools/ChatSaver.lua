@@ -81,22 +81,22 @@ function C.Apply(L)
 				Call(ChatFrame_RemoveAllChannels, f)
 				for _, chan in ipairs(w.chans or {}) do Call(ChatFrame_AddChannel, f, chan) end
 			end
-			if i > 1 and not w.shown then
-				Call(FCF_Close, f)
-			else
+			-- (docked comes first, as the game itself reads it: a docked tab that is not the one picked says
+			-- "not shown", and is a tab all the same. Only a window neither docked nor shown is closed.)
+			if w.docked and i > 1 then
+				Call(FCF_DockFrame, f, w.docked)
+			elseif i == 1 or w.shown then
 				Call(SetChatWindowShown, i, true)
-				if w.docked and i > 1 then
-					Call(FCF_DockFrame, f, w.docked)
-				else
-					if i > 1 then Call(FCF_UnDockFrame, f) end
-					if w.pos and f.ClearAllPoints then
-						f:ClearAllPoints()
-						f:SetPoint(w.pos[1], UIParent, w.pos[2], w.pos[3], w.pos[4])
-						if w.w and w.h then f:SetSize(w.w, w.h) end
-						Call(FCF_SavePositionAndDimensions, f)
-					end
-					if f.Show then f:Show() end
+				if i > 1 then Call(FCF_UnDockFrame, f) end
+				if w.pos and f.ClearAllPoints then
+					f:ClearAllPoints()
+					f:SetPoint(w.pos[1], UIParent, w.pos[2], w.pos[3], w.pos[4])
+					if w.w and w.h then f:SetSize(w.w, w.h) end
+					Call(FCF_SavePositionAndDimensions, f)
 				end
+				if f.Show then f:Show() end
+			else
+				Call(FCF_Close, f)
 			end
 			Call(FCF_SetLocked, f, w.locked)
 			Call(FCF_SetUninteractable, f, w.unint)
@@ -163,7 +163,7 @@ function C.Refresh()
 	autoBox:SetChecked(C.picked ~= nil and C.db.auto == C.picked)
 	local L = C.picked and C.db.layouts[C.picked]
 	local shown = 0
-	for _, w in pairs(L and L.windows or {}) do if w.shown then shown = shown + 1 end end
+	for _, w in pairs(L and L.windows or {}) do if w.shown or w.docked then shown = shown + 1 end end
 	info:SetText(L and ("|cff888888Saved %s by %s: %d windows shown, %d channels.%s|r"):format(date and date("%Y-%m-%d %H:%M", L.at) or "", L.by ~= "" and L.by or "?",
 		shown, #(L.channels or {}), C.db.auto and ("  Put back at login: " .. C.db.auto .. ".") or "") or "")
 end

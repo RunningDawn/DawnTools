@@ -6,6 +6,10 @@
 local _, DT = ...
 
 DT.CHANGELOG = {
+	{ "0.54.2", "2026-11-21", {
+		"Guild sharing: recipes, dungeons and the rest of the game database now reach other members (they never arrived: a whisper names a member First-Surname, the guild channel First Surname).",
+		"Chat Saver: loading a layout no longer closes docked tabs (the Combat Log among them); they stay docked where they were.",
+	} },
 	{ "0.54.1", "2026-11-21", {
 		"Fixed an error on item tooltips for a new player whose guild had not yet passed on any recipes.",
 	} },

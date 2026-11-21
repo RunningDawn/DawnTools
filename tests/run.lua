@@ -332,6 +332,9 @@ end
 ---------------------------------------------------------------------------
 
 local now, timers, clients, sent = 0, {}, {}, {}
+-- FOREVER.names: as on Forever, the guild channel names a sender "Name Smith", a whisper "Name-Smith", and only
+-- a whisper addressed "Name-Smith" arrives (off: "Name-Smith" everywhere)
+local FOREVER = { names = false }
 -- A stand-in for LibDeflate: the real one compresses correctly under fengari but does not inflate (not even a
 -- stored block), so it cannot run here. It is checked in the game instead, by /dt selftest ("message packing").
 local LibDeflate = {
@@ -639,7 +642,9 @@ local function NewClient(name, opts)
 			if told then told(nil, #text, #text, c.refuse or 0) end -- (the game's answer: 0 is "taken")
 			after(0.1, function()
 				for _, other in ipairs(clients) do
-					if other.guild and other.hear and (distribution ~= "WHISPER" or other.wire == to) then other.hear(prefix, text, distribution, c.wire) end
+					if other.guild and other.hear and (distribution ~= "WHISPER" or other.wire == to) then
+						other.hear(prefix, text, distribution, FOREVER.names and distribution == "GUILD" and (c.wire:gsub("%-", " ")) or c.wire)
+					end
 				end
 			end)
 		end
@@ -4749,7 +4754,7 @@ do
 		return { n = n, GetPoint = function() return "BOTTOMLEFT", nil, "BOTTOMLEFT", 30, 40 end, GetWidth = function() return 400 end,
 			GetHeight = function() return 180 end, ClearAllPoints = function() end, SetPoint = Rec("SetPoint"), SetSize = Rec("SetSize"), Show = function() end }
 	end
-	local WIN = { { "General", 14, 0, 0, 0, 0.4, true, true, 1, false }, { "Combat Log", 12, 0, 0, 0, 0.4, true, true, 2, false },
+	local WIN = { { "General", 14, 0, 0, 0, 0.4, true, true, 1, false }, { "Combat Log", 12, 0, 0, 0, 0.4, false, true, 2, false },
 		{ "Trade", 12, 0, 0, 0, 0.3, true, false, nil, false } }
 	local Z = NewClient("Chatty", { globals = function(env)
 		env.NUM_CHAT_WINDOWS = 3
@@ -4786,6 +4791,12 @@ do
 	eq(Count("ChatFrame_AddChannel"), 2, "and its channels")
 	eq(Count("FCF_DockFrame"), 1, "the docked one docked again"); eq(Count("FCF_UnDockFrame"), 1, "the one placed apart, undocked"); eq(Count("SetSize"), 2, "and sized, as the first")
 	eq(Count("ChangeChatColor"), 2, "the colours")
+	eq(Count("FCF_Close"), 0, "a docked tab the game calls not shown (the combat log, not the one picked) is docked, not closed")
+	C.db.layouts.Main.windows[3].shown = false
+	calls = {}
+	C.Load("Main")
+	eq(Count("FCF_Close"), 1, "a window neither docked nor shown is closed"); eq(Count("FCF_DockFrame"), 1, "the docked one still docked")
+	C.db.layouts.Main.windows[3].shown = true
 	-- at every login, where ticked
 	C.picked = "Main"
 	C.SetAuto(true)
@@ -7065,6 +7076,18 @@ end)()
 		eq(asked.Hal + asked.Hedda, chunks, ("each chunk was asked for once, of one member or the other (%d of Hal, %d of Hedda)"):format(asked.Hal, asked.Hedda))
 		check(asked.Hal > 0 and asked.Hedda > 0, ("and both were asked: %d of Hal, %d of Hedda"):format(asked.Hal, asked.Hedda))
 		leave(H1) leave(H2) leave(N2)
+	end)()
+	-- names as Forever gives them (a space on the guild channel, a hyphen in a whisper): the store still passes on
+	;(function()
+		FOREVER.names = true
+		local F1 = NewClient("Fay", { globals = seed, noData = true })
+		local F2 = NewClient("Finn", { noData = true })
+		F1.DT.db.settings.share, F2.DT.db.settings.share = true, true
+		step(700)
+		check(F2.DT.Comms.peers["Fay Smith"], "the guild channel names her with the space")
+		eq(F2.DT.DB.Root(), F1.DT.DB.Root(), "and the newcomer has the store all the same"); check(F2.DT.Recipes and F2.DT.Recipes[7934], "recipes and all")
+		FOREVER.names = false
+		leave(F1) leave(F2)
 	end)()
 	-- a new member starts with none of it
 	local M1 = NewClient("Mo", { noData = true })
