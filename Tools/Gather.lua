@@ -6,6 +6,10 @@ local _, DT = ...
 local G = { baseline = {}, index = {} }
 DT.Gather = G
 
+local atan2 = math.atan2 or math.atan
+local HALF_PI = math.pi * 0.5
+local TWO_PI = math.pi * 2
+
 local DEFAULTS = {
 	enabled = false,              -- defaulted to off
 	share = false,                -- strictly opt-in: false = coded baseline + personal discoveries only
@@ -21,26 +25,48 @@ local DEFAULTS = {
 	smartProf = false,            -- filter herbs/ore to your learned professions
 	cultivation = true,           -- highlight when Tauren Cultivation is ready & eligible
 	showPrice = true,             -- show live DawnMarket AH price beneath node name
-	autoResScale = true,          -- scale 3D effects proportionally with monitor resolution & UI scale
+	autoResScale = true,          -- gently compensate for high-DPI displays without over-scaling UIParent
+	quality = "high",             -- "low" | "medium" | "high"
 	colorMode = "custom",         -- "custom" | "category" | "difficulty"
-	color1 = { 0.30, 1.00, 0.55 },
-	color2 = { 1.00, 0.88, 0.30 },
+	color1 = { 0.22, 1.00, 0.48 },
+	color2 = { 1.00, 0.84, 0.28 },
 	fxSparkles = true,
 	fxBeam = true,
 	fxRing = true,
-	fxOrbit = false,
+	fxOrbit = true,
 	fxReticle = false,
 	fxLabel = true,
-	density = 12,                 -- 4 .. 18 sparkle particles
-	scale = 1.0,                  -- 0.60 .. 2.00
+	density = 14,                 -- 2 .. 24 sparkle particles
+	scale = 1.0,                  -- 0.50 .. 2.00
+	pillarHeight = 1.0,           -- 0.50 .. 2.50 vertical size of the light pillar
 	alpha = 0.92,                 -- 0.30 .. 1.00
 	speed = 1.0,                  -- 0.50 .. 2.00
-	offsetY = 10,                 -- -10 .. 40
+	offsetY = -14,                -- -30 .. 40 (anchors ground halo neatly around node base)
 	sound = "none",
 }
 
+local QUALITY_PROFILES = {
+	low = {
+		ringSegs = 24, dualBand = false, innerHairline = false, runeCount = 8, wispCount = 0,
+		orbitStrands = 1, orbitDust = 6, maxSparkles = 6, sparkleDiag = false, interval = 0.033,
+	},
+	medium = {
+		ringSegs = 40, dualBand = true, innerHairline = true, runeCount = 12, wispCount = 6,
+		orbitStrands = 1, orbitDust = 12, maxSparkles = 14, sparkleDiag = true, interval = 0.016,
+	},
+	high = {
+		ringSegs = 56, dualBand = true, innerHairline = true, runeCount = 16, wispCount = 12,
+		orbitStrands = 2, orbitDust = 20, maxSparkles = 24, sparkleDiag = true, interval = 0,
+	},
+}
+
+local function ActiveQuality()
+	local q = G.db and G.db.settings and G.db.settings.quality or "high"
+	return QUALITY_PROFILES[q] or QUALITY_PROFILES.high
+end
+
 local PRESETS = {
-	{ name = "Emerald", c1 = { 0.30, 1.00, 0.55 }, c2 = { 1.00, 0.88, 0.30 } },
+	{ name = "Emerald", c1 = { 0.22, 1.00, 0.48 }, c2 = { 1.00, 0.84, 0.28 } },
 	{ name = "Gold",    c1 = { 1.00, 0.80, 0.18 }, c2 = { 1.00, 0.45, 0.10 } },
 	{ name = "Violet",  c1 = { 0.72, 0.38, 1.00 }, c2 = { 0.55, 0.90, 1.00 } },
 	{ name = "Cyan",    c1 = { 0.25, 0.88, 1.00 }, c2 = { 0.85, 0.97, 1.00 } },
@@ -77,8 +103,9 @@ local function UpdateResolutionMetrics()
 		physW = math.floor(((GetScreenWidth and GetScreenWidth()) or 1920) * effScale + 0.5)
 		physH = math.floor(((GetScreenHeight and GetScreenHeight()) or 1080) * effScale + 0.5)
 	end
-	local rawScale = (physH / 1080) / math.max(effScale, 0.25)
-	cachedResScale = math.max(0.75, math.min(3.50, rawScale))
+	-- UIParent already normalizes to 768 logical height, so apply only a gentle DPI boost (1.0x at 1080p, ~1.25x at 4K)
+	local dpiBoost = 1.0 + math.max(0, (physH - 1080) / 1080) * 0.25
+	cachedResScale = math.max(0.85, math.min(1.35, dpiBoost))
 	cachedPixelSize = (768 / math.max(physH, 1)) / math.max(effScale, 0.25)
 	cachedResLabel = ("%dx%d (%.2fx)"):format(physW, physH, cachedResScale)
 end
@@ -95,12 +122,12 @@ local function EffectiveScale(isPreview)
 end
 
 ---------------------------------------------------------------------------
--- High-DPI Texture & Smooth Filtering Helpers
+-- High-DPI Feathered Texture Helpers
 ---------------------------------------------------------------------------
 
 local TEX_SPARK = "Interface\\CastingBar\\UI-CastingBar-Spark"
 local TEX_STAR  = "Interface\\Cooldown\\star4"
-local TEX_RING  = "Interface\\Cooldown\\ping4"
+local TEX_GLOW  = "Interface\\GLUES\\Models\\UI_Draenei\\GenericGlow64"
 local TEX_WHITE = "Interface\\Buttons\\WHITE8x8"
 
 local function SetSmoothFilter(tex, snapToGrid)
@@ -555,7 +582,7 @@ local DIFF_COLORS = {
 }
 
 local CATEGORY_COLORS = {
-	herb     = { { 0.25, 1.00, 0.48 }, { 0.85, 1.00, 0.45 } },
+	herb     = { { 0.22, 1.00, 0.48 }, { 1.00, 0.84, 0.28 } },
 	ore      = { { 1.00, 0.78, 0.18 }, { 1.00, 0.95, 0.55 } },
 	chest    = { { 0.25, 0.85, 1.00 }, { 0.95, 0.85, 0.35 } },
 	barrel   = { { 0.95, 0.62, 0.28 }, { 1.00, 0.86, 0.55 } },
@@ -617,37 +644,59 @@ local function PassesFilters(info)
 end
 
 ---------------------------------------------------------------------------
--- High-DPI Multi-Layer Visual Rig (Crisp 4-Point Stars, Perspective Halo & Stardust Orbit)
+-- High-DPI Multi-Layer Visual Rig (Feathered Tapered Streaks — Zero Hard Rectangles!)
 ---------------------------------------------------------------------------
 
-local MAX_SPARKLES, NUM_ORBITS, TRAIL_STEPS, RING_RUNES = 18, 4, 4, 12
+local MAX_SPARKLES = 24
+local MAX_RING_SEGS, MAX_RUNES, MAX_WISPS = 56, 16, 12
+local MAX_ORBIT_STRANDS, ORBIT_SEGS, MAX_ORBIT_DUST = 2, 32, 20
 
 local function CreateVisualRig(parent)
 	local rig = CreateFrame("Frame", nil, parent)
 	rig:SetSize(140, 140)
 
-	-- 1. Skyward Light Pillar (narrow razor-sharp vertical light beam)
+	-- 1. Volumetric Feathered Light Pillar (UI-CastingBar-Spark fades smoothly on all 4 sides)
 	rig.beamOuter = MakeAddTex(rig, "BACKGROUND", TEX_SPARK, false)
-	rig.beamOuter:SetPoint("BOTTOM", rig, "CENTER", 0, -10)
+	rig.beamMid   = MakeAddTex(rig, "BORDER", TEX_SPARK, false)
+	rig.beamCore  = MakeAddTex(rig, "ARTWORK", TEX_SPARK, false)
+	rig.beamBase  = MakeAddTex(rig, "ARTWORK", TEX_SPARK, false)
+	if rig.beamBase.SetRotation then rig.beamBase:SetRotation(HALF_PI) end
 
-	rig.beamCore = MakeAddTex(rig, "BORDER", TEX_SPARK, false)
-	rig.beamCore:SetPoint("BOTTOM", rig, "CENTER", 0, -8)
-
-	-- 2. Tilted 3D Perspective Beacon Halo Ring + Revolving Rune Glyphs
-	rig.ringOuter = MakeAddTex(rig, "BACKGROUND", TEX_RING, false)
-	rig.ringOuter:SetPoint("CENTER", rig, "CENTER", 0, -6)
-
-	rig.ringCore = MakeAddTex(rig, "BORDER", TEX_RING, false)
-	rig.ringCore:SetPoint("CENTER", rig, "CENTER", 0, -6)
-
-	rig.ringInner = MakeAddTex(rig, "ARTWORK", TEX_RING, false)
-	rig.ringInner:SetPoint("CENTER", rig, "CENTER", 0, -6)
-
-	rig.ringRunes = {}
-	for i = 1, RING_RUNES do
-		local glyph = MakeAddTex(rig, "ARTWORK", TEX_WHITE, false)
-		rig.ringRunes[i] = glyph
-	end
+	-- 2. Seamless Dual-Tone Arcane Rune Halo (dark contrast bed + seamless bands + compound glyphs + flame plumes)
+    	rig.ringShadow = rig:CreateTexture(nil, "BACKGROUND")
+    	rig.ringShadow:SetTexture(TEX_GLOW)
+    	rig.ringShadow:SetBlendMode("BLEND")
+    	SetSmoothFilter(rig.ringShadow, false)
+    
+    	rig.ringMist  = MakeAddTex(rig, "BACKGROUND", TEX_GLOW, false)
+    	rig.ringOuter = {}
+    	rig.ringInner = {}
+    	rig.ringLip   = {}
+    	rig.ringHair  = {}
+    	for i = 1, MAX_RING_SEGS do
+    		rig.ringOuter[i] = MakeAddTex(rig, "BACKGROUND", TEX_SPARK, false)
+    		rig.ringInner[i] = MakeAddTex(rig, "BORDER", TEX_SPARK, false)
+    		rig.ringLip[i]   = MakeAddTex(rig, "ARTWORK", TEX_SPARK, false)
+    		rig.ringHair[i]  = MakeAddTex(rig, "ARTWORK", TEX_SPARK, false)
+    	end
+    
+    	-- Compound 2-Stroke Arcane Runes inside the glowing band
+    	rig.ringRunes = {}
+    	for i = 1, MAX_RUNES do
+    		rig.ringRunes[i] = {
+    			a = MakeAddTex(rig, "OVERLAY", TEX_SPARK, false),
+    			b = MakeAddTex(rig, "OVERLAY", TEX_SPARK, false),
+    		}
+    	end
+    
+    	-- Ethereal Flame & Mist Plumes rising off the ring perimeter
+    	rig.ringWisps = {}
+    	for i = 1, MAX_WISPS do
+    		rig.ringWisps[i] = {
+    			mist  = MakeAddTex(rig, "BORDER", TEX_GLOW, false),
+    			flame = MakeAddTex(rig, "ARTWORK", TEX_SPARK, false),
+    		}
+    	end
 
 	-- 3. Pixel-Aligned Lock-On Reticle
 	rig.corners = {}
@@ -657,38 +706,35 @@ local function CreateVisualRig(parent)
 		rig.corners[i] = { h = h, v = v }
 	end
 
-	-- 4. Wide Tilted Orbiting Motes with Trailing Stardust Wake (separated outside the halo)
-	rig.orbits = {}
-	for i = 1, NUM_ORBITS do
-		local hRay = MakeAddTex(rig, "OVERLAY", TEX_SPARK, false)
-		if hRay.SetRotation then hRay:SetRotation(math.pi * 0.5) end
-		local vRay = MakeAddTex(rig, "OVERLAY", TEX_SPARK, false)
-		local core = MakeAddTex(rig, "OVERLAY", TEX_STAR, false)
-		local trail = {}
-		for j = 1, TRAIL_STEPS do
-			trail[j] = MakeAddTex(rig, "ARTWORK", TEX_STAR, false)
+	-- 4. Gossamer Golden Orbital Trails + Twinkling Stardust Ring
+	rig.orbitStrands = {}
+	for sIdx = 1, MAX_ORBIT_STRANDS do
+		local segs = {}
+		for i = 1, ORBIT_SEGS do
+			segs[i] = MakeAddTex(rig, "BORDER", TEX_SPARK, false)
 		end
-		rig.orbits[i] = { hRay = hRay, vRay = vRay, core = core, trail = trail }
+		rig.orbitStrands[sIdx] = segs
 	end
 
-	-- 5. Razor-Sharp 4-Point Diamond Star Sparkles (Zero Blobs!)
+	rig.orbitDust = {}
+	for i = 1, MAX_ORBIT_DUST do
+		rig.orbitDust[i] = MakeAddTex(rig, "OVERLAY", TEX_STAR, false)
+	end
+
+	-- 5. Razor-Sharp 4-Point Diamond Star Sparkles
 	rig.sparkles = {}
 	for i = 1, MAX_SPARKLES do
 		local hRay = MakeAddTex(rig, "OVERLAY", TEX_SPARK, false)
-		if hRay.SetRotation then hRay:SetRotation(math.pi * 0.5) end
-
+		if hRay.SetRotation then hRay:SetRotation(HALF_PI) end
 		local vRay = MakeAddTex(rig, "OVERLAY", TEX_SPARK, false)
-
 		local diag = MakeAddTex(rig, "ARTWORK", TEX_STAR, false)
-
 		local core = MakeAddTex(rig, "OVERLAY", TEX_STAR, false)
-
 		rig.sparkles[i] = { hRay = hRay, vRay = vRay, diag = diag, core = core }
 	end
 
 	-- 6. Floating Node Name & Subtitle
 	rig.label = rig:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-	rig.label:SetPoint("BOTTOM", rig, "CENTER", 0, 28)
+	rig.label:SetPoint("BOTTOM", rig, "CENTER", 0, 24)
 	rig.label:SetShadowOffset(1, -1)
 	rig.label:SetShadowColor(0, 0, 0, 1)
 
@@ -717,79 +763,200 @@ local function FormatSubtitle(info, nodeName)
 	return #parts > 0 and table.concat(parts, "  ") or nil
 end
 
+-- Draws a smooth, continuous feathered ellipse using overlapping UI-CastingBar-Spark streaks
+local function DrawFeatheredEllipse(segs, maxSegs, count, rig, cx, cy, rx, ry, bandWidth, r, g, b, alpha, overlap)
+	local approxCirc = TWO_PI * math.sqrt((rx * rx + ry * ry) * 0.5)
+	local segLen = (approxCirc / math.max(1, count)) * (overlap or 2.4)
+	for i = 1, maxSegs do
+		local seg = segs[i]
+		if i <= count then
+			local ang = (i - 1) * (TWO_PI / count)
+			local cosA, sinA = math.cos(ang), math.sin(ang)
+			local x = cx + cosA * rx
+			local y = cy + sinA * ry
+			local front = 0.72 + 0.28 * (-sinA)
+			seg:Show()
+			seg:ClearAllPoints()
+			seg:SetPoint("CENTER", rig, "CENTER", x, y)
+			-- UI-CastingBar-Spark is vertical by default, so width = radial thickness, height = tangent length
+			seg:SetSize(bandWidth, segLen)
+			if seg.SetRotation then
+				seg:SetRotation(atan2(ry * cosA, -rx * sinA) - HALF_PI)
+			end
+			seg:SetVertexColor(r, g, b, alpha * front)
+		else
+			seg:Hide()
+		end
+	end
+end
+
 local function UpdateVisualRig(rig, now, info, nodeName, isPreview)
 	local s = G.db and G.db.settings
 	if not s then return end
+	local q = ActiveQuality()
 	local kind = info and info.k or "other"
 	local r1, g1, b1, r2, g2, b2 = ActiveColors(kind, info and info.s)
 	local sc = EffectiveScale(isPreview)
+	local vScale = math.max(0.50, math.min(2.50, s.pillarHeight or 1.0))
 	local baseAlpha = s.alpha or 0.92
 	local spd = s.speed or 1.0
 	local t = now * spd
+	local haloY = -4 * sc
 
-	-- 1. Crisp Light Pillar
+	-- 1. Feathered Volumetric Light Pillar (adjustable vertical size + smooth edge falloff)
 	local showBeam = s.fxBeam and true or false
 	rig.beamOuter:SetShown(showBeam)
+	rig.beamMid:SetShown(showBeam)
 	rig.beamCore:SetShown(showBeam)
+	rig.beamBase:SetShown(showBeam)
 	if showBeam then
-		local pulse = 0.88 + 0.12 * math.sin(t * 2.6)
-		rig.beamOuter:SetSize(22 * sc * pulse, 128 * sc)
-		rig.beamOuter:SetVertexColor(r1, g1, b1, baseAlpha * 0.45)
-		rig.beamCore:SetSize(8 * sc, 112 * sc * pulse)
-		rig.beamCore:SetVertexColor(math.min(1, r2 + 0.35), math.min(1, g2 + 0.35), math.min(1, b2 + 0.35), baseAlpha * 0.85)
+		local pulse = 0.90 + 0.10 * math.sin(t * 2.5)
+		local beamH = 120 * sc * vScale
+
+		rig.beamOuter:ClearAllPoints()
+		rig.beamOuter:SetPoint("BOTTOM", rig, "CENTER", 0, haloY - 4 * sc)
+		rig.beamOuter:SetSize(44 * sc * pulse, beamH)
+		rig.beamOuter:SetVertexColor(r1, g1, b1, baseAlpha * 0.42)
+
+		rig.beamMid:ClearAllPoints()
+		rig.beamMid:SetPoint("BOTTOM", rig, "CENTER", 0, haloY - 2 * sc)
+		rig.beamMid:SetSize(20 * sc * pulse, beamH * 0.92)
+		rig.beamMid:SetVertexColor(r1, g1, b1, baseAlpha * 0.72)
+
+		rig.beamCore:ClearAllPoints()
+		rig.beamCore:SetPoint("BOTTOM", rig, "CENTER", 0, haloY)
+		rig.beamCore:SetSize(8 * sc, beamH * 0.84)
+		rig.beamCore:SetVertexColor(math.min(1, r2 + 0.45), math.min(1, g2 + 0.45), math.min(1, b2 + 0.45), baseAlpha * 0.92)
+
+		rig.beamBase:ClearAllPoints()
+		rig.beamBase:SetPoint("CENTER", rig, "CENTER", 0, haloY)
+		rig.beamBase:SetSize(12 * sc, 54 * sc * pulse)
+		rig.beamBase:SetVertexColor(math.min(1, r2 + 0.35), math.min(1, g2 + 0.35), math.min(1, b2 + 0.35), baseAlpha * 0.85)
 	end
 
-	-- 2. Tilted 3D Perspective Beacon Halo Ring + Revolving Rune Glyphs
-	local showRing = s.fxRing and true or false
-	rig.ringOuter:SetShown(showRing)
-	rig.ringCore:SetShown(showRing)
-	rig.ringInner:SetShown(showRing)
-	local haloY = -6 * sc
-	if showRing then
-		local breathe = 1.0 + 0.05 * math.sin(t * 2.4)
-		local aspect = 0.42
-		local outerW = 70 * sc * breathe
-		local coreW  = 56 * sc
-		local innerW = 42 * sc
-
-		rig.ringOuter:ClearAllPoints()
-		rig.ringOuter:SetPoint("CENTER", rig, "CENTER", 0, haloY)
-		rig.ringOuter:SetSize(outerW, outerW * aspect)
-		rig.ringOuter:SetVertexColor(r1, g1, b1, baseAlpha * 0.42)
-
-		rig.ringCore:ClearAllPoints()
-		rig.ringCore:SetPoint("CENTER", rig, "CENTER", 0, haloY)
-		rig.ringCore:SetSize(coreW, coreW * aspect)
-		rig.ringCore:SetVertexColor(r1, g1, b1, baseAlpha * 0.90)
-
-		rig.ringInner:ClearAllPoints()
-		rig.ringInner:SetPoint("CENTER", rig, "CENTER", 0, haloY)
-		rig.ringInner:SetSize(innerW, innerW * aspect)
-		rig.ringInner:SetVertexColor(math.min(1, r1 + 0.45), math.min(1, g1 + 0.45), math.min(1, b1 + 0.45), baseAlpha * 0.78)
-	end
-
-	local rxHalo, ryHalo = 24.5 * sc, 24.5 * 0.42 * sc
-	for i, glyph in ipairs(rig.ringRunes) do
-		glyph:SetShown(showRing)
-		if showRing then
-			local ang = t * 0.75 + (i - 1) * (math.pi * 2 / RING_RUNES)
-			local gx = math.cos(ang) * rxHalo
-			local gy = haloY + math.sin(ang) * ryHalo
-			local front = 0.55 + 0.45 * (-math.sin(ang))
-			glyph:ClearAllPoints()
-			glyph:SetPoint("CENTER", rig, "CENTER", gx, gy)
-			glyph:SetSize(3.6 * sc * front, 1.6 * sc * front)
-			if glyph.SetRotation then
-				glyph:SetRotation(math.atan2(math.cos(ang) * 0.42, -math.sin(ang)))
-			end
-			glyph:SetVertexColor(math.min(1, r1 + 0.5), math.min(1, g1 + 0.5), math.min(1, b1 + 0.5), baseAlpha * front * 0.85)
-		end
-	end
+	-- 2. Seamless Dual-Tone Arcane Rune Halo
+    	local showRing = s.fxRing and true or false
+    	local breathe = 1.0 + 0.025 * math.sin(t * 2.2)
+    	local aspect = 0.38
+    	local rxMain = 38 * sc * breathe
+    	local ryMain = rxMain * aspect
+    
+    	rig.ringShadow:SetShown(showRing)
+    	rig.ringMist:SetShown(showRing and q.dualBand)
+    	if showRing then
+    		-- Dark contrast bed so neon emerald & gold stay saturated over bright sand/stone
+    		rig.ringShadow:ClearAllPoints()
+    		rig.ringShadow:SetPoint("CENTER", rig, "CENTER", 0, haloY)
+    		rig.ringShadow:SetSize(rxMain * 2.15, ryMain * 2.25)
+    		rig.ringShadow:SetVertexColor(0.02, 0.04, 0.06, baseAlpha * 0.52)
+    
+    		if q.dualBand then
+    			rig.ringMist:ClearAllPoints()
+    			rig.ringMist:SetPoint("CENTER", rig, "CENTER", 0, haloY)
+    			rig.ringMist:SetSize(rxMain * 2.45, ryMain * 2.65)
+    			rig.ringMist:SetVertexColor(r1, g1, b1, baseAlpha * 0.24)
+    		end
+    
+    		-- Seamless outer shimmer/gold rim (3.8x overlap removes all segment beading)
+    		DrawFeatheredEllipse(rig.ringOuter, MAX_RING_SEGS, q.ringSegs, rig, 0, haloY,
+    			rxMain * 1.03, ryMain * 1.03, 9.0 * sc, r2, g2, b2, baseAlpha * 0.36, 3.8)
+    
+    		-- Rich primary/emerald rune band
+    		if q.dualBand then
+    			DrawFeatheredEllipse(rig.ringInner, MAX_RING_SEGS, q.ringSegs, rig, 0, haloY,
+    				rxMain * 0.92, ryMain * 0.92, 12.5 * sc, r1, g1, b1, baseAlpha * 0.44, 3.8)
+    		else
+    			for i = 1, MAX_RING_SEGS do rig.ringInner[i]:Hide() end
+    		end
+    
+    		-- Hot golden-white inner rim lip
+    		DrawFeatheredEllipse(rig.ringLip, MAX_RING_SEGS, q.ringSegs, rig, 0, haloY,
+    			rxMain * 0.81, ryMain * 0.81, 3.2 * sc,
+    			math.min(1, r2 + 0.45), math.min(1, g2 + 0.45), math.min(1, b2 + 0.45), baseAlpha * 0.46, 3.6)
+    
+    		-- Delicate inner filigree circle inside the dark center
+    		if q.innerHairline then
+    			DrawFeatheredEllipse(rig.ringHair, MAX_RING_SEGS, q.ringSegs, rig, 0, haloY,
+    				rxMain * 0.62, ryMain * 0.62, 1.8 * sc,
+    				math.min(1, r2 + 0.35), math.min(1, g2 + 0.35), math.min(1, b2 + 0.35), baseAlpha * 0.42, 3.5)
+    		else
+    			for i = 1, MAX_RING_SEGS do rig.ringHair[i]:Hide() end
+    		end
+    	else
+    		for i = 1, MAX_RING_SEGS do
+    			rig.ringOuter[i]:Hide()
+    			rig.ringInner[i]:Hide()
+    			rig.ringLip[i]:Hide()
+    			rig.ringHair[i]:Hide()
+    		end
+    	end
+    
+    	-- Compound 2-Stroke Arcane Runes inside the glowing band
+    	local rxRune, ryRune = rxMain * 0.91, ryMain * 0.91
+    	local RUNE_ANGLES = { 0.48, -0.52, 0.72, -0.68, 1.05, 0.35 }
+    	for i = 1, MAX_RUNES do
+    		local glyph = rig.ringRunes[i]
+    		if showRing and i <= q.runeCount then
+    			local ang = -t * 0.50 + (i - 1) * (TWO_PI / q.runeCount)
+    			local cosA, sinA = math.cos(ang), math.sin(ang)
+    			local gx = cosA * rxRune
+    			local gy = haloY + sinA * ryRune
+    			local front = 0.58 + 0.42 * (-sinA)
+    			local tangent = atan2(ryRune * cosA, -rxRune * sinA) - HALF_PI
+    			local branchOff = RUNE_ANGLES[(i % #RUNE_ANGLES) + 1]
+    			local colA = baseAlpha * front * 0.82
+    
+    			glyph.a:Show()
+                			glyph.a:ClearAllPoints()
+                			glyph.a:SetPoint("CENTER", rig, "CENTER", gx, gy)
+                			glyph.a:SetSize(2.4 * sc * front, 5.4 * sc * front)
+                			if glyph.a.SetRotation then glyph.a:SetRotation(tangent) end
+                			glyph.a:SetVertexColor(math.min(1, r2 + 0.60), math.min(1, g2 + 0.60), math.min(1, b2 + 0.60), colA)
+                
+                			glyph.b:Show()
+                			glyph.b:ClearAllPoints()
+                			glyph.b:SetPoint("CENTER", rig, "CENTER", gx + math.cos(tangent) * 1.1 * sc, gy + math.sin(tangent) * 1.1 * sc)
+                			glyph.b:SetSize(2.1 * sc * front, 4.0 * sc * front)
+                			if glyph.b.SetRotation then glyph.b:SetRotation(tangent + branchOff) end
+    			glyph.b:SetVertexColor(math.min(1, r2 + 0.50), math.min(1, g2 + 0.50), math.min(1, b2 + 0.50), colA * 0.90)
+    		else
+    			glyph.a:Hide()
+    			glyph.b:Hide()
+    		end
+    	end
+    
+    	-- Ethereal Flame & Mist Plumes rising off the Halo Perimeter
+    	for i = 1, MAX_WISPS do
+    		local wisp = rig.ringWisps[i]
+    		if showRing and i <= q.wispCount then
+    			local phase = (t * 0.75 + (i - 1) * 0.317) % 1
+    			local ang = t * 0.30 + (i - 1) * (TWO_PI / q.wispCount)
+    			local sway = math.sin(t * 2.6 + i * 1.9) * 2.5 * sc
+    			local wx = math.cos(ang) * rxMain * 0.94 + sway
+    			local wy = haloY + math.sin(ang) * ryMain * 0.94 + phase * 3.5 * sc
+    			local wAlpha = math.sin(phase * math.pi) * baseAlpha
+    
+    			wisp.mist:Show()
+    			wisp.mist:ClearAllPoints()
+    			wisp.mist:SetPoint("BOTTOM", rig, "CENTER", wx, wy - 2 * sc)
+    			wisp.mist:SetSize(16 * sc, (14 + phase * 14) * sc)
+    			wisp.mist:SetVertexColor(r1, g1, b1, wAlpha * 0.34)
+    
+    			wisp.flame:Show()
+    			wisp.flame:ClearAllPoints()
+    			wisp.flame:SetPoint("BOTTOM", rig, "CENTER", wx, wy)
+    			wisp.flame:SetSize(9 * sc, (12 + phase * 14) * sc)
+    			wisp.flame:SetVertexColor(math.min(1, r1 + 0.25), math.min(1, g1 + 0.25), math.min(1, b1 + 0.25), wAlpha * 0.58)
+    		else
+    			wisp.mist:Hide()
+    			wisp.flame:Hide()
+    		end
+    	end
 
 	-- 3. Pixel-Exact Lock-On Reticle
 	local showRet = s.fxReticle and true or false
-	local spread = (20 + 2.5 * math.sin(t * 3.2)) * sc
-	local arm = 10 * sc
+	local spread = (18 + 2.0 * math.sin(t * 3.2)) * sc
+	local arm = 9 * sc
 	local thick = math.max(cachedPixelSize * 2, math.floor((2 * sc) / cachedPixelSize + 0.5) * cachedPixelSize)
 	local OFF = { { -1, 1 }, { 1, 1 }, { -1, -1 }, { 1, -1 } }
 	for i, c in ipairs(rig.corners) do
@@ -808,66 +975,77 @@ local function UpdateVisualRig(rig, now, info, nodeName, isPreview)
 		end
 	end
 
-	-- 4. Separated Wide Tilted Orbiting Motes + Trailing Stardust Wake
+	-- 4. Gossamer Golden Orbital Trails + Twinkling Stardust Ring
 	local showOrbit = s.fxOrbit and true or false
-	local orbitRx, orbitRy = 44 * sc, 15.5 * sc
-	local tilt = 0.20
-	local cosT, sinT = math.cos(tilt), math.sin(tilt)
-	local function OrbitPoint(ang)
-		local ex, ey = math.cos(ang) * orbitRx, math.sin(ang) * orbitRy
-		return ex * cosT - ey * sinT, (haloY + 2 * sc) + ex * sinT + ey * cosT
-	end
-
-	for i, o in ipairs(rig.orbits) do
-		o.hRay:SetShown(showOrbit)
-		o.vRay:SetShown(showOrbit)
-		o.core:SetShown(showOrbit)
-		for j = 1, TRAIL_STEPS do o.trail[j]:SetShown(showOrbit) end
-		if showOrbit then
-			local ang = t * 1.9 + (i - 1) * (math.pi * 2 / NUM_ORBITS)
-			local depth = 0.68 + 0.42 * (-math.sin(ang))
-			local ox, oy = OrbitPoint(ang)
-			local cr, cg, cb = r2, g2, b2
-			if i % 2 == 0 then cr, cg, cb = r1, g1, b1 end
-
-			local rayLen = 11 * sc * depth
-			local rayThick = 1.8 * sc * depth
-			o.hRay:ClearAllPoints()
-			o.hRay:SetPoint("CENTER", rig, "CENTER", ox, oy)
-			o.hRay:SetSize(rayThick, rayLen)
-			o.hRay:SetVertexColor(cr, cg, cb, baseAlpha * depth)
-
-			o.vRay:ClearAllPoints()
-			o.vRay:SetPoint("CENTER", rig, "CENTER", ox, oy)
-			o.vRay:SetSize(rayThick, rayLen * 1.15)
-			o.vRay:SetVertexColor(cr, cg, cb, baseAlpha * depth)
-
-			o.core:ClearAllPoints()
-			o.core:SetPoint("CENTER", rig, "CENTER", ox, oy)
-			o.core:SetSize(3.8 * sc * depth, 3.8 * sc * depth)
-			o.core:SetVertexColor(math.min(1, cr + 0.55), math.min(1, cg + 0.55), math.min(1, cb + 0.55), baseAlpha * depth)
-
-			for j = 1, TRAIL_STEPS do
-				local frac = 1 - (j / (TRAIL_STEPS + 1))
-				local tx, ty = OrbitPoint(ang - j * 0.16)
-				local speck = o.trail[j]
-				speck:ClearAllPoints()
-				speck:SetPoint("CENTER", rig, "CENTER", tx, ty)
-				speck:SetSize(3.2 * sc * depth * frac, 3.2 * sc * depth * frac)
-				speck:SetVertexColor(cr, cg, cb, baseAlpha * depth * frac * 0.75)
+	local orbitRx, orbitRy = 52 * sc, 17.5 * sc
+	local STRAND_TILTS = { 0.16, -0.14 }
+	for sIdx = 1, MAX_ORBIT_STRANDS do
+		local segs = rig.orbitStrands[sIdx]
+		local activeStrand = showOrbit and sIdx <= q.orbitStrands
+		local tilt = STRAND_TILTS[sIdx]
+		local cosT, sinT = math.cos(tilt), math.sin(tilt)
+		local approxCirc = TWO_PI * math.sqrt((orbitRx * orbitRx + orbitRy * orbitRy) * 0.5)
+		local segLen = (approxCirc / ORBIT_SEGS) * 2.4
+		for i = 1, ORBIT_SEGS do
+			local seg = segs[i]
+			if activeStrand then
+				local ang = (i - 1) * (TWO_PI / ORBIT_SEGS) + t * (sIdx == 1 and 0.35 or -0.28)
+				local ex, ey = math.cos(ang) * orbitRx, math.sin(ang) * orbitRy
+				local rx = ex * cosT - ey * sinT
+				local ry = (haloY + 1 * sc) + ex * sinT + ey * cosT
+				local dx = -orbitRx * math.sin(ang) * cosT - orbitRy * math.cos(ang) * sinT
+				local dy = -orbitRx * math.sin(ang) * sinT + orbitRy * math.cos(ang) * cosT
+				local front = 0.45 + 0.55 * (-math.sin(ang))
+				seg:Show()
+				seg:ClearAllPoints()
+				seg:SetPoint("CENTER", rig, "CENTER", rx, ry)
+				seg:SetSize(2.6 * sc, segLen)
+				if seg.SetRotation then
+					seg:SetRotation(atan2(dy, dx) - HALF_PI)
+				end
+				seg:SetVertexColor(r2, g2, b2, baseAlpha * 0.24 * front)
+			else
+				seg:Hide()
 			end
 		end
 	end
 
-	-- 5. Razor-Sharp 4-Point Star Sparkles (Crossed Needle Rays + White-Hot Core)
+	for i = 1, MAX_ORBIT_DUST do
+		local dust = rig.orbitDust[i]
+		if showOrbit and i <= q.orbitDust then
+			local strand = (i % 2 == 0) and -0.14 or 0.16
+			local cosT, sinT = math.cos(strand), math.sin(strand)
+			local dir = (i % 2 == 0) and -1 or 1
+			local ang = t * 1.15 * dir + i * 2.39996
+			local radJitter = 0.90 + ((i * 7) % 10) * 0.024
+			local ex = math.cos(ang) * orbitRx * radJitter
+			local ey = math.sin(ang) * orbitRy * radJitter
+			local dx = ex * cosT - ey * sinT
+			local dy = (haloY + 1 * sc) + ex * sinT + ey * cosT
+			local twinkle = 0.45 + 0.55 * math.sin(t * 4.2 + i * 1.7)
+			local sz = (2.8 + ((i % 3) * 1.4) * twinkle) * sc
+			dust:Show()
+			dust:ClearAllPoints()
+			dust:SetPoint("CENTER", rig, "CENTER", dx, dy)
+			dust:SetSize(sz, sz)
+			dust:SetVertexColor(math.min(1, r2 + 0.35), math.min(1, g2 + 0.35), math.min(1, b2 + 0.35), baseAlpha * twinkle * 0.90)
+		else
+			dust:Hide()
+		end
+	end
+
+	-- 5. Razor-Sharp 4-Point Star Sparkles (controlled by slider & capped by Graphics Quality)
 	local showSpark = s.fxSparkles and true or false
-	local count = math.max(4, math.min(MAX_SPARKLES, math.floor(s.density or 12)))
+	local requested = math.max(2, math.min(MAX_SPARKLES, math.floor(s.density or 14)))
+	local count = math.min(requested, q.maxSparkles)
+	local sparkRise = 26 * sc * (0.7 + 0.3 * vScale)
+
 	for i = 1, MAX_SPARKLES do
 		local sp = rig.sparkles[i]
 		local active = showSpark and (i <= count)
 		sp.hRay:SetShown(active)
 		sp.vRay:SetShown(active)
-		sp.diag:SetShown(active)
+		sp.diag:SetShown(active and q.sparkleDiag)
 		sp.core:SetShown(active)
 		if active then
 			local p = (t * 1.05 + i * 0.371) % 1
@@ -876,17 +1054,17 @@ local function UpdateVisualRig(rig, now, info, nodeName, isPreview)
 			local isMajor = (i % 3 ~= 0)
 
 			local theta = i * 2.39996 + t * 0.45
-			local rad = (6 + ((i * 7) % 18)) * sc
+			local rad = (6 + ((i * 7) % 20)) * sc
 			local x = math.cos(theta) * rad
-			local y = (-4 + p * 32 + math.sin(theta) * (rad * 0.55)) * sc
+			local y = haloY + (p * sparkRise) + math.sin(theta) * (rad * 0.42)
 
 			local cr, cg, cb = r1, g1, b1
 			if i % 2 == 0 then cr, cg, cb = r2, g2, b2 end
 
-			local rayLen = (isMajor and (12 + a * 24) or (4 + a * 7)) * sc
-			local rayThick = (isMajor and (2.2 + a * 2.0) or (1.4 + a * 1.0)) * sc
-			local starSz = (isMajor and (5 + a * 8) or (2.5 + a * 3.5)) * sc
-			local coreSz = (isMajor and (2.6 + a * 2.8) or (1.6 + a * 1.4)) * sc
+			local rayLen = (isMajor and (10 + a * 20) or (4 + a * 6)) * sc
+			local rayThick = (isMajor and (2.0 + a * 1.6) or (1.3 + a * 0.8)) * sc
+			local starSz = (isMajor and (4.5 + a * 7) or (2.2 + a * 3.0)) * sc
+			local coreSz = (isMajor and (2.4 + a * 2.4) or (1.5 + a * 1.2)) * sc
 
 			sp.hRay:ClearAllPoints()
 			sp.hRay:SetPoint("CENTER", rig, "CENTER", x, y)
@@ -898,13 +1076,15 @@ local function UpdateVisualRig(rig, now, info, nodeName, isPreview)
 			sp.vRay:SetSize(rayThick, rayLen * 1.12)
 			sp.vRay:SetVertexColor(cr, cg, cb, a * baseAlpha)
 
-			sp.diag:ClearAllPoints()
-			sp.diag:SetPoint("CENTER", rig, "CENTER", x, y)
-			sp.diag:SetSize(starSz, starSz)
-			if sp.diag.SetRotation then
-				sp.diag:SetRotation((i % 2 == 0 and 1 or -1) * t * 0.6 + 0.785)
+			if q.sparkleDiag then
+				sp.diag:ClearAllPoints()
+				sp.diag:SetPoint("CENTER", rig, "CENTER", x, y)
+				sp.diag:SetSize(starSz, starSz)
+				if sp.diag.SetRotation then
+					sp.diag:SetRotation((i % 2 == 0 and 1 or -1) * t * 0.6 + 0.785)
+				end
+				sp.diag:SetVertexColor(cr, cg, cb, a * baseAlpha * 0.75)
 			end
-			sp.diag:SetVertexColor(cr, cg, cb, a * baseAlpha * 0.75)
 
 			sp.core:ClearAllPoints()
 			sp.core:SetPoint("CENTER", rig, "CENTER", x, y)
@@ -918,7 +1098,7 @@ local function UpdateVisualRig(rig, now, info, nodeName, isPreview)
 	rig.label:SetShown(showLabel and true or false)
 	if showLabel then
 		rig.label:ClearAllPoints()
-		rig.label:SetPoint("BOTTOM", rig, "CENTER", 0, 28 * sc)
+		rig.label:SetPoint("BOTTOM", rig, "CENTER", 0, 24 * sc)
 		rig.label:SetText(nodeName)
 		rig.label:SetTextColor(r1, g1, b1, baseAlpha)
 		local subText = FormatSubtitle(info, nodeName)
@@ -965,7 +1145,7 @@ end
 
 local worldFrame, worldRig
 local activePlate, activeInfo, activeName, lastKnownName
-local lastChimeAt, lastChimeName = 0, nil
+local lastChimeAt, lastChimeName, lastAnimUpdate = 0, nil, 0
 
 local function PlayChime(forceId)
 	local id = forceId or (G.db and G.db.settings and G.db.settings.sound) or "none"
@@ -991,7 +1171,7 @@ local function SyncWorldTarget()
 	if plate and info and PassesFilters(info) then
 		local changed = (plate ~= activePlate or name ~= activeName)
 		activePlate, activeInfo, activeName = plate, info, name
-		local yOff = (G.db.settings.offsetY or 10) * (G.db.settings.autoResScale and cachedResScale or 1.0)
+		local yOff = (G.db.settings.offsetY or -14) * (G.db.settings.autoResScale and cachedResScale or 1.0)
 		worldRig:ClearAllPoints()
 		worldRig:SetPoint("CENTER", plate, "CENTER", 0, yOff)
 		worldFrame:Show()
@@ -1020,7 +1200,11 @@ local function EnsureWorldOverlay()
 			SyncWorldTarget()
 			return
 		end
-		UpdateVisualRig(worldRig, GetTime(), activeInfo, activeName, false)
+		local now = GetTime()
+		local interval = ActiveQuality().interval
+		if interval > 0 and (now - lastAnimUpdate) < interval then return end
+		lastAnimUpdate = now
+		UpdateVisualRig(worldRig, now, activeInfo, activeName, false)
 	end)
 end
 
@@ -1204,6 +1388,59 @@ local function Build(panel)
 		refreshers[#refreshers + 1] = function() readout:SetText(fmt(s[key] or minV)) end
 	end
 
+	local function SliderControl(parent, x, y, width, labelText, key, minV, maxV, step, fmt)
+		Label(parent, "GameFontHighlightSmall", x, y - 3, labelText)
+		local readout = Label(parent, "GameFontHighlightSmall", x + 116 + width + 6, y - 3, "")
+		readout:SetWidth(68)
+		readout:SetJustifyH("LEFT")
+
+		local sl = CreateFrame("Slider", nil, parent, "BackdropTemplate")
+		sl:SetSize(width, 14)
+		sl:SetPoint("TOPLEFT", x + 116, y - 3)
+		sl:SetOrientation("HORIZONTAL")
+		sl:SetMinMaxValues(minV, maxV)
+		sl:SetValueStep(step)
+		if sl.SetObeyStepOnDrag then sl:SetObeyStepOnDrag(true) end
+		SkinBox(sl, "panel")
+
+		local fill = sl:CreateTexture(nil, "ARTWORK")
+		fill:SetPoint("TOPLEFT", 2, -2)
+		fill:SetPoint("BOTTOMLEFT", 2, 2)
+		fill:SetWidth(4)
+
+		local thumb = sl:CreateTexture(nil, "OVERLAY")
+		thumb:SetTexture(TEX_WHITE)
+		thumb:SetSize(10, 16)
+		sl:SetThumbTexture(thumb)
+
+		local function PaintSlider(val)
+			local _, ar, ag, ab = 1, 1, 0.82, 0
+			if DT.Theme then _, ar, ag, ab = DT:Theme() end
+			local pct = math.max(0, math.min(1, (val - minV) / math.max(0.001, maxV - minV)))
+			fill:SetWidth(math.max(2, pct * (width - 4)))
+			fill:SetColorTexture(ar, ag, ab, 0.45)
+			thumb:SetVertexColor(ar, ag, ab, 1)
+		end
+
+		local syncing = false
+		sl:SetScript("OnValueChanged", function(_, val)
+			if syncing then return end
+			local snapped = math.max(minV, math.min(maxV, math.floor(val / step + 0.5) * step))
+			s[key] = snapped
+			readout:SetText(fmt(snapped))
+			PaintSlider(snapped)
+		end)
+
+		refreshers[#refreshers + 1] = function()
+			syncing = true
+			local cur = s[key] or minV
+			sl:SetValue(cur)
+			readout:SetText(fmt(cur))
+			PaintSlider(cur)
+			syncing = false
+		end
+	end
+
 	local y = -4
 	Check(panel, 4, y, "|cffffd100Enable Gathering Highlights|r  |cff888888(15-yard soft-target cone; off by default)|r", "enabled", function(on)
 		G.SetEnabled(on)
@@ -1247,7 +1484,23 @@ local function Build(panel)
 	Check(panel, 268, y, "Tauren Cultivation Prompt", "cultivation")
 
 	y = y - 26
-	Label(panel, "GameFontNormal", 6, y, "High-Res Visual Layers")
+	Label(panel, "GameFontNormal", 6, y, "Visual Layers & Quality")
+	local qualities = {
+		{ id = "low",    label = "Low" },
+		{ id = "medium", label = "Medium" },
+		{ id = "high",   label = "High" },
+	}
+	local qx = 186
+	for _, qp in ipairs(qualities) do
+		local qb = Btn(panel, qx, y + 2, 64, qp.label, function()
+			s.quality = qp.id
+		end)
+		refreshers[#refreshers + 1] = function()
+			if (s.quality or "high") == qp.id then qb:LockHighlight() else qb:UnlockHighlight() end
+		end
+		qx = qx + 68
+	end
+
 	y = y - 18
 	Check(panel, 6, y, "HD Sparkles", "fxSparkles")
 	Check(panel, 160, y, "Light Pillar", "fxBeam")
@@ -1336,15 +1589,24 @@ local function Build(panel)
 
 	y = y - 18
 	Check(panel, 6, y, "Auto-scale with screen resolution", "autoResScale")
-	StepControl(panel, 232, y - 2, "Height Offset:", "offsetY", -10, 40, 2, function(v) return ("%d px"):format(v) end)
+	StepControl(panel, 232, y - 2, "Height Offset:", "offsetY", -30, 40, 2, function(v) return ("%d px"):format(v) end)
 
 	y = y - 22
-	StepControl(panel, 8, y, "Effect Size:", "scale", 0.60, 2.00, 0.10, function(v) return ("%d%%"):format(v * 100) end)
-	StepControl(panel, 232, y, "Brightness:", "alpha", 0.30, 1.00, 0.10, function(v) return ("%d%%"):format(v * 100) end)
+	StepControl(panel, 8, y, "Effect Size:", "scale", 0.50, 2.00, 0.10, function(v) return ("%d%%"):format(v * 100) end)
+	StepControl(panel, 232, y, "Pillar Height:", "pillarHeight", 0.50, 2.50, 0.10, function(v) return ("%d%%"):format(v * 100) end)
 
 	y = y - 22
 	StepControl(panel, 8, y, "Anim Speed:", "speed", 0.50, 2.00, 0.10, function(v) return ("%.1fx"):format(v) end)
-	StepControl(panel, 232, y, "Sparkle Count:", "density", 4, MAX_SPARKLES, 2, function(v) return ("%d"):format(v) end)
+	StepControl(panel, 232, y, "Brightness:", "alpha", 0.30, 1.00, 0.10, function(v) return ("%d%%"):format(v * 100) end)
+
+	y = y - 22
+	SliderControl(panel, 8, y, 224, "Sparkle Amount:", "density", 2, MAX_SPARKLES, 1, function(v)
+		local cap = ActiveQuality().maxSparkles
+		if v > cap then
+			return ("%d (cap %d)"):format(v, cap)
+		end
+		return ("%d"):format(v)
+	end)
 
 	y = y - 24
 	Label(panel, "GameFontHighlightSmall", 8, y - 3, "Detection Chime:")
@@ -1364,7 +1626,7 @@ local function Build(panel)
 	local preview = SkinBox(CreateFrame("Frame", nil, panel, "BackdropTemplate"), "sidebar")
 	preview:SetPoint("TOPRIGHT", -6, -6)
 	preview:SetPoint("BOTTOMRIGHT", -6, 6)
-	preview:SetWidth(264)
+	preview:SetWidth(284)
 
 	local previewKinds = {
 		{ k = "herb",     s = 230, name = "Sungrass",             sub = "Herb Node (Skill 230)",    icon = "Interface\\Icons\\INV_Misc_Herb_11" },
@@ -1389,12 +1651,12 @@ local function Build(panel)
 
 	local nodeIcon = preview:CreateTexture(nil, "ARTWORK")
 	nodeIcon:SetSize(28, 28)
-	nodeIcon:SetPoint("CENTER", 0, -20)
+	nodeIcon:SetPoint("CENTER", 0, -28)
 
 	local previewRig = CreateVisualRig(preview)
-	previewRig:SetPoint("CENTER", nodeIcon, "CENTER", 0, 6)
+	previewRig:SetPoint("CENTER", nodeIcon, "CENTER", 0, 4)
 
-	local hint = Label(preview, "GameFontDisableSmall", 10, 0, "High-DPI 4-point sparkles auto-scale with screen resolution and sync via DT.DB when enabled.")
+	local hint = Label(preview, "GameFontDisableSmall", 10, 0, "Switch Quality (Low / Medium / High) for older GPUs. Syncs via DT.DB when enabled.")
 	hint:ClearAllPoints()
 	hint:SetPoint("BOTTOMLEFT", 10, 10)
 	hint:SetPoint("BOTTOMRIGHT", -10, 10)
@@ -1416,7 +1678,7 @@ end
 DT:RegisterModule("gather", {
 	profile = { "settings" },
 	title = "Gather",
-	version = 4,
+	version = 6,
 	defaultOff = true,
 	defaults = DEFAULTS,
 	settings = {
