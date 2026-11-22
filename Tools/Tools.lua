@@ -28,7 +28,7 @@ function T.Has(id)
 	return Find(id) ~= nil
 end
 
-local panel, body, none
+local panel, body, line, none
 local buttons, panels, current = {}, {}, nil
 
 -- shows a tool: the one asked for, else the last one used, else the first
@@ -37,18 +37,35 @@ function T.Show(id)
 	local tool = Find(id or T.want) or Find(current) or Find(T.db.last) or T.list[1]
 	T.want = nil
 	none:SetShown(tool == nil)
+	local cols = math.max(1, math.floor(((panel:GetWidth() or 780) - 4) / 88))
+	local rows = math.max(1, math.ceil(#T.list / cols))
+	local topH = 5 + rows * 25
+	if line then
+		line:ClearAllPoints()
+		line:SetPoint("TOPLEFT", 0, -(topH - 3))
+		line:SetPoint("TOPRIGHT", 0, -(topH - 3))
+	end
+	if body then
+		body:ClearAllPoints()
+		body:SetPoint("TOPLEFT", 0, -topH)
+		body:SetPoint("BOTTOMRIGHT", 0, 0)
+	end
 	for i = 1, math.max(#T.list, #buttons) do
 		local t, b = T.list[i], buttons[i]
 		if t and not b then
 			b = CreateFrame("Button", nil, panel, "UIPanelButtonTemplate")
+			if DT.SkinButton then DT:SkinButton(b) end
 			b:SetSize(84, 22)
-			b:SetPoint("TOPLEFT", 2 + (i - 1) * 88, -2)
 			b:SetScript("OnClick", function(self) T.Show(self.id) end)
 			buttons[i] = b
 		end
 		if b then
 			b:SetShown(t ~= nil)
 			if t then
+				local row = math.floor((i - 1) / cols)
+				local col = (i - 1) % cols
+				b:ClearAllPoints()
+				b:SetPoint("TOPLEFT", 2 + col * 88, -2 - row * 25)
 				b.id = t.id
 				local on = t.active and t.active()
 				b:SetText(on == nil and t.title or ((on and "|cff40ff40" or "|cffffd100") .. t.title .. "|r"))
@@ -86,7 +103,7 @@ local function Build(parent)
 	body = CreateFrame("Frame", nil, panel)
 	body:SetPoint("TOPLEFT", 0, -30)
 	body:SetPoint("BOTTOMRIGHT", 0, 0)
-	local line = panel:CreateTexture(nil, "ARTWORK")
+	line = panel:CreateTexture(nil, "ARTWORK")
 	line:SetColorTexture(1, 1, 1, 0.12)
 	line:SetPoint("TOPLEFT", 0, -27)
 	line:SetPoint("TOPRIGHT", 0, -27)

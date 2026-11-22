@@ -54,6 +54,7 @@ Tools\Enemies.lua
 Tools\Carrot.lua
 Tools\ChatHistory.lua
 Tools\ChatSaver.lua
+Tools\Gather.lua
 Core\DBSync.lua
 Core\Changelog.lua
 Core\Home.lua
