@@ -11,12 +11,9 @@ local MIN_W, MIN_H = 900, 420 -- the Settings tab and the Market columns need th
 local panels, buttons, separators, current = {}, {}, {}, nil
 local settingsTab
 
-local frame = CreateFrame("Frame", "DawnToolsFrame", UIParent, "BackdropTemplate")
+local frame = DT:SkinFrame(CreateFrame("Frame", "DawnToolsFrame", UIParent, "BackdropTemplate"), "window")
 frame:SetSize(WIDTH, HEIGHT)
 frame:SetPoint("CENTER")
-frame:SetBackdrop({ bgFile = "Interface\\Buttons\\WHITE8x8", edgeFile = "Interface\\Buttons\\WHITE8x8", edgeSize = 1 })
-frame:SetBackdropColor(0.06, 0.06, 0.07, 0.95)
-frame:SetBackdropBorderColor(0, 0, 0, 1)
 frame:SetFrameStrata("HIGH")
 if frame.SetToplevel then frame:SetToplevel(true) end -- (a click brings it in front of other windows of its layer)
 frame:SetClampedToScreen(true)
@@ -41,7 +38,7 @@ local title = frame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
 title:SetPoint("LEFT", logo, "RIGHT", 6, 0)
 title:SetText("DawnTools")
 
-local close = CreateFrame("Button", nil, frame, "UIPanelCloseButton")
+local close = DT:SkinCloseButton(CreateFrame("Button", nil, frame, "UIPanelCloseButton"))
 close:SetPoint("TOPRIGHT", 2, 2)
 close:SetScript("OnClick", function() frame:Hide() end) -- (the template's own closing goes through the game's panel code, which is barred to addons in combat: a plain Hide is not)
 
@@ -119,6 +116,35 @@ local body = CreateFrame("Frame", nil, frame)
 body:SetPoint("TOPLEFT", 8, -36)
 body:SetPoint("BOTTOMRIGHT", -8, 8)
 
+local bodyInset = DT:SkinFrame(CreateFrame("Frame", nil, frame, "BackdropTemplate"), "inset")
+bodyInset:SetPoint("TOPLEFT", body, "TOPLEFT", -4, 4)
+bodyInset:SetPoint("BOTTOMRIGHT", body, "BOTTOMRIGHT", 4, -4)
+bodyInset:SetFrameLevel(math.max(1, body:GetFrameLevel() - 1))
+
+local function UpdateWindowChrome()
+	local classic = DT:Theme().classic and true or false
+	logo:ClearAllPoints()
+	close:ClearAllPoints()
+	grip:ClearAllPoints()
+	body:ClearAllPoints()
+	if classic then
+		logo:SetPoint("TOPLEFT", 14, -11)
+		close:SetPoint("TOPRIGHT", -5, -5)
+		grip:SetPoint("BOTTOMRIGHT", -7, 7)
+		body:SetPoint("TOPLEFT", 14, -42)
+		body:SetPoint("BOTTOMRIGHT", -14, 14)
+	else
+		logo:SetPoint("TOPLEFT", 8, -6)
+		close:SetPoint("TOPRIGHT", 2, 2)
+		grip:SetPoint("BOTTOMRIGHT", -1, 1)
+		body:SetPoint("TOPLEFT", 8, -36)
+		body:SetPoint("BOTTOMRIGHT", -8, 8)
+	end
+	bodyInset:SetShown(classic)
+end
+UpdateWindowChrome()
+DT:On("DT_THEME", UpdateWindowChrome)
+
 ---------------------------------------------------------------------------
 -- Tabs
 ---------------------------------------------------------------------------
@@ -188,7 +214,7 @@ function ShowSub(p, layoutOnly)
 	for i = 1, math.max(#p.subs, #p.buttons) do
 		local s, b = p.subs[i], p.buttons[i]
 		if s and not b then
-			b = CreateFrame("Button", nil, p.panel, "UIPanelButtonTemplate")
+			b = DT:SkinButton(CreateFrame("Button", nil, p.panel, "UIPanelButtonTemplate"))
 			b:SetScript("OnClick", function(self)
 				p.want = self.sub
 				ShowSub(p)
@@ -318,8 +344,10 @@ end
 function UI:Layout()
 	local list = self:TabList()
 	list[#list + 1] = settingsTab
+	local classic = DT:Theme().classic and true or false
+	local topY = classic and -11 or -6
 	-- tabs of a different group (tab.group, 1 if not given) stand apart, behind a thin line
-	local x, lines = 120, 0
+	local x, lines = classic and 126 or 120, 0
 	for i, tab in ipairs(list) do
 		local before = list[i - 1]
 		if before and tab ~= settingsTab and (tab.group or 1) ~= (before.group or 1) then
@@ -332,13 +360,13 @@ function UI:Layout()
 				separators[lines] = line
 			end
 			line:ClearAllPoints()
-			line:SetPoint("TOPLEFT", x + 5, -8)
+			line:SetPoint("TOPLEFT", x + 5, topY - 2)
 			line:Show()
 			x = x + 14
 		end
 		local b = buttons[i]
 		if not b then
-			b = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
+			b = DT:SkinButton(CreateFrame("Button", nil, frame, "UIPanelButtonTemplate"))
 			b:SetScript("OnClick", function(self) UI:Show(self.id) end)
 			b:SetScript("OnEnter", function(self)
 				if not self.tip then return end
@@ -365,7 +393,7 @@ function UI:Layout()
 		end
 		-- Settings sits apart, on the right: it is not one of the working tabs
 		b:ClearAllPoints()
-		if tab == settingsTab then b:SetPoint("TOPRIGHT", -34, -6) else b:SetPoint("TOPLEFT", x, -6) end
+		if tab == settingsTab then b:SetPoint("TOPRIGHT", classic and -38 or -34, topY) else b:SetPoint("TOPLEFT", x, topY) end
 		b.x = x
 		x = x + (icon and 32 or 88)
 		b:SetText(icon and "" or tab.title)
@@ -459,7 +487,7 @@ local function Text(parent, font, x, y, text)
 end
 
 local function Toggle(parent, x, y, text, get, set)
-	local cb = CreateFrame("CheckButton", nil, parent, "UICheckButtonTemplate")
+	local cb = DT:SkinCheckBox(CreateFrame("CheckButton", nil, parent, "UICheckButtonTemplate"))
 	cb:SetSize(22, 22)
 	cb:SetPoint("TOPLEFT", x, y)
 	cb.label = Text(cb, "GameFontHighlightSmall", 26, -5, text)
@@ -473,7 +501,7 @@ local function Toggle(parent, x, y, text, get, set)
 end
 
 local function Arrow(parent, x, y, text, click)
-	local b = CreateFrame("Button", nil, parent, "UIPanelButtonTemplate")
+	local b = DT:SkinButton(CreateFrame("Button", nil, parent, "UIPanelButtonTemplate"))
 	b:SetSize(22, 20)
 	b:SetPoint("TOPLEFT", x, y)
 	b:SetText(text)
@@ -485,7 +513,7 @@ local function Arrow(parent, x, y, text, click)
 end
 
 local function Button(parent, x, y, width, text, click)
-	local b = CreateFrame("Button", nil, parent, "UIPanelButtonTemplate")
+	local b = DT:SkinButton(CreateFrame("Button", nil, parent, "UIPanelButtonTemplate"))
 	b:SetSize(width, 20)
 	b:SetPoint("TOPLEFT", x, y)
 	b:SetText(text)
@@ -514,12 +542,10 @@ function UI:ShowSection(id)
 			b = CreateFrame("Button", nil, settingsPanel)
 			b:SetHeight(20)
 			b:SetWidth(SECTION_W - 4)
-			b.sel = b:CreateTexture(nil, "BACKGROUND")
+			b.sel = DT:SkinSelection(b:CreateTexture(nil, "BACKGROUND"), 0.18)
 			b.sel:SetAllPoints()
-			b.sel:SetColorTexture(1, 0.82, 0, 0.18)
-			local glow = b:CreateTexture(nil, "HIGHLIGHT")
+			local glow = DT:SkinHighlight(b:CreateTexture(nil, "HIGHLIGHT"), 0.10)
 			glow:SetAllPoints()
-			glow:SetColorTexture(1, 1, 1, 0.08)
 			b.label = b:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
 			b.label:SetPoint("LEFT", 6, 0)
 			b:SetScript("OnClick", function(self) UI:ShowSection(self.id) end)
@@ -584,6 +610,31 @@ UI:Section("general", "General", 10, function(panel)
 	Text(panel, "GameFontDisableSmall", 204, y - 4, "Also: /dt reset, should the window ever be out of reach.")
 end)
 
+-- Themes
+UI:Section("themes", "Themes", 20, function(panel)
+	local THEME_NOTES = {
+		original  = "Default dark DawnTools frame with gold borders and standard WoW buttons.",
+		modern    = "Slate dark panels with crisp 1px borders and cool cyan accents.",
+		ellesmere = "Ultra-dark minimal panels matched to EllesmereUI or your class color.",
+		classic   = "Classic WoW stone and marble window chrome with gold tooltip borders.",
+	}
+	local y = -2
+	Text(panel, "GameFontNormal", 4, y, "Themes")
+	y = y - 20
+	Text(panel, "GameFontDisableSmall", 4, y, "Switches live across every tab and sub-tab (or /dt theme original | modern | ellesmere | classic).")
+	y = y - 28
+	for _, id in ipairs(DT.THEME_ORDER) do
+		local def = DT.THEMES[id]
+		local b = Button(panel, 6, y, 118, def.name, function() DT:SetTheme(id) end)
+		b.Load = function(self)
+			if DT:Theme().id == id then self:LockHighlight() else self:UnlockHighlight() end
+		end
+		controls[#controls + 1] = b
+		Text(panel, "GameFontHighlightSmall", 134, y - 4, THEME_NOTES[id] or "")
+		y = y - 28
+	end
+end)
+
 -- Tabs & Modules
 UI:Section("tabs", "Tabs & Modules", 30, function(panel)
 	local y = -2
@@ -611,15 +662,20 @@ UI:Section("tabs", "Tabs & Modules", 30, function(panel)
 	Text(panel, "GameFontDisableSmall", 396, y - 2, "Off = not loaded at all. After /reload.")
 	y = y - 22
 	for _, name in ipairs(DT.order) do
-		local mod = DT.modules[name]
-		Toggle(panel, 330, y, mod.title or name,
-			function() return DT.db.modules[name] ~= false end,
-			function(on)
-				DT.db.modules[name] = on
-				DT:Print("%s %s after /reload.", mod.title or name, on and "is back" or "is off")
-			end)
-		y = y - 22
-	end
+    		local mod = DT.modules[name]
+    		if not mod.hidden then
+    			Toggle(panel, 330, y, mod.title or name,
+    				function()
+    					if mod.defaultOff then return DT.db.modules[name] == true end
+    					return DT.db.modules[name] ~= false
+    				end,
+    				function(on)
+    					DT.db.modules[name] = on
+    					DT:Print("%s %s after /reload.", mod.title or name, on and "is back" or "is off")
+    				end)
+    			y = y - 22
+    		end
+    	end
 end)
 
 -- Data Sync: what has gone to the guild and come from it, counted (Comms:Totals); Data Storage: what is held
@@ -925,11 +981,10 @@ end)
 
 local function BuildSettings(panel)
 	settingsPanel = panel
-	local side = panel:CreateTexture(nil, "BACKGROUND")
+	local side = DT:SkinFrame(CreateFrame("Frame", nil, panel, "BackdropTemplate"), "sidebar")
 	side:SetPoint("TOPLEFT", 0, 0)
 	side:SetPoint("BOTTOMLEFT", 0, 0)
 	side:SetWidth(SECTION_W)
-	side:SetColorTexture(1, 1, 1, 0.04)
 	settingsBody = CreateFrame("Frame", nil, panel)
 	settingsBody:SetPoint("TOPLEFT", SECTION_W + 10, 0)
 	settingsBody:SetPoint("BOTTOMRIGHT", 0, 0)
@@ -1053,11 +1108,10 @@ end
 --   o.menuWidth
 local DROP_H = 18
 function DT:Dropdown(parent, width, o)
-	local b = CreateFrame("Button", nil, parent)
+	local b = DT:SkinFrame(CreateFrame("Button", nil, parent, "BackdropTemplate"), "panel")
 	b:SetSize(width, 18)
-	local shade = b:CreateTexture(nil, "BACKGROUND")
-	shade:SetAllPoints()
-	shade:SetColorTexture(1, 1, 1, 0.08)
+	local btnHover = DT:SkinHighlight(b:CreateTexture(nil, "HIGHLIGHT"), 0.12)
+	btnHover:SetAllPoints()
 	b.label = b:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
 	b.label:SetPoint("LEFT", 6, 0)
 	b.label:SetPoint("RIGHT", -16, 0)
@@ -1068,26 +1122,24 @@ function DT:Dropdown(parent, width, o)
 	arrow:SetText("|cffffd100v|r")
 
 	local menuWidth, most = o.menuWidth or math.max(width, 200), o.rows or 18
-	local menu = CreateFrame("Frame", nil, parent)
+	local menu = DT:SkinFrame(CreateFrame("Frame", nil, parent, "BackdropTemplate"), "menu")
 	menu:SetFrameStrata("DIALOG")
 	menu:SetPoint("TOPLEFT", b, "BOTTOMLEFT", 0, -1)
 	menu:SetWidth(menuWidth)
 	menu:EnableMouse(true)
-	local back = menu:CreateTexture(nil, "BACKGROUND")
-	back:SetAllPoints()
-	back:SetColorTexture(0.06, 0.06, 0.06, 0.97)
 	local top = 2
 	local all, shown, offset = {}, {}, 0
 
 	local function Draw()
 		offset = math.max(0, math.min(offset, #shown - most))
 		local picked = o.picked()
+		local _, _, _, _, accentHex = DT:Theme()
 		for i = 1, most do
 			local e, row = shown[i + offset], menu.rows[i]
 			row.entry = e
 			row:SetShown(e ~= nil)
 			if e then
-				row.label:SetText((e.value == picked and "|cffffd100" or e.color or "|cffffffff") .. e.text .. "|r" .. (e.n and (" |cff888888" .. e.n .. "|r") or ""))
+				row.label:SetText((e.value == picked and accentHex or e.color or "|cffffffff") .. e.text .. "|r" .. (e.n and (" |cff888888" .. e.n .. "|r") or ""))
 			end
 		end
 		local over = #shown > most
@@ -1110,7 +1162,7 @@ function DT:Dropdown(parent, width, o)
 
 	if o.search then
 		top = 26
-		menu.box = CreateFrame("EditBox", nil, menu, "SearchBoxTemplate")
+		menu.box = DT:SkinEditBox(CreateFrame("EditBox", nil, menu, "SearchBoxTemplate"))
 		menu.box:SetSize(menuWidth - 18, 18)
 		menu.box:SetPoint("TOPLEFT", 11, -4)
 		menu.box:SetAutoFocus(false)
@@ -1136,9 +1188,8 @@ function DT:Dropdown(parent, width, o)
 		row:SetHeight(DROP_H)
 		row:SetPoint("TOPLEFT", 2, -top - (i - 1) * DROP_H)
 		row:SetPoint("RIGHT", -2, 0)
-		local highlight = row:CreateTexture(nil, "HIGHLIGHT")
+		local highlight = DT:SkinHighlight(row:CreateTexture(nil, "HIGHLIGHT"), 0.14)
 		highlight:SetAllPoints()
-		highlight:SetColorTexture(1, 1, 1, 0.12)
 		row.label = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
 		row.label:SetPoint("LEFT", 6, 0)
 		row:SetScript("OnClick", function(self)

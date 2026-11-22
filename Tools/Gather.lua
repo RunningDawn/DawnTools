@@ -510,6 +510,8 @@ end
 DT:RegisterModule("gather_sync", {
 	title = "Gather node dictionary sync",
 	version = 1,
+	defaultOff = true,
+	hidden = true,
 	hello = function() return IsSharing() and G.gossip and G.gossip:Hello() or nil end,
 	onHello = function(_, sender, summary) if IsSharing() and G.gossip then G.gossip:OnHello(sender, summary) end end,
 	onMessage = function(_, kind, payload, sender) if IsSharing() and G.gossip then G.gossip:OnMessage(kind, payload, sender) end end,
@@ -1339,6 +1341,7 @@ DT:RegisterModule("gather", {
 	profile = { "settings" },
 	title = "Gather",
 	version = 3,
+	defaultOff = true,
 	defaults = DEFAULTS,
 	settings = {
 		{ key = "enabled", label = "Enable 3D gathering highlights (15-yard soft-target cone)" },
@@ -1353,6 +1356,9 @@ DT:RegisterModule("gather", {
 		return ("%s — %d indexed, %d mine (solo mode; not sharing)"):format(state, b, m)
 	end,
 	onEnable = function(mod)
+		if DT.modules.gather_sync then
+			DT.modules.gather_sync.enabled = true
+		end
 		mod.db.nodes = mod.db.nodes or {}
 		mod.db.peers = mod.db.peers or {}
 		G.db = mod.db
