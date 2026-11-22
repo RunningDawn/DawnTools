@@ -907,17 +907,17 @@ local function UpdateVisualRig(rig, now, info, nodeName, isPreview)
     			local colA = baseAlpha * front * 0.82
     
     			glyph.a:Show()
-                			glyph.a:ClearAllPoints()
-                			glyph.a:SetPoint("CENTER", rig, "CENTER", gx, gy)
-                			glyph.a:SetSize(2.4 * sc * front, 5.4 * sc * front)
-                			if glyph.a.SetRotation then glyph.a:SetRotation(tangent) end
-                			glyph.a:SetVertexColor(math.min(1, r2 + 0.60), math.min(1, g2 + 0.60), math.min(1, b2 + 0.60), colA)
-                
-                			glyph.b:Show()
-                			glyph.b:ClearAllPoints()
-                			glyph.b:SetPoint("CENTER", rig, "CENTER", gx + math.cos(tangent) * 1.1 * sc, gy + math.sin(tangent) * 1.1 * sc)
-                			glyph.b:SetSize(2.1 * sc * front, 4.0 * sc * front)
-                			if glyph.b.SetRotation then glyph.b:SetRotation(tangent + branchOff) end
+                glyph.a:ClearAllPoints()
+                glyph.a:SetPoint("CENTER", rig, "CENTER", gx, gy)
+                glyph.a:SetSize(2.4 * sc * front, 5.4 * sc * front)
+                if glyph.a.SetRotation then glyph.a:SetRotation(tangent) end
+                glyph.a:SetVertexColor(math.min(1, r2 + 0.60), math.min(1, g2 + 0.60), math.min(1, b2 + 0.60), colA)
+    
+                glyph.b:Show()
+                glyph.b:ClearAllPoints()
+                glyph.b:SetPoint("CENTER", rig, "CENTER", gx + math.cos(tangent) * 1.1 * sc, gy + math.sin(tangent) * 1.1 * sc)
+                glyph.b:SetSize(2.1 * sc * front, 4.0 * sc * front)
+                if glyph.b.SetRotation then glyph.b:SetRotation(tangent + branchOff) end
     			glyph.b:SetVertexColor(math.min(1, r2 + 0.50), math.min(1, g2 + 0.50), math.min(1, b2 + 0.50), colA * 0.90)
     		else
     			glyph.a:Hide()
