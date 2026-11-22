@@ -160,7 +160,7 @@ function Sync:Status()
 end
 
 function Sync:Enable()
-	C_Timer.NewTicker(PUSH_EVERY, function() Sync:Flush() end)
+	C_Timer.NewTicker(PUSH_EVERY, function() DT.Timed("market: prices sent", Sync.Flush, Sync) end)
 	-- in step with the guild as of now, if this session heard what it had missed
 	DT:On("PLAYER_LOGOUT", function()
 		-- (or as of the newest thing I hold: a clock running a little ahead somewhere must not make me ask again)

@@ -4,7 +4,7 @@
 local ADDON, DT = ...
 _G.DawnTools = DT
 
-DT.VERSION = "0.54.4" -- keep in step with the .toc
+DT.VERSION = "0.54.5" -- keep in step with the .toc
 DT.LOGO = "Interface\\AddOns\\DawnTools\\logo"
 
 local DEFAULTS = {
@@ -18,7 +18,7 @@ local DEFAULTS = {
 ---------------------------------------------------------------------------
 
 local frame = CreateFrame("Frame")
-local handlers = {}
+local handlers, where = {}, {} -- (where: [handler] = the file and line that asked for it, for /dt perf)
 
 function DT:On(event, fn)
 	if not handlers[event] then
@@ -28,13 +28,65 @@ function DT:On(event, fn)
 		if not event:find("^DT_") then pcall(frame.RegisterEvent, frame, event) end
 	end
 	table.insert(handlers[event], fn)
+	local stack = debugstack and debugstack(2, 1, 0) or ""
+	where[fn] = stack:match("DawnTools[/\\](.-:%d+)") or "?"
 end
 
 -- (each handler on its own: one that fails is reported and the rest still run)
+-- How long what runs takes, and how much memory it makes, for /dt perf:
+-- [name] = { n = times, ms = in all, max = the longest once, kb = memory made in all, kbmax = the most once }
+-- (memory made: what Lua holds after less before; a clean-up of the garbage in between shows as none)
+DT.perf = {}
+local clock = debugprofilestop
+local function heap() local ok, kb = pcall(collectgarbage, "count") return ok and kb or 0 end
+-- (what ran since t0, m0 = DT.Mark(), noted under a name)
+function DT.Mark() return clock and clock(), heap() end
+function DT.Note(name, t0, m0)
+	if not t0 then return end
+	local ms, kb, p = clock() - t0, math.max(0, heap() - m0), DT.perf[name]
+	if not p then p = { n = 0, ms = 0, max = 0, kb = 0, kbmax = 0 } DT.perf[name] = p end
+	p.n, p.ms, p.max, p.kb, p.kbmax = p.n + 1, p.ms + ms, math.max(p.max, ms), p.kb + kb, math.max(p.kbmax, kb)
+end
+function DT.Timed(name, fn, ...)
+	local t0, m0 = DT.Mark()
+	local ok, err = pcall(fn, ...)
+	DT.Note(name, t0, m0)
+	if not ok then geterrorhandler()(err) end
+end
+-- a frame's OnUpdate, timed under a name
+function DT.OnUpdate(f, name, fn)
+	f:SetScript("OnUpdate", function(...) DT.Timed(name, fn, ...) end)
+end
+
 function DT:Fire(event, ...)
-	for _, fn in ipairs(handlers[event] or {}) do
-		local ok, err = pcall(fn, ...)
-		if not ok then geterrorhandler()(err) end
+	for _, fn in ipairs(handlers[event] or {}) do DT.Timed(event .. " " .. (where[fn] or "?"), fn, ...) end
+end
+
+-- /dt perf: the slowest since the /reload, by the longest single run. "/dt perf all": by the time in all (what
+-- runs often), "/dt perf mem": by the memory made (churn), "/dt perf gc": memory before and after a clean-up
+-- (a short freeze), "/dt perf reset": start again.
+local function AddonKB()
+	if UpdateAddOnMemoryUsage then UpdateAddOnMemoryUsage() end
+	local get = (C_AddOns and C_AddOns.GetAddOnMemoryUsage) or GetAddOnMemoryUsage
+	return get and get("DawnTools") or 0
+end
+function DT.PerfReport(how)
+	if how == "reset" then DT.perf = {} DT:Print("perf: counting anew.") return end
+	if how == "gc" then
+		local before = AddonKB()
+		pcall(collectgarbage, "collect")
+		DT:Print("perf: DawnTools holds %.1f MB; %.1f MB after a clean-up (the rest was garbage, made and let go).", before / 1024, AddonKB() / 1024)
+		return
+	end
+	local by = how == "all" and "ms" or how == "mem" and "kb" or "max"
+	local list = {}
+	for name, p in pairs(DT.perf) do list[#list + 1] = { name = name, p = p } end
+	table.sort(list, function(a, b) return a.p[by] > b.p[by] end)
+	DT:Print("perf since the /reload, %s. DawnTools holds %.1f MB now. (/dt perf all | mem | gc | reset)",
+		by == "ms" and "by time in all" or by == "kb" and "by memory made" or "by the longest once", AddonKB() / 1024)
+	for i = 1, math.min(12, #list) do
+		local p = list[i].p
+		print(("  %s  %.1f ms once, %.0f ms in all, x%d  |cff888888%.0f KB made (%.0f once)|r"):format(list[i].name, p.max, p.ms, p.n, p.kb, p.kbmax))
 	end
 end
 
@@ -193,6 +245,7 @@ reader:SetScript("OnUpdate", function(self)
 	if not r then return self:Hide() end
 	-- (a list that fails to read is reported once and dropped: the others still get their turn)
 	local ok, done
+	local t0, m0 = DT.Mark()
 	if not r.begun then
 		r.begun = true
 		ok, done = pcall(r.Start)
@@ -200,6 +253,7 @@ reader:SetScript("OnUpdate", function(self)
 	else
 		ok, done = pcall(r.Step, 2)
 	end
+	DT.Note("background: " .. (r.name or "?"), t0, m0)
 	if not ok then
 		table.remove(readers, 1)
 		geterrorhandler()(done)
@@ -323,11 +377,16 @@ local function Probe()
 end
 
 -- true when no addon has claimed the command (SLASH_FOO1 = "/dt")
+-- (the slash commands taken, read off _G once at login: a walk of every global is a tenth of a second or more)
+local taken
 local function SlashFree(cmd)
-	for key, value in pairs(_G) do
-		if type(value) == "string" and type(key) == "string" and value:lower() == cmd and key:find("^SLASH_") then return false end
+	if not taken then
+		taken = {}
+		for key, value in pairs(_G) do
+			if type(key) == "string" and type(value) == "string" and key:sub(1, 6) == "SLASH_" then taken[value:lower()] = true end
+		end
 	end
-	return true
+	return not taken[cmd]
 end
 
 local function Slash(input)
@@ -348,6 +407,8 @@ local function Slash(input)
 		DT:Print("window back to its first size and place.")
 	elseif cmd == "probe" then
 		Probe()
+	elseif cmd == "perf" then
+		DT.PerfReport(rest:lower())
 	elseif cmd == "map" then
 		DT.MapTime()
 	elseif cmd == "db" then
@@ -388,7 +449,7 @@ local function Slash(input)
 			for _, tab in ipairs(mod.tabs or { mod.tab }) do tabs[#tabs + 1] = tab.id end
 		end
 		tabs[#tabs + 1] = "settings"
-		DT:Print("/dt (window) | /dt %s | /dt debug <%s> | /dt probe | /dt sync (guild messages: what goes out and comes in) | /dt selftest | /dt reset (window size and place)",
+		DT:Print("/dt (window) | /dt %s | /dt debug <%s> | /dt probe | /dt perf (what is slow) | /dt sync (guild messages: what goes out and comes in) | /dt selftest | /dt reset (window size and place)",
 			table.concat(tabs, " | /dt "), table.concat(DT.order, "|"))
 	end
 end
@@ -659,8 +720,7 @@ DT:On("PLAYER_LOGIN", function()
 
 	for _, mod in DT:Enabled() do
 		-- a module that fails must not take the others with it; the error still reaches BugSack
-		local ok, err = pcall(mod.onEnable or function() end, mod)
-		if not ok then geterrorhandler()(err) end
+		DT.Timed("start: " .. tostring(mod.name), mod.onEnable or function() end, mod) -- (Timed: in a pcall, errors still reported)
 	end
 
 	C_Timer.After(5, function()

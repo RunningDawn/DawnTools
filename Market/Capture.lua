@@ -315,14 +315,14 @@ function M:Scan(full)
 			self.scanStatus = ("Full scan: possible again in %d min."):format(math.ceil(wait / 60))
 		else
 			self.db.lastFull = DT.Now() -- (counted from the asking: a cancelled one uses the game's turn up too)
-			scan = { full = true, t = GetTime(), ticker = C_Timer.NewTicker(0.5, ScanTick) }
+			scan = { full = true, t = GetTime(), ticker = C_Timer.NewTicker(0.5, function() DT.Timed("market: scan step", ScanTick) end) }
 			self.scanning, self.scanStatus = true, "Full scan: waiting for the auction house (up to a minute)..."
 			AH.ReplicateItems()
 		end
 		return self:Touch()
 	end
 	if not (AH.SendBrowseQuery and AH.RequestMoreBrowseResults and AH.HasFullBrowseResults) then return end
-	scan = { ticker = C_Timer.NewTicker(0.5, ScanTick) }
+	scan = { ticker = C_Timer.NewTicker(0.5, function() DT.Timed("market: scan step", ScanTick) end) }
 	self.scanning, self.scanStatus = true, "Scanning..."
 	ScanTick()
 end
@@ -421,12 +421,17 @@ function M:Enable(mod)
 		for _, items in pairs(db.houses) do L.Upgrade(items) end
 		db.hv = L.HISTORY_VERSION
 	end
-	for _, items in pairs(db.houses) do
-		L.Prune(items, DT.Now())
-		for id, item in pairs(items) do
-			if not (item.n and item.s and item.e) then self:Resolve(id) end
+	-- (old history pruned once a day, not at every login: half a second over a big guild's prices)
+	local prune = DT.Now() - (db.prunedAt or 0) >= 86400
+	if prune then db.prunedAt = DT.Now() end
+	DT.Timed("start: market, prices pruned and names asked", function()
+		for _, items in pairs(db.houses) do
+			if prune then L.Prune(items, DT.Now()) end
+			for id, item in pairs(items) do
+				if not (item.n and item.s and item.e) then self:Resolve(id) end
+			end
 		end
-	end
+	end)
 
 	DT:On("COMMODITY_SEARCH_RESULTS_UPDATED", Commodity)
 	DT:On("ITEM_SEARCH_RESULTS_UPDATED", Items)

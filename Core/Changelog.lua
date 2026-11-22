@@ -6,6 +6,21 @@
 local _, DT = ...
 
 DT.CHANGELOG = {
+	{ "0.54.5", "2026-11-21", {
+		"BiS: gear of the other faction is left out: its reputations (cities, battlegrounds), and what only its quests (by their races, or else by who gives them) or vendors give. Where both sides have a quest for it, yours is the one named.",
+		"BiS: before a raid is in the phase, rewards for its bosses' drops are left out too (the Head of Nefarian's, handed in in a city).",
+		"BiS: the tank weights (Protection warrior and paladin, bear) count armor, dodge, parry and block, and hit for more: they measured threat only. Warriors and paladins reach the defense cap first.",
+		"BiS, Extras: at level 60 the best enchants and consumables for the spec (as the game words them), counted toward the hit and defense caps.",
+		"Less lag: looting no longer makes the next tooltip read the whole store again; a BiS tooltip never works the sets out itself (it shows from the next look); market history is pruned once a day, not at every login.",
+		"Sunken Temple and The Temple of Atal'Hakkar are one place in Dungeons, Quests and NPCs. Zones the game has no name for (Forever's own numbers, \"Zone 10074\") take their map's name.",
+		"/dt perf: what took longest since the /reload, and what made the most memory (/dt perf all | mem | gc | reset).",
+		"Cooking: foods that raise Fishing skill have a category of their own.",
+		"BiS at level 60: every spec reaches its hit cap first (8% melee, 17% spell); legendaries (Atiesh) are left out; the sets are worked out much faster where several caps count.",
+		"Faster login: the slash commands are looked up once, not once a module.",
+		"Less memory: an NPC keeps no search text or table of kinds (made when searched); a tab reads its list twice as fast while it is open.",
+		"BiS: gear of any level is looked at, not only the last 15 (Avenguard Helm); tanks reach the defense cap before hit; less work after a bag change or a gear swap.",
+		"BiS: right-click an item in a slot's list to lock it there; the sets to compare keep it (per character and spec). Right-click the slot to unlock.",
+	} },
 	{ "0.54.4", "2026-11-21", {
 		"Guild sharing: the game database goes in short whispers of plain letters and digits, as Forever lets through; the long ones of 0.54.3 never arrived whole. Everyone needs this version to share it.",
 		"Settings, Data Sync: counts the whisper pieces that came in, messages lost part-way or unreadable, and the bytes sent; Sync now asks every member who shares.",

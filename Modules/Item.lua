@@ -993,11 +993,11 @@ local function Build(parent)
 		I.Refresh(true)
 	end)
 	panel:SetScript("OnSizeChanged", function() I.Refresh(true) end) -- (the same items, laid out anew)
-	panel:SetScript("OnUpdate", function()
+	DT.OnUpdate(panel, "tab: Items", function()
 		-- (in a fight the game cuts off a script that takes long: reading and searching the list wait for its end)
 		if InCombatLockdown and InCombatLockdown() then return end
 		if reading then
-			I.Step(8)
+			I.Step(16)
 			I.Refresh()
 			return
 		end
@@ -1021,7 +1021,7 @@ DT:RegisterModule("item", {
 		I.db = mod.db
 		I.db.known = I.db.known or {}
 		DT:On("DT_DB_UPDATE", function() stale = fromStore or missing end)
-		DT:Background({ Start = I.Start, Step = I.Step })
+		DT:Background({ name = "items list", Start = I.Start, Step = I.Step })
 		DT:On("GET_ITEM_INFO_RECEIVED", function(id)
 			if not waiting[id] then return end
 			waiting[id] = nil

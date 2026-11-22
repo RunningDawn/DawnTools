@@ -709,7 +709,7 @@ local function NewView(prof)
 		end)
 		panel:SetScript("OnSizeChanged", v.Refresh)
 		local nextUpdate = 0
-		panel:SetScript("OnUpdate", function()
+		DT.OnUpdate(panel, "tab: Craft", function()
 			if not v.dirty or GetTime() < nextUpdate then return end
 			-- (hundreds of recipes, each with its sum: only the tab that is looked at, and once a second at most;
 			-- one that was not looked at is worked out when it is shown)

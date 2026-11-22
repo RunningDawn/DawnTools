@@ -124,6 +124,56 @@ function BL.Stats(game, lines)
 	return s
 end
 
+-- What a consumable or an enchant gives, from its "Use:" line or its spell's text ("Permanently enchant bracers to
+-- increase Strength by 9", "gain 25 Stamina and Spirit"). A short effect ("for 15 sec": a proc) is not counted.
+-- ponytail: health counts as Stamina, ten to one; a proc (Crusader) counts nothing.
+local PRIMARY = { strength = "str", agility = "agi", stamina = "sta", intellect = "int", spirit = "spi" }
+local EXTRA = {
+	{ "armor[%a ,]* by " .. NUM, "armor" }, { "%+" .. NUM .. " armor", "armor" }, { NUM .. " additional armor", "armor" },
+	{ "maximum health by " .. NUM, "hp" }, { "%+" .. NUM .. " health", "hp" },
+	{ "critical hit by " .. NUM .. "%%", "crit" }, { "healing[%a ]* by up to " .. NUM, "heal" }, { "spell damage by up to " .. NUM, "sp" },
+	{ NUM .. " mana per 5 sec", "mp5" }, { NUM .. " mana every 5", "mp5" }, { "mana regen[%a ]* by " .. NUM, "mp5" },
+}
+function BL.UseStats(lines)
+	local s, rest = {}, {}
+	for _, line in ipairs(lines or {}) do
+		line = type(line) == "string" and line:lower():gsub("^use: ", "") or ""
+		if not line:find("for %d+ sec") then
+			rest[#rest + 1] = line
+			for a, n, b, c in line:gmatch("((%d+) (%a+) and (%a+))") do -- ("25 stamina and spirit")
+				for _, w in ipairs({ b, c }) do if PRIMARY[w] then s[PRIMARY[w]] = (s[PRIMARY[w]] or 0) + tonumber(n) end end
+				line = line:gsub(a:gsub("%p", "%%%0"), "", 1)
+			end
+			local all = line:match("all stats by " .. NUM)
+			for name, word in pairs(PRIMARY) do
+				local n = all or line:match(name .. " by " .. NUM) or line:match("%+?" .. NUM .. " " .. name)
+				if n then s[word] = (s[word] or 0) + tonumber(n) end
+			end
+			for _, e in ipairs(EXTRA) do
+				local n = line:match(e[1])
+				if n then s[e[2]] = (s[e[2]] or 0) + tonumber(n) break end
+			end
+		end
+	end
+	if s.hp then s.sta, s.hp = (s.sta or 0) + s.hp / 10, nil end
+	for word, n in pairs(BL.Stats(nil, rest)) do
+		if not s[word] and word ~= "armor" and word ~= "mp5" then s[word] = n end
+	end
+	return s
+end
+
+-- Of each group (one elixir of a kind, one food, one enchant a slot), the one worth most to a profile:
+-- list = { { id, group, s } }; returns { [group] = entry }. Capped stats count their full weight.
+function BL.BestExtras(list, prof)
+	local best, at = {}, {}
+	for _, e in ipairs(list) do
+		local v = 0
+		for word, n in pairs(e.s or {}) do v = v + n * (prof.w[word] or 0) end
+		if v > 0 and (not at[e.group] or v > at[e.group]) then best[e.group], at[e.group] = e, v end
+	end
+	return best
+end
+
 function BL.Add(into, s, times)
 	for word, n in pairs(s) do into[word] = (into[word] or 0) + n * (times or 1) end
 	return into
@@ -222,9 +272,21 @@ local function Prune(cands, prof)
 	return out
 end
 
+-- a choice that holds every id of ids (an id twice: two of it)
+local function Holds(c, ids)
+	local left = {}
+	for _, id in ipairs(c.ids) do left[id] = (left[id] or 0) + 1 end
+	for _, id in ipairs(ids) do
+		if (left[id] or 0) == 0 then return false end
+		left[id] = left[id] - 1
+	end
+	return true
+end
+
 -- The choices of every slot from a list of items { id, loc = "INVTYPE_HEAD", s = stats, n = how many there are }.
 -- Two rings, two trinkets, and what the two hands hold are one choice each. Every slot may also stay empty.
-function BL.Choices(items, prof)
+-- need[slot index] = { ids }: locked there, only choices that hold them (none fits: the slot stays empty).
+function BL.Choices(items, prof, need)
 	local slots = {}
 	for i, slot in ipairs(BL.SLOTS) do
 		local cands = {}
@@ -254,8 +316,14 @@ function BL.Choices(items, prof)
 		else
 			Pairs(slot[2])
 		end
+		local must = need and need[i]
+		if must then
+			local keep = {}
+			for _, c in ipairs(cands) do if Holds(c, must) then keep[#keep + 1] = c end end
+			cands = keep
+		end
 		cands = Prune(cands, prof)
-		cands[#cands + 1] = { ids = {}, s = {}, lin = 0 }
+		if not must or #cands == 0 then cands[#cands + 1] = { ids = {}, s = {}, lin = 0 } end
 		slots[i] = { name = slot[1], cands = cands }
 	end
 	return slots
@@ -266,6 +334,7 @@ end
 ---------------------------------------------------------------------------
 
 local HARD = 1e7 -- what a point towards a hard cap is worth: more than any set of gear
+local FIRST = { def = 1000 } -- (and of hard caps, defense before all else: a tank uncrittable first, then hit)
 
 -- The best choice for every slot at once. Exact: slot after slot, the best worth is kept for every amount of
 -- the capped stats reached so far (counted up to what is still missing to the cap, in steps), as past a cap
@@ -273,13 +342,18 @@ local HARD = 1e7 -- what a point towards a hard cap is worth: more than any set 
 -- Returns picks[slot index] = candidate, the gear's summed stats, its score and what hard caps still miss.
 function BL.Solve(slots, base, prof)
 	local caps = {}
+	-- (the steps of all caps together stay under STATES: three caps of a hundred steps each are a million states a
+	-- slot, seconds of work. ponytail: coarser steps can miss a cap's last point; a set of two caps is still exact)
+	local STATES, ncaps = 20000, 0
+	for word, cap in pairs(prof.caps or {}) do if cap.cap - (base[word] or 0) > 0 then ncaps = ncaps + 1 end end
+	local steps = math.max(8, math.floor(STATES ^ (1 / math.max(ncaps, 1))))
 	for word, cap in pairs(prof.caps or {}) do
 		local need = math.max(cap.cap - (base[word] or 0), 0)
 		-- (steps: a point of defense, a tenth of a percent; coarser where a cap typed in is so far off that the
-		-- steps to it would not fit their part of the key)
-		local step = math.max(cap.step or (word == "def" and 1 or 0.1), need / 4000)
+		-- steps to it would not fit their part of the key, or where many caps are counted at once)
+		local step = math.max(cap.step or (word == "def" and 1 or 0.1), need / 4000, need / steps)
 		caps[#caps + 1] = { word = word, need = need, step = step,
-			gain = (prof.w[word] or 0) - (cap.over or 0) + (cap.hard and HARD or 0) }
+			gain = (prof.w[word] or 0) - (cap.over or 0) + (cap.hard and HARD * (FIRST[word] or 1) or 0) }
 	end
 	table.sort(caps, function(a, b) return a.word < b.word end)
 	local n = #caps
@@ -297,9 +371,12 @@ function BL.Solve(slots, base, prof)
 					if n > 4 then k = k .. at .. ":" else k = k * 4096 + at end
 				end
 				local v = st.v + cand.lin
+				-- (of two in one step, the one worth more with what each has toward the caps: steps may be coarse)
+				local w = v
+				for c = 1, n do w = w + caps[c].gain * g[c] end
 				local at = nextStates[k]
-				if not at or v > at.v or (v == at.v and ci < back[k][2]) then
-					nextStates[k], back[k] = { v = v, g = g }, { key, ci }
+				if not at or w > at.w or (w == at.w and ci < back[k][2]) then
+					nextStates[k], back[k] = { v = v, w = w, g = g }, { key, ci }
 				end
 			end
 		end

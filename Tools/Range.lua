@@ -456,7 +456,7 @@ DT:RegisterModule("range", {
 		driver = CreateFrame("Frame", nil, UIParent)
 		driver:Hide()
 		local since = 0
-		driver:SetScript("OnUpdate", function(_, elapsed)
+		DT.OnUpdate(driver, "tool: Range", function(_, elapsed)
 			since = since + (elapsed or 0.1)
 			if since < 0.1 then return end
 			since = 0

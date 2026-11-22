@@ -807,7 +807,7 @@ local function Build(parent)
 	end)
 	panel:SetScript("OnSizeChanged", Refresh)
 	local nextUpdate = 0
-	panel:SetScript("OnUpdate", function()
+	DT.OnUpdate(panel, "tab: Fishing", function()
 		if GetTime() < nextUpdate then return end
 		nextUpdate = GetTime() + 0.5
 		if dirty then Refresh() end

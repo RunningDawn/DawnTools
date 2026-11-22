@@ -59,9 +59,10 @@ function Z.Build()
 				if e.rank <= 1 then z.inside[#z.inside + 1] = e.max end -- (elites too, placed or not: what a dungeon is made of)
 			end
 			if e.rank == 2 or e.rank == 4 then z.rares[#z.rares + 1] = e end
-			local serves = e.types["Quest giver"]
+			local Is = DT.Npc.Is
+			local serves = Is(e, "Quest giver")
 			for _, t in ipairs(SERVICES) do
-				if e.types[t] then z.services[t], serves = (z.services[t] or 0) + 1, true end
+				if Is(e, t) then z.services[t], serves = (z.services[t] or 0) + 1, true end
 			end
 			if serves then
 				if e.side == "A" then z.a = z.a + 1 elseif e.side == "H" then z.h = z.h + 1 end
@@ -823,13 +824,13 @@ local function Build(parent)
 		Z.Refresh(true)
 		DrawRight()
 	end)
-	panel:SetScript("OnUpdate", function()
+	DT.OnUpdate(panel, "tab: Zones", function()
 		-- (in a fight the game cuts off a script that takes long: reading and searching the list wait for its end)
 		if InCombatLockdown and InCombatLockdown() then return end
 		-- the lists this tab is worked out from are read if they have not been
 		if Waiting() then
-			DT.Npc.Step(6)
-			if DT.Npc.Ready() then DT.Quest.Step(6) end
+			DT.Npc.Step(12)
+			if DT.Npc.Ready() then DT.Quest.Step(12) end
 			if not Waiting() then dirty = true end
 			return
 		end

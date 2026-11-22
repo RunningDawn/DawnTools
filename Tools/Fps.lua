@@ -107,7 +107,7 @@ local function MakeFrame()
 		F.Apply()
 	end)
 	local idle = 0
-	f:SetScript("OnUpdate", function(_, dt) -- (runs only while it is shown)
+	DT.OnUpdate(f, "tool: FPS", function(_, dt) -- (runs only while it is shown)
 		idle = idle + (dt or 0)
 		if idle < EVERY then return end
 		idle = 0

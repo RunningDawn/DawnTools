@@ -309,7 +309,7 @@ local function MakeFrames()
 	driver:Hide()
 	-- (about 30 redraws a second look smooth for a five-second count and spare the per-frame SetPoint/SetText)
 	local idle = 0
-	driver:SetScript("OnUpdate", function(_, dt)
+	DT.OnUpdate(driver, "tool: Mp5", function(_, dt)
 		idle = idle + (dt or 0)
 		if idle < 0.03 then return end
 		idle = 0

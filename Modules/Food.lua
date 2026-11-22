@@ -139,7 +139,8 @@ end
 -- the first of these its tooltip names; a food that names none only restores health
 -- ponytail: reads the English tooltip. Another language, or a client without tooltip data, falls back to the
 -- Cooking window's own heading.
-local GIVES = { "Stamina", "Spirit", "Strength", "Agility", "Intellect", "Attack Power", "Spell", "Mana" }
+local GIVES = { "Fishing", "Stamina", "Spirit", "Strength", "Agility", "Intellect", "Attack Power", "Spell", "Mana" }
+local TYPES = 2 -- (how foods are told apart: raise it with GIVES, and every food is read anew)
 
 local function Type(id)
 	local db = Food.db
@@ -154,7 +155,7 @@ local function Type(id)
 	local gives = "Health only"
 	for _, word in ipairs(GIVES) do
 		if text:find(word, 1, true) then
-			gives = word == "Spell" and "Spell power" or word
+			gives = word == "Spell" and "Spell power" or word == "Fishing" and "Fishing skill" or word
 			break
 		end
 	end
@@ -595,7 +596,7 @@ local function Build(parent)
 	end)
 	panel:SetScript("OnSizeChanged", Refresh)
 	local nextUpdate = 0
-	panel:SetScript("OnUpdate", function()
+	DT.OnUpdate(panel, "tab: Cooking", function()
 		if GetTime() < nextUpdate then return end
 		nextUpdate = GetTime() + 0.5
 		if dirty then Refresh() end
@@ -614,6 +615,7 @@ DT:RegisterModule("food", {
 	onEnable = function(mod)
 		local db = mod.db
 		db.foods, db.mine, db.guild, db.types = db.foods or {}, db.mine or {}, db.guild or {}, db.types or {}
+		if db.typesV ~= TYPES then db.types, db.typesV = {}, TYPES end
 		Food.db, Food.me = db, UnitGUID("player")
 		local me = db.mine[Food.me] or { ids = {} }
 		db.mine[Food.me] = me

@@ -371,7 +371,7 @@ local function Build(parent)
 	end)
 	panel:SetScript("OnSizeChanged", Refresh)
 	local nextUpdate = 0
-	panel:SetScript("OnUpdate", function()
+	DT.OnUpdate(panel, "tab: Inventory", function()
 		if GetTime() < nextUpdate then return end
 		nextUpdate = GetTime() + 0.2
 		if dirty then Refresh() end

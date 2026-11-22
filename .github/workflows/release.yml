@@ -1,0 +1,32 @@
+# Packages the addon (as .pkgmeta says) and uploads it to CurseForge (project 1804432, from the toc's
+# X-Curse-Project-ID) and to a GitHub release, when a version tag is pushed: git tag 0.54.5 && git push origin 0.54.5
+# Needs the repository secret CF_API_KEY (a CurseForge API token: curseforge.com > account > API tokens).
+name: Release
+
+on:
+  push:
+    tags: ["*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    env:
+      CF_API_KEY: ${{ secrets.CF_API_KEY }}
+      GITHUB_OAUTH: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # (the packager writes the changelog from the commits since the last tag)
+
+      - name: Check the tag matches the toc version
+        run: |
+          toc="$(grep -m1 '^## Version:' DawnTools.toc | sed 's/^## Version:[[:space:]]*//' | tr -d '\r')"
+          if [ "$GITHUB_REF_NAME" != "$toc" ]; then
+            echo "Tag $GITHUB_REF_NAME does not match DawnTools.toc version $toc" >&2
+            exit 1
+          fi
+
+      - uses: BigWigsMods/packager@v2

@@ -289,5 +289,5 @@ end)
 
 -- (after the tabs' own lists, which are wanted sooner)
 DT:On("PLAYER_LOGIN", function()
-	DT:Background({ Start = I.Start, Step = I.Step })
+	DT:Background({ name = "QuestieDB into the store", Start = I.Start, Step = I.Step })
 end)
