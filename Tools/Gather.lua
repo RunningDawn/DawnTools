@@ -95,34 +95,25 @@ local function EffectiveScale(isPreview)
 end
 
 ---------------------------------------------------------------------------
--- High-DPI Texture & Atlas Loader
+-- High-DPI Texture & Smooth Filtering Helpers
 ---------------------------------------------------------------------------
 
-local atlasCache = {}
-local function HasAtlas(name)
-	if atlasCache[name] ~= nil then return atlasCache[name] end
-	local ok = (C_Texture and C_Texture.GetAtlasInfo and C_Texture.GetAtlasInfo(name) ~= nil) or false
-	atlasCache[name] = ok
-	return ok
-end
+local TEX_SPARK = "Interface\\CastingBar\\UI-CastingBar-Spark"
+local TEX_STAR  = "Interface\\Cooldown\\star4"
+local TEX_RING  = "Interface\\Cooldown\\ping4"
+local TEX_WHITE = "Interface\\Buttons\\WHITE8x8"
 
 local function SetSmoothFilter(tex, snapToGrid)
 	if tex.SetSnapToPixelGrid then tex:SetSnapToPixelGrid(snapToGrid and true or false) end
 	if tex.SetTexelSnappingBias then tex:SetTexelSnappingBias(snapToGrid and 0.5 or 0.0) end
 end
 
-local function ApplyHighResArt(tex, atlases, fallbackPath, l, r, t, b)
-	SetSmoothFilter(tex, false)
-	if atlases then
-		for _, atlas in ipairs(atlases) do
-			if HasAtlas(atlas) then
-				tex:SetAtlas(atlas, false)
-				return
-			end
-		end
-	end
-	tex:SetTexture(fallbackPath)
-	if l then tex:SetTexCoord(l, r, t, b) end
+local function MakeAddTex(parent, layer, path, snapToGrid)
+	local tex = parent:CreateTexture(nil, layer)
+	tex:SetTexture(path)
+	tex:SetBlendMode("ADD")
+	SetSmoothFilter(tex, snapToGrid)
+	return tex
 end
 
 ---------------------------------------------------------------------------
@@ -203,7 +194,6 @@ end
 local lastDBStamp = -1
 
 function G.RebuildIndex()
-	-- 1. Pull Trade Goods (Herbs & Ores) already observed in DawnMarket
 	local M = DT.Market
 	if M and M.db and M.db.houses then
 		for _, house in pairs(M.db.houses) do
@@ -215,7 +205,6 @@ function G.RebuildIndex()
 		end
 	end
 
-	-- 2. Pull Trade Goods & Object Node Names from DT.DB (QuestieDB or guild-synced DB store)
 	local DB = DT.DB
 	local stamp = DB and DB.Stamp and DB.Stamp() or 0
 	if DB and DB.Lib and stamp ~= lastDBStamp then
@@ -230,7 +219,6 @@ function G.RebuildIndex()
 					local name = lib.Item.Get(id, "name")
 					if type(name) == "string" and name ~= "" then
 						IndexTradeItem(id, name, class, sub)
-						-- Index exact world object names that drop this herb/ore (catches custom Forever nodes)
 						if lib.Object and lib.Object.Get then
 							local objs = lib.Item.Get(id, "objectDrops")
 							if type(objs) == "table" then
@@ -396,13 +384,11 @@ end
 
 function G.SyncUnifiedDB()
 	if not (IsSharing() and DT.DB and DT.DB.Each) then return end
-	-- 1. Push any personal nodes into DT.DB so DBSync replicates them across the guild
 	for low, n in pairs(G.db.nodes) do
 		if not n.r then
 			WriteToUnifiedDB(low, n)
 		end
 	end
-	-- 2. Pull any guild-discovered gnode:* rows that arrived via DBSync
 	pcall(DT.DB.Each, "gnode", function(key, row)
 		local low = key:match("^gnode:(.+)$")
 		if low and row and row.v then
@@ -631,74 +617,76 @@ local function PassesFilters(info)
 end
 
 ---------------------------------------------------------------------------
--- High-DPI Multi-Layer Visual Rig (3D World Overlay + Live Preview)
+-- High-DPI Multi-Layer Visual Rig (Crisp 4-Point Stars, Perspective Halo & Stardust Orbit)
 ---------------------------------------------------------------------------
 
-local MAX_SPARKLES, NUM_ORBITS = 18, 4
+local MAX_SPARKLES, NUM_ORBITS, TRAIL_STEPS, RING_RUNES = 18, 4, 4, 12
 
 local function CreateVisualRig(parent)
 	local rig = CreateFrame("Frame", nil, parent)
-	rig:SetSize(120, 120)
+	rig:SetSize(140, 140)
 
-	rig.beamAura = rig:CreateTexture(nil, "BACKGROUND")
-	ApplyHighResArt(rig.beamAura, nil, "Interface\\GLUES\\Models\\UI_Draenei\\GenericGlow64")
-	rig.beamAura:SetBlendMode("ADD")
-	rig.beamAura:SetPoint("BOTTOM", rig, "CENTER", 0, -14)
-
-	rig.beamOuter = rig:CreateTexture(nil, "BORDER")
-	ApplyHighResArt(rig.beamOuter, { "GarrMission_EncounterBar-Spark" }, "Interface\\CastingBar\\UI-CastingBar-Spark")
-	rig.beamOuter:SetBlendMode("ADD")
+	-- 1. Skyward Light Pillar (narrow razor-sharp vertical light beam)
+	rig.beamOuter = MakeAddTex(rig, "BACKGROUND", TEX_SPARK, false)
 	rig.beamOuter:SetPoint("BOTTOM", rig, "CENTER", 0, -10)
 
-	rig.beamCore = rig:CreateTexture(nil, "ARTWORK")
-	ApplyHighResArt(rig.beamCore, { "GarrMission_EncounterBar-Spark" }, "Interface\\CastingBar\\UI-CastingBar-Spark")
-	rig.beamCore:SetBlendMode("ADD")
+	rig.beamCore = MakeAddTex(rig, "BORDER", TEX_SPARK, false)
 	rig.beamCore:SetPoint("BOTTOM", rig, "CENTER", 0, -8)
 
-	rig.ring1 = rig:CreateTexture(nil, "ARTWORK")
-	ApplyHighResArt(rig.ring1, { "Artifacts-PerkRing-White" }, "Interface\\SpellActivationOverlay\\IconAlert", 0.08, 0.92, 0.08, 0.92)
-	rig.ring1:SetBlendMode("ADD")
-	rig.ring1:SetPoint("CENTER")
+	-- 2. Tilted 3D Perspective Beacon Halo Ring + Revolving Rune Glyphs
+	rig.ringOuter = MakeAddTex(rig, "BACKGROUND", TEX_RING, false)
+	rig.ringOuter:SetPoint("CENTER", rig, "CENTER", 0, -6)
 
-	rig.ring2 = rig:CreateTexture(nil, "ARTWORK")
-	ApplyHighResArt(rig.ring2, { "Artifacts-PerkRing-White" }, "Interface\\Cooldown\\ping4")
-	rig.ring2:SetBlendMode("ADD")
-	rig.ring2:SetPoint("CENTER")
+	rig.ringCore = MakeAddTex(rig, "BORDER", TEX_RING, false)
+	rig.ringCore:SetPoint("CENTER", rig, "CENTER", 0, -6)
 
+	rig.ringInner = MakeAddTex(rig, "ARTWORK", TEX_RING, false)
+	rig.ringInner:SetPoint("CENTER", rig, "CENTER", 0, -6)
+
+	rig.ringRunes = {}
+	for i = 1, RING_RUNES do
+		local glyph = MakeAddTex(rig, "ARTWORK", TEX_WHITE, false)
+		rig.ringRunes[i] = glyph
+	end
+
+	-- 3. Pixel-Aligned Lock-On Reticle
 	rig.corners = {}
 	for i = 1, 4 do
-		local c = rig:CreateTexture(nil, "OVERLAY")
-		c:SetTexture("Interface\\Buttons\\WHITE8x8")
-		c:SetBlendMode("ADD")
-		SetSmoothFilter(c, true)
-		local d = rig:CreateTexture(nil, "OVERLAY")
-		d:SetTexture("Interface\\Buttons\\WHITE8x8")
-		d:SetBlendMode("ADD")
-		SetSmoothFilter(d, true)
-		rig.corners[i] = { h = c, v = d }
+		local h = MakeAddTex(rig, "OVERLAY", TEX_WHITE, true)
+		local v = MakeAddTex(rig, "OVERLAY", TEX_WHITE, true)
+		rig.corners[i] = { h = h, v = v }
 	end
 
+	-- 4. Wide Tilted Orbiting Motes with Trailing Stardust Wake (separated outside the halo)
 	rig.orbits = {}
 	for i = 1, NUM_ORBITS do
-		local o = rig:CreateTexture(nil, "OVERLAY")
-		ApplyHighResArt(o, { "CovenantSanctum-Renown-Sparkle", "Legion-Sparkle" }, "Interface\\GLUES\\MODELS\\UI_MainMenu_Legion\\UI_Legion_Sparkle")
-		o:SetBlendMode("ADD")
-		rig.orbits[i] = o
+		local hRay = MakeAddTex(rig, "OVERLAY", TEX_SPARK, false)
+		if hRay.SetRotation then hRay:SetRotation(math.pi * 0.5) end
+		local vRay = MakeAddTex(rig, "OVERLAY", TEX_SPARK, false)
+		local core = MakeAddTex(rig, "OVERLAY", TEX_STAR, false)
+		local trail = {}
+		for j = 1, TRAIL_STEPS do
+			trail[j] = MakeAddTex(rig, "ARTWORK", TEX_STAR, false)
+		end
+		rig.orbits[i] = { hRay = hRay, vRay = vRay, core = core, trail = trail }
 	end
 
+	-- 5. Razor-Sharp 4-Point Diamond Star Sparkles (Zero Blobs!)
 	rig.sparkles = {}
 	for i = 1, MAX_SPARKLES do
-		local bloom = rig:CreateTexture(nil, "ARTWORK")
-		ApplyHighResArt(bloom, nil, "Interface\\GLUES\\Models\\UI_Draenei\\GenericGlow64")
-		bloom:SetBlendMode("ADD")
+		local hRay = MakeAddTex(rig, "OVERLAY", TEX_SPARK, false)
+		if hRay.SetRotation then hRay:SetRotation(math.pi * 0.5) end
 
-		local flare = rig:CreateTexture(nil, "OVERLAY")
-		ApplyHighResArt(flare, { "CovenantSanctum-Renown-Sparkle", "Legion-Sparkle" }, "Interface\\GLUES\\MODELS\\UI_MainMenu_Legion\\UI_Legion_Sparkle")
-		flare:SetBlendMode("ADD")
+		local vRay = MakeAddTex(rig, "OVERLAY", TEX_SPARK, false)
 
-		rig.sparkles[i] = { bloom = bloom, flare = flare }
+		local diag = MakeAddTex(rig, "ARTWORK", TEX_STAR, false)
+
+		local core = MakeAddTex(rig, "OVERLAY", TEX_STAR, false)
+
+		rig.sparkles[i] = { hRay = hRay, vRay = vRay, diag = diag, core = core }
 	end
 
+	-- 6. Floating Node Name & Subtitle
 	rig.label = rig:CreateFontString(nil, "OVERLAY", "GameFontNormal")
 	rig.label:SetPoint("BOTTOM", rig, "CENTER", 0, 28)
 	rig.label:SetShadowOffset(1, -1)
@@ -739,34 +727,66 @@ local function UpdateVisualRig(rig, now, info, nodeName, isPreview)
 	local spd = s.speed or 1.0
 	local t = now * spd
 
+	-- 1. Crisp Light Pillar
 	local showBeam = s.fxBeam and true or false
-	rig.beamAura:SetShown(showBeam)
 	rig.beamOuter:SetShown(showBeam)
 	rig.beamCore:SetShown(showBeam)
 	if showBeam then
 		local pulse = 0.88 + 0.12 * math.sin(t * 2.6)
-		rig.beamAura:SetSize(56 * sc * pulse, 136 * sc)
-		rig.beamAura:SetVertexColor(r1, g1, b1, baseAlpha * 0.28)
-		rig.beamOuter:SetSize(30 * sc * pulse, 130 * sc)
-		rig.beamOuter:SetVertexColor(r1, g1, b1, baseAlpha * 0.50)
-		rig.beamCore:SetSize(11 * sc, 112 * sc * pulse)
-		rig.beamCore:SetVertexColor(math.min(1, r2 + 0.25), math.min(1, g2 + 0.25), math.min(1, b2 + 0.25), baseAlpha * 0.85)
+		rig.beamOuter:SetSize(22 * sc * pulse, 128 * sc)
+		rig.beamOuter:SetVertexColor(r1, g1, b1, baseAlpha * 0.45)
+		rig.beamCore:SetSize(8 * sc, 112 * sc * pulse)
+		rig.beamCore:SetVertexColor(math.min(1, r2 + 0.35), math.min(1, g2 + 0.35), math.min(1, b2 + 0.35), baseAlpha * 0.85)
 	end
 
+	-- 2. Tilted 3D Perspective Beacon Halo Ring + Revolving Rune Glyphs
 	local showRing = s.fxRing and true or false
-	rig.ring1:SetShown(showRing)
-	rig.ring2:SetShown(showRing)
+	rig.ringOuter:SetShown(showRing)
+	rig.ringCore:SetShown(showRing)
+	rig.ringInner:SetShown(showRing)
+	local haloY = -6 * sc
 	if showRing then
-		local p1, p2 = (t * 0.72) % 1, (t * 0.72 + 0.5) % 1
-		rig.ring1:SetSize((20 + p1 * 58) * sc, (20 + p1 * 58) * sc)
-		rig.ring1:SetVertexColor(r1, g1, b1, (1 - p1) * baseAlpha * 0.85)
-		if rig.ring1.SetRotation then rig.ring1:SetRotation(t * 0.55) end
+		local breathe = 1.0 + 0.05 * math.sin(t * 2.4)
+		local aspect = 0.42
+		local outerW = 70 * sc * breathe
+		local coreW  = 56 * sc
+		local innerW = 42 * sc
 
-		rig.ring2:SetSize((20 + p2 * 58) * sc, (20 + p2 * 58) * sc)
-		rig.ring2:SetVertexColor(r2, g2, b2, (1 - p2) * baseAlpha * 0.72)
-		if rig.ring2.SetRotation then rig.ring2:SetRotation(-t * 0.55) end
+		rig.ringOuter:ClearAllPoints()
+		rig.ringOuter:SetPoint("CENTER", rig, "CENTER", 0, haloY)
+		rig.ringOuter:SetSize(outerW, outerW * aspect)
+		rig.ringOuter:SetVertexColor(r1, g1, b1, baseAlpha * 0.42)
+
+		rig.ringCore:ClearAllPoints()
+		rig.ringCore:SetPoint("CENTER", rig, "CENTER", 0, haloY)
+		rig.ringCore:SetSize(coreW, coreW * aspect)
+		rig.ringCore:SetVertexColor(r1, g1, b1, baseAlpha * 0.90)
+
+		rig.ringInner:ClearAllPoints()
+		rig.ringInner:SetPoint("CENTER", rig, "CENTER", 0, haloY)
+		rig.ringInner:SetSize(innerW, innerW * aspect)
+		rig.ringInner:SetVertexColor(math.min(1, r1 + 0.45), math.min(1, g1 + 0.45), math.min(1, b1 + 0.45), baseAlpha * 0.78)
 	end
 
+	local rxHalo, ryHalo = 24.5 * sc, 24.5 * 0.42 * sc
+	for i, glyph in ipairs(rig.ringRunes) do
+		glyph:SetShown(showRing)
+		if showRing then
+			local ang = t * 0.75 + (i - 1) * (math.pi * 2 / RING_RUNES)
+			local gx = math.cos(ang) * rxHalo
+			local gy = haloY + math.sin(ang) * ryHalo
+			local front = 0.55 + 0.45 * (-math.sin(ang))
+			glyph:ClearAllPoints()
+			glyph:SetPoint("CENTER", rig, "CENTER", gx, gy)
+			glyph:SetSize(3.6 * sc * front, 1.6 * sc * front)
+			if glyph.SetRotation then
+				glyph:SetRotation(math.atan2(math.cos(ang) * 0.42, -math.sin(ang)))
+			end
+			glyph:SetVertexColor(math.min(1, r1 + 0.5), math.min(1, g1 + 0.5), math.min(1, b1 + 0.5), baseAlpha * front * 0.85)
+		end
+	end
+
+	-- 3. Pixel-Exact Lock-On Reticle
 	local showRet = s.fxReticle and true or false
 	local spread = (20 + 2.5 * math.sin(t * 3.2)) * sc
 	local arm = 10 * sc
@@ -788,50 +808,112 @@ local function UpdateVisualRig(rig, now, info, nodeName, isPreview)
 		end
 	end
 
+	-- 4. Separated Wide Tilted Orbiting Motes + Trailing Stardust Wake
 	local showOrbit = s.fxOrbit and true or false
+	local orbitRx, orbitRy = 44 * sc, 15.5 * sc
+	local tilt = 0.20
+	local cosT, sinT = math.cos(tilt), math.sin(tilt)
+	local function OrbitPoint(ang)
+		local ex, ey = math.cos(ang) * orbitRx, math.sin(ang) * orbitRy
+		return ex * cosT - ey * sinT, (haloY + 2 * sc) + ex * sinT + ey * cosT
+	end
+
 	for i, o in ipairs(rig.orbits) do
-		o:SetShown(showOrbit)
+		o.hRay:SetShown(showOrbit)
+		o.vRay:SetShown(showOrbit)
+		o.core:SetShown(showOrbit)
+		for j = 1, TRAIL_STEPS do o.trail[j]:SetShown(showOrbit) end
 		if showOrbit then
-			local ang = t * 2.4 + (i - 1) * (math.pi * 2 / NUM_ORBITS)
-			local depth = 0.75 + 0.25 * math.sin(ang)
-			o:ClearAllPoints()
-			o:SetPoint("CENTER", rig, "CENTER", math.cos(ang) * 28 * sc, math.sin(ang) * 12 * sc)
-			o:SetSize(22 * sc * depth, 22 * sc * depth)
-			if o.SetRotation then o:SetRotation(ang * 1.5) end
-			if i % 2 == 1 then o:SetVertexColor(r1, g1, b1, baseAlpha * depth)
-			else o:SetVertexColor(r2, g2, b2, baseAlpha * depth) end
+			local ang = t * 1.9 + (i - 1) * (math.pi * 2 / NUM_ORBITS)
+			local depth = 0.68 + 0.42 * (-math.sin(ang))
+			local ox, oy = OrbitPoint(ang)
+			local cr, cg, cb = r2, g2, b2
+			if i % 2 == 0 then cr, cg, cb = r1, g1, b1 end
+
+			local rayLen = 11 * sc * depth
+			local rayThick = 1.8 * sc * depth
+			o.hRay:ClearAllPoints()
+			o.hRay:SetPoint("CENTER", rig, "CENTER", ox, oy)
+			o.hRay:SetSize(rayThick, rayLen)
+			o.hRay:SetVertexColor(cr, cg, cb, baseAlpha * depth)
+
+			o.vRay:ClearAllPoints()
+			o.vRay:SetPoint("CENTER", rig, "CENTER", ox, oy)
+			o.vRay:SetSize(rayThick, rayLen * 1.15)
+			o.vRay:SetVertexColor(cr, cg, cb, baseAlpha * depth)
+
+			o.core:ClearAllPoints()
+			o.core:SetPoint("CENTER", rig, "CENTER", ox, oy)
+			o.core:SetSize(3.8 * sc * depth, 3.8 * sc * depth)
+			o.core:SetVertexColor(math.min(1, cr + 0.55), math.min(1, cg + 0.55), math.min(1, cb + 0.55), baseAlpha * depth)
+
+			for j = 1, TRAIL_STEPS do
+				local frac = 1 - (j / (TRAIL_STEPS + 1))
+				local tx, ty = OrbitPoint(ang - j * 0.16)
+				local speck = o.trail[j]
+				speck:ClearAllPoints()
+				speck:SetPoint("CENTER", rig, "CENTER", tx, ty)
+				speck:SetSize(3.2 * sc * depth * frac, 3.2 * sc * depth * frac)
+				speck:SetVertexColor(cr, cg, cb, baseAlpha * depth * frac * 0.75)
+			end
 		end
 	end
 
+	-- 5. Razor-Sharp 4-Point Star Sparkles (Crossed Needle Rays + White-Hot Core)
 	local showSpark = s.fxSparkles and true or false
 	local count = math.max(4, math.min(MAX_SPARKLES, math.floor(s.density or 12)))
 	for i = 1, MAX_SPARKLES do
 		local sp = rig.sparkles[i]
 		local active = showSpark and (i <= count)
-		sp.bloom:SetShown(active)
-		sp.flare:SetShown(active)
+		sp.hRay:SetShown(active)
+		sp.vRay:SetShown(active)
+		sp.diag:SetShown(active)
+		sp.core:SetShown(active)
 		if active then
-			local p = (t * 1.10 + i * (1 / count) * 3.17) % 1
-			local a = math.sin(p * math.pi)
-			local sz = (14 + a * 20) * sc
-			local x = math.cos(i * 2.399 + t * 0.55) * (25 * sc)
-			local y = (-12 + p * 58) * sc
+			local p = (t * 1.05 + i * 0.371) % 1
+			local raw = math.sin(p * math.pi)
+			local a = raw * raw
+			local isMajor = (i % 3 ~= 0)
+
+			local theta = i * 2.39996 + t * 0.45
+			local rad = (6 + ((i * 7) % 18)) * sc
+			local x = math.cos(theta) * rad
+			local y = (-4 + p * 32 + math.sin(theta) * (rad * 0.55)) * sc
+
 			local cr, cg, cb = r1, g1, b1
 			if i % 2 == 0 then cr, cg, cb = r2, g2, b2 end
 
-			sp.bloom:ClearAllPoints()
-			sp.bloom:SetPoint("CENTER", rig, "CENTER", x, y)
-			sp.bloom:SetSize(sz * 1.35, sz * 1.35)
-			sp.bloom:SetVertexColor(cr, cg, cb, a * baseAlpha * 0.45)
+			local rayLen = (isMajor and (12 + a * 24) or (4 + a * 7)) * sc
+			local rayThick = (isMajor and (2.2 + a * 2.0) or (1.4 + a * 1.0)) * sc
+			local starSz = (isMajor and (5 + a * 8) or (2.5 + a * 3.5)) * sc
+			local coreSz = (isMajor and (2.6 + a * 2.8) or (1.6 + a * 1.4)) * sc
 
-			sp.flare:ClearAllPoints()
-			sp.flare:SetPoint("CENTER", rig, "CENTER", x, y)
-			sp.flare:SetSize(sz, sz)
-			if sp.flare.SetRotation then sp.flare:SetRotation((i % 2 == 0 and 1 or -1) * t * 0.9 + i) end
-			sp.flare:SetVertexColor(math.min(1, cr + 0.15), math.min(1, cg + 0.15), math.min(1, cb + 0.15), a * baseAlpha)
+			sp.hRay:ClearAllPoints()
+			sp.hRay:SetPoint("CENTER", rig, "CENTER", x, y)
+			sp.hRay:SetSize(rayThick, rayLen * 0.88)
+			sp.hRay:SetVertexColor(cr, cg, cb, a * baseAlpha)
+
+			sp.vRay:ClearAllPoints()
+			sp.vRay:SetPoint("CENTER", rig, "CENTER", x, y)
+			sp.vRay:SetSize(rayThick, rayLen * 1.12)
+			sp.vRay:SetVertexColor(cr, cg, cb, a * baseAlpha)
+
+			sp.diag:ClearAllPoints()
+			sp.diag:SetPoint("CENTER", rig, "CENTER", x, y)
+			sp.diag:SetSize(starSz, starSz)
+			if sp.diag.SetRotation then
+				sp.diag:SetRotation((i % 2 == 0 and 1 or -1) * t * 0.6 + 0.785)
+			end
+			sp.diag:SetVertexColor(cr, cg, cb, a * baseAlpha * 0.75)
+
+			sp.core:ClearAllPoints()
+			sp.core:SetPoint("CENTER", rig, "CENTER", x, y)
+			sp.core:SetSize(coreSz, coreSz)
+			sp.core:SetVertexColor(math.min(1, cr + 0.65), math.min(1, cg + 0.65), math.min(1, cb + 0.65), a * baseAlpha)
 		end
 	end
 
+	-- 6. Floating Label & Market Price / Cultivation Tag
 	local showLabel = s.fxLabel and nodeName and nodeName ~= ""
 	rig.label:SetShown(showLabel and true or false)
 	if showLabel then
@@ -1305,12 +1387,6 @@ local function Build(panel)
 	cycleBtn:ClearAllPoints()
 	cycleBtn:SetPoint("TOPRIGHT", -10, -10)
 
-	local ground = preview:CreateTexture(nil, "BACKGROUND")
-	ground:SetPoint("CENTER", 0, -24)
-	ground:SetSize(150, 46)
-	ApplyHighResArt(ground, nil, "Interface\\GLUES\\Models\\UI_Draenei\\GenericGlow64")
-	ground:SetVertexColor(0.22, 0.35, 0.20, 0.55)
-
 	local nodeIcon = preview:CreateTexture(nil, "ARTWORK")
 	nodeIcon:SetSize(28, 28)
 	nodeIcon:SetPoint("CENTER", 0, -20)
@@ -1318,7 +1394,7 @@ local function Build(panel)
 	local previewRig = CreateVisualRig(preview)
 	previewRig:SetPoint("CENTER", nodeIcon, "CENTER", 0, 6)
 
-	local hint = Label(preview, "GameFontDisableSmall", 10, 0, "High-DPI sparkles auto-scale with screen resolution and sync via DT.DB when enabled.")
+	local hint = Label(preview, "GameFontDisableSmall", 10, 0, "High-DPI 4-point sparkles auto-scale with screen resolution and sync via DT.DB when enabled.")
 	hint:ClearAllPoints()
 	hint:SetPoint("BOTTOMLEFT", 10, 10)
 	hint:SetPoint("BOTTOMRIGHT", -10, 10)
@@ -1340,7 +1416,7 @@ end
 DT:RegisterModule("gather", {
 	profile = { "settings" },
 	title = "Gather",
-	version = 3,
+	version = 4,
 	defaultOff = true,
 	defaults = DEFAULTS,
 	settings = {
