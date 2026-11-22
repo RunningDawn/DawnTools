@@ -72,15 +72,6 @@ local function Lib()
 	return lib
 end
 
-local zoneNames = {}
-local function ZoneName(area)
-	if not area or area <= 0 then return "" end
-	if not zoneNames[area] then
-		zoneNames[area] = C_Map and C_Map.GetAreaInfo and C_Map.GetAreaInfo(area) or ("Zone " .. area)
-	end
-	return zoneNames[area]
-end
-
 -- The map a zone is drawn on, for a waypoint: Questie knows (QuestieDB holds the table, Questie the lookup).
 -- Without Questie the table is read straight from QuestieDB (kept there as text to be run, or as a table).
 local maps, areaMaps = {}, nil
@@ -92,6 +83,27 @@ local function FromTable(area)
 	end
 	return areaMaps and areaMaps[area] or nil
 end
+
+-- A zone's name: the game's for the area; else the name of the map QuestieDB gives the area (its own numbers
+-- for a continent, "10074", have no area name); else "Zone 10074", not kept, as the table may not be read yet.
+-- One place under two names goes by one (DT.SamePlace), so that a list groups it once.
+local SAME = { ["Sunken Temple"] = "The Temple of Atal'Hakkar" }
+function DT.SamePlace(name) return name and SAME[name] or name end
+local zoneNames = {}
+local function ZoneName(area)
+	if not area or area <= 0 then return "" end
+	if zoneNames[area] then return zoneNames[area] end
+	local name = C_Map and C_Map.GetAreaInfo and C_Map.GetAreaInfo(area)
+	if not name or name == "" then
+		local map = FromTable(area)
+		local ok, info = pcall(function() return map and C_Map.GetMapInfo(map) end)
+		name = ok and info and info.name or nil
+	end
+	if not name or name == "" then return "Zone " .. area end
+	zoneNames[area] = DT.SamePlace(name)
+	return zoneNames[area]
+end
+DT.ZoneName = ZoneName
 
 -- A map by the name of its zone, as the game's own maps are called: for a place known by name only (an NPC
 -- written down in play), and where the table of maps is not there.
@@ -173,16 +185,16 @@ local function Entry(id, v, flagBits, seen)
 		if seen.x and seen.y then e.spots, e.pin = 1, seen end
 	end
 	local flags, title, names = v[8] or 0, e.sub:lower(), {}
-	e.types = {}
 	for _, t in ipairs(TYPES) do
 		local is = t.rank and t.rank[e.rank]
 		for _, name in ipairs(t.flag or {}) do is = is or Has(flags, flagBits[name]) end
 		for _, word in ipairs(t.title or {}) do is = is or (title ~= "" and title:find(word, 1, true) ~= nil) end
-		if is then e.types[t[1]], names[#names + 1] = true, t[1] end
+		if is then names[#names + 1] = t[1] end
 	end
+	-- (its kinds as one text only, "Vendor, Repair": tens of thousands of NPCs, a table each was megabytes; the text
+	-- searched is made when searched, not kept: see Hay)
 	e.typeText = table.concat(names, ", ")
 	e.nameL = e.name:lower()
-	e.hay = (e.name .. " " .. e.sub .. " " .. e.zoneName .. " " .. e.typeText):lower()
 	return e
 end
 
@@ -229,21 +241,33 @@ local function Edits(a, b, most) -- (Levenshtein, given up on past `most`)
 	return prev[lb]
 end
 
+-- what a search looks through, lower case: kept by the Items' and Quests' entries, made when asked for an NPC's
+local function Hay(e) return e.hay or (e.name .. " " .. e.sub .. " " .. e.zoneName .. " " .. e.typeText):lower() end
+-- is an NPC of a kind ("Vendor"): one of the words of its kinds' text
+function N.Is(e, kind)
+	for name in (e.typeText .. ", "):gmatch("(.-), ") do if name == kind then return true end end
+	return false
+end
+
 local function Fits(e, word, fuzzy)
 	local at = e.nameL:find(word, 1, true)
 	if at == 1 then return #e.nameL == #word and 110 or 100 end
 	if at then return e.nameL:sub(at - 1, at - 1) == " " and 90 or 80 end
-	at = e.hay:find(word, 1, true)
-	if at then return e.hay:sub(at - 1, at - 1) == " " and 70 or 60 end
+	local hay = Hay(e)
+	at = hay:find(word, 1, true)
+	if at then return hay:sub(at - 1, at - 1) == " " and 70 or 60 end
 	-- Written without its apostrophes, hyphens and the like: "vehan" finds Ve'han, "zulfarrak" Zul'Farrak.
 	-- (e.bare: its words without them, worked out the first time it is needed; false where there are none)
-	if e.bare == nil then
-		local bare = e.hay:gsub("['`%-%.:,]", "")
-		e.bare = bare ~= e.hay and bare or false
+	-- (kept where the hay is kept; an NPC's made each time, as its hay is)
+	local bare = e.bare
+	if bare == nil then
+		bare = hay:gsub("['`%-%.:,]", "")
+		bare = bare ~= hay and bare or false
+		if e.hay then e.bare = bare end
 	end
-	if e.bare then
+	if bare then
 		local plain = word:gsub("['`%-%.:,]", "")
-		if plain ~= "" and e.bare:find(plain, 1, true) then return 55 end
+		if plain ~= "" and bare:find(plain, 1, true) then return 55 end
 	end
 	if not fuzzy or #word < 3 or word:find("[^%a%d]") then return end
 	-- the letters in order, in the name: "grk" for Gorak
@@ -251,7 +275,7 @@ local function Fits(e, word, fuzzy)
 	-- a misspelling of one of its words: one letter out, two in a long word; the first letter has to be right
 	if #word >= 4 then
 		local most, first = #word >= 7 and 2 or 1, word:byte(1)
-		for w in e.hay:gmatch("%a+") do
+		for w in hay:gmatch("%a+") do
 			if w:byte(1) == first and Edits(word, w, most) <= most then return 30 end
 		end
 	end
@@ -298,7 +322,7 @@ function N.Find(text, f)
 			and (f.side ~= "friendly" or e.side:find(mine, 1, true) ~= nil) and (f.side ~= "hostile" or not e.side:find(mine, 1, true))
 			and (f.side ~= "noenemy" or e.side ~= (mine == "A" and "H" or "A")) -- (the other faction's own NPCs out; neutral ones stay)
 		for type in pairs(f.types or {}) do
-			if type == "Favourites" then ok = ok and N.db.favs[e.id] else ok = ok and e.types[type] end
+			if type == "Favourites" then ok = ok and N.db.favs[e.id] else ok = ok and N.Is(e, type) end
 		end
 		if ok then pool[#pool + 1] = e end
 	end
@@ -420,7 +444,7 @@ local function SideList(fit)
 	local count, order = { Favourites = 0 }, {}
 	for _, row in ipairs(list) do
 		if row.fav == 1 then count.Favourites = count.Favourites + 1 end
-		for type in pairs(row.e.types) do count[type] = (count[type] or 0) + 1 end
+		for type in (row.e.typeText .. ", "):gmatch("(.-), ") do if type ~= "" then count[type] = (count[type] or 0) + 1 end end
 	end
 	for type in pairs(N.db.types) do count[type] = count[type] or 0 end
 	for type in pairs(count) do order[#order + 1] = type end
@@ -804,12 +828,12 @@ local function Build(parent)
 		N.Refresh(true)
 	end)
 	panel:SetScript("OnSizeChanged", function() N.Refresh(true) end) -- (the same NPCs, laid out anew)
-	panel:SetScript("OnUpdate", function()
+	DT.OnUpdate(panel, "tab: NPCs", function()
 		-- (in a fight the game cuts off a script that takes long: reading and searching the list wait for its end)
 		if InCombatLockdown and InCombatLockdown() then return end
 		-- the reading goes on a little every frame, and says how far it is
 		if reading then
-			N.Step(8)
+			N.Step(16)
 			N.Refresh()
 			return
 		end
@@ -834,7 +858,7 @@ function N.Start()
 	return reading ~= nil
 end
 
--- Reads on for about so many milliseconds. Says whether it is done. (The tab reads 8 a frame while it is
+-- Reads on for about so many milliseconds. Says whether it is done. (The tab reads 16 a frame while it is
 -- looked at; the background reading after login a gentler 2.)
 function N.Step(ms)
 	if not reading then return true end
@@ -880,7 +904,7 @@ DT:RegisterModule("npc", {
 		N.db = mod.db
 		N.db.favs, N.db.types = N.db.favs or {}, N.db.types or {}
 		DT:On("DT_DB_UPDATE", function() stale = fromStore or missing end)
-		DT:Background({ Start = N.Start, Step = N.Step })
+		DT:Background({ name = "NPCs list", Start = N.Start, Step = N.Step })
 	end,
 	selfTest = function(_, Try)
 		Try("npc tab", function() N.Refresh() end)

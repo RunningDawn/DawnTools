@@ -182,7 +182,7 @@ local function OnHello(sender, payload)
 		end)
 	end
 	for _, mod in DT:Enabled() do
-		if mod.onHello then mod:onHello(sender, peer.sum[mod.name]) end
+		if mod.onHello then DT.Timed("guild: hello in, " .. tostring(mod.name), mod.onHello, mod, sender, peer.sum[mod.name]) end
 	end
 end
 
@@ -221,11 +221,11 @@ function Comms:OnComm(_, text, distribution, sender)
 			return
 		end
 	end
-	if hello then return OnHello(sender, payload) end
+	if hello then return DT.Timed("guild: hello in", OnHello, sender, payload) end
 	local mod = DT.modules[module]
 	if mod and mod.enabled and mod.onMessage then
 		DT:Debug(module, "%s from %s, %d bytes", kind, sender, #payload)
-		mod:onMessage(kind, payload, sender)
+		DT.Timed("guild: " .. module .. " message in", mod.onMessage, mod, kind, payload, sender)
 	end
 end
 
@@ -234,5 +234,5 @@ function Comms:Start()
 	stats.started = true
 	-- (not when the yes just sent one: a second hello would show what was merged since as news)
 	C_Timer.After(8, function() if GetTime() - lastHello > 60 then Comms:Hello() end end)
-	C_Timer.NewTicker(HELLO_EVERY, function() Comms:Hello() end)
+	C_Timer.NewTicker(HELLO_EVERY, function() DT.Timed("guild: hello", Comms.Hello, Comms) end)
 end

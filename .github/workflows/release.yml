@@ -1,0 +1,48 @@
+# On every push to main: when the toc's "## Version:" has no tag yet, tags that commit with it, packages the addon
+# (as .pkgmeta says) and uploads it to CurseForge (project 1804432, the toc's X-Curse-Project-ID) and to a GitHub
+# release. A push that does not change the version releases nothing.
+# Needs the repository secret CF_API_KEY (a CurseForge API token).
+name: Release
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+concurrency: release # (two pushes close together: one after the other, never two tags at once)
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    env:
+      CF_API_KEY: ${{ secrets.CF_API_KEY }}
+      GITHUB_OAUTH: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # (all tags, and the commits since the last one for the changelog)
+
+      - name: A new version?
+        id: version
+        run: |
+          version="$(grep -m1 '^## Version:' DawnTools.toc | sed 's/^## Version:[[:space:]]*//' | tr -d '\r')"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          if git rev-parse -q --verify "refs/tags/$version" >/dev/null; then
+            echo "Version $version is tagged already: nothing to release."
+            echo "new=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "new=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Tag it
+        if: steps.version.outputs.new == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "${{ steps.version.outputs.version }}" -m "${{ steps.version.outputs.version }}"
+          git push origin "${{ steps.version.outputs.version }}"
+
+      - uses: BigWigsMods/packager@v2
+        if: steps.version.outputs.new == 'true'

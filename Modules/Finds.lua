@@ -302,7 +302,7 @@ local function Build(parent)
 	end)
 	panel:SetScript("OnSizeChanged", Refresh)
 	local nextUpdate = 0
-	panel:SetScript("OnUpdate", function()
+	DT.OnUpdate(panel, "tab: Finds", function()
 		if not dirty or GetTime() < nextUpdate then return end
 		if InCombatLockdown and InCombatLockdown() then return end
 		nextUpdate = GetTime() + 0.5

@@ -977,7 +977,7 @@ local function Build(parent)
 		V:Refresh()
 	end)
 	local nextUpdate = 0
-	panel:SetScript("OnUpdate", function()
+	DT.OnUpdate(panel, "tab: Market", function()
 		if GetTime() < nextUpdate then return end
 		nextUpdate = GetTime() + 0.2
 		if dirty then V:Refresh() end
@@ -1129,7 +1129,7 @@ DT:RegisterModule("market", {
 		DT:On("DT_DB_UPDATE", function(chunk) if chunk and chunk:find("^vendor:") then M:Touch() end end) -- (a member's vendor prices are on show at once)
 		DT:On("DT_FAVS", function() dirty = true end) -- (a favourite made or unmade elsewhere: the stars are drawn anew)
 		if TooltipDataProcessor and TooltipDataProcessor.AddTooltipPostCall then
-			TooltipDataProcessor.AddTooltipPostCall(Enum.TooltipDataType.Item, OnTooltipItem)
+			TooltipDataProcessor.AddTooltipPostCall(Enum.TooltipDataType.Item, function(...) DT.Timed("tooltip: Market", OnTooltipItem, ...) end)
 		elseif GameTooltip.HasScript and GameTooltip:HasScript("OnTooltipSetItem") then
 			GameTooltip:HookScript("OnTooltipSetItem", OnTooltipItem)
 			ItemRefTooltip:HookScript("OnTooltipSetItem", OnTooltipItem)

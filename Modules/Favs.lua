@@ -245,7 +245,7 @@ local function Build(parent)
 	end)
 	panel:SetScript("OnSizeChanged", F.Refresh)
 	local nextUpdate = 0
-	panel:SetScript("OnUpdate", function()
+	DT.OnUpdate(panel, "tab: Favourites", function()
 		if not dirty or GetTime() < nextUpdate then return end
 		if InCombatLockdown and InCombatLockdown() then return end -- (in a fight the lists wait)
 		nextUpdate = GetTime() + 0.5

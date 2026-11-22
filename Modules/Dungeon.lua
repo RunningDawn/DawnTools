@@ -41,6 +41,9 @@ function D.IsRaid(d) return d and RAIDS[d.key or Key(d.name or "")] or false end
 D.RAID_AREA = { [2717] = "Molten Core", [2159] = "Onyxia's Lair", [2677] = "Blackwing Lair", [1977] = "Zul'Gurub",
 	[3429] = "Ruins of Ahn'Qiraj", [3428] = "Temple of Ahn'Qiraj", [3456] = "Naxxramas" }
 
+-- AtlasLoot's names for a place the list calls otherwise
+local ALIAS = { [Key("Sunken Temple")] = "The Temple of Atal'Hakkar" }
+
 -- AtlasLoot's table of dungeons and raids, its module loaded if it is not yet; nil where AtlasLoot is not there
 local function Atlas()
 	local AL = AtlasLoot
@@ -118,6 +121,7 @@ function D.All()
 			areaName = ok and areaName
 			local name = area and D.RAID_AREA[area] or type(content.name) == "string" and Clean(content.name)
 				or type(areaName) == "string" and areaName ~= "" and areaName or key
+			name = ALIAS[Key(name)] or name -- (one place under its other name)
 			-- (the same place under another name, "Scarlet Monastery" for its four wings, "Onyxias Lair" twice: known
 			-- by a boss that is in the list already)
 			local known = false
@@ -658,7 +662,7 @@ local function Build(parent)
 	end)
 	panel:SetScript("OnSizeChanged", D.Refresh)
 	local nextUpdate = 0
-	panel:SetScript("OnUpdate", function()
+	DT.OnUpdate(panel, "tab: Dungeons", function()
 		if not dirty or GetTime() < nextUpdate then return end
 		if InCombatLockdown and InCombatLockdown() then return end -- (in a fight the lists wait)
 		nextUpdate = GetTime() + 0.5

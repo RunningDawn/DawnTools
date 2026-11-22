@@ -275,6 +275,8 @@ DT:RegisterModule("gamedb", { -- (not "db": that key of the saved file is the st
 	onEnable = function(mod)
 		S.db = mod.db
 		LibStub("AceComm-3.0"):Embed(comm)
+		local raw = comm.OnComm -- (timed, for /dt perf)
+		comm.OnComm = function(self, ...) DT.Timed("guild: game database whisper in", raw, self, ...) end
 		comm:RegisterComm(PREFIX, "OnComm")
 	end,
 })

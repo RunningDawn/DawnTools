@@ -283,8 +283,33 @@ do
 	local dw = BL.Choices({ { id = 1, loc = "INVTYPE_WEAPON", s = { dps = 10 }, n = 1 }, { id = 2, loc = "INVTYPE_WEAPON", s = { dps = 20 }, n = 1 } }, { w = { dps = 1 }, hands = { "dw" } })
 	local _, _, dwScore = BL.Solve(dw, {}, { w = { dps = 1 }, hands = { "dw" } })
 	eq(dwScore, 25, "two weapons: the slower in the off hand, at half")
+	-- a lock: the slot holds the locked item, though a better one is there
+	local heads = { { id = 1, loc = "INVTYPE_HEAD", s = { sta = 50 }, n = 1 }, { id = 2, loc = "INVTYPE_HEAD", s = { sta = 5 }, n = 1 } }
+	eq(BL.Solve(BL.Choices(heads, prof), {}, prof)[1].ids[1], 1, "unlocked: the better head")
+	eq(BL.Solve(BL.Choices(heads, prof, { [1] = { 2 } }), {}, prof)[1].ids[1], 2, "locked: the locked head")
+	-- defense before hit: one head brings the defense cap, the other the hit cap
+	local tank = { w = { sta = 1, def = 1, hit = 1 }, caps = { def = { cap = 440, hard = true }, hit = { cap = 8, hard = true } } }
+	local dh = { { id = 1, loc = "INVTYPE_HEAD", s = { def = 10 }, n = 1 }, { id = 2, loc = "INVTYPE_HEAD", s = { hit = 3 }, n = 1 } }
+	eq(BL.Solve(BL.Choices(dh, tank), { def = 430, hit = 5 }, tank)[1].ids[1], 1, "defense cap first, then hit")
 	eq(BL.Stats(nil, { "+30 Attack Power when fighting Undead" }).ap, nil, "a conditional attack power is not counted")
 	eq(BL.Stats(nil, { "+30 Attack Power" }).ap, 30, "a plain one is")
+	-- consumables and enchants, as the game words them
+	local function U(text) return BL.UseStats({ "Elixir", text }) end
+	local m = U("Use: Increases your Agility by 25 and chance to score a critical hit by 2% for 1 hour.")
+	check(m.agi == 25 and m.crit == 2, "Mongoose: agility and crit")
+	local f = U("Use: Restores 2148 health over 30 sec. If you spend at least 10 seconds eating you will become well fed and gain 25 Stamina and Spirit for 15 min.")
+	check(f.sta == 25 and f.spi == 25, "food: two stats at once")
+	eq(U("Use: Increases armor by 450 for 1 hour.").armor, 450, "an armor elixir")
+	eq(U("Use: Increases the player's maximum health by 120 for 1 hour.").sta, 12, "health as stamina, ten to one")
+	eq(U("Use: Regenerate 12 mana per 5 sec for 1 hour.").mp5, 12, "mana per 5 is not a short effect")
+	eq(U("Use: Increases your melee attack power by 35 for 20 min.").ap, 35, "attack power")
+	eq(U("Permanently enchant bracers to increase Strength by 9.").str, 9, "an enchant")
+	eq(U("Permanently enchant chest armor to increase all stats by 4.").int, 4, "all stats")
+	eq(U("Permanently enchant a cloak to give 70 additional armor.").armor, 70, "cloak armor")
+	eq(next(U("Permanently enchant a melee weapon to often heal for 75 to 125 and increase Strength by 100 for 15 sec when attacking in melee.")), nil, "a proc counts nothing")
+	local best = BL.BestExtras({ { id = 1, group = "food", s = { sta = 25 } }, { id = 2, group = "food", s = { agi = 10 } }, { id = 3, group = "spell", s = { sp = 35 } } },
+		{ w = { sta = 1, agi = 0.5 } })
+	check(best.food.id == 1 and best.spell == nil, "the best of each group by the weights; none that is worth nothing")
 end
 
 ---------------------------------------------------------------------------
@@ -350,7 +375,7 @@ local LibDeflate = {
 	end,
 }
 -- ("../DawnTools_Seed/": the data files, kept out of the addon: see Core/DBSeed.lua)
-local FILES = { "Core/Logic.lua", "Core/BisLogic.lua", "Core/Core.lua", "Core/Comms.lua", "Core/UI.lua", "Core/Builtins.lua", "Core/Profiles.lua", "Core/DBLogic.lua", "Core/DB.lua", "Core/DBImport.lua", "Core/DBSeed.lua", "Market/Capture.lua", "Market/Sync.lua", "Market/UI.lua", "../DawnTools_Seed/CraftSkill.lua", "../DawnTools_Seed/Dungeons.lua", "Data/BisProfiles.lua", "Data/BisLists.lua", "Modules/Inventory.lua", "Modules/Fish.lua", "Modules/Food.lua", "Modules/Craft.lua", "Modules/Npc.lua", "Modules/Quest.lua", "Modules/Item.lua", "Modules/Zone.lua", "Modules/Dungeon.lua", "Modules/Favs.lua", "Modules/Finds.lua", "Modules/Combat.lua", "Modules/Bis.lua", "Tools/Tools.lua", "Tools/Range.lua", "Tools/Mp5.lua", "Tools/Fps.lua", "Tools/Tracker.lua", "Tools/Enemies.lua", "Tools/Carrot.lua", "Tools/ChatHistory.lua", "Tools/ChatSaver.lua", "Core/DBSync.lua", "Core/Changelog.lua", "Core/Home.lua" }
+local FILES = { "Core/Logic.lua", "Core/BisLogic.lua", "Core/Core.lua", "Core/Comms.lua", "Core/UI.lua", "Core/Builtins.lua", "Core/Profiles.lua", "Core/DBLogic.lua", "Core/DB.lua", "Core/DBImport.lua", "Core/DBSeed.lua", "Market/Capture.lua", "Market/Sync.lua", "Market/UI.lua", "../DawnTools_Seed/CraftSkill.lua", "../DawnTools_Seed/Dungeons.lua", "Data/BisProfiles.lua", "Data/BisExtras.lua", "Data/BisLists.lua", "Modules/Inventory.lua", "Modules/Fish.lua", "Modules/Food.lua", "Modules/Craft.lua", "Modules/Npc.lua", "Modules/Quest.lua", "Modules/Item.lua", "Modules/Zone.lua", "Modules/Dungeon.lua", "Modules/Favs.lua", "Modules/Finds.lua", "Modules/Combat.lua", "Modules/Bis.lua", "Tools/Tools.lua", "Tools/Range.lua", "Tools/Mp5.lua", "Tools/Fps.lua", "Tools/Tracker.lua", "Tools/Enemies.lua", "Tools/Carrot.lua", "Tools/ChatHistory.lua", "Tools/ChatSaver.lua", "Core/DBSync.lua", "Core/Changelog.lua", "Core/Home.lua" }
 
 local function after(delay, fn, owner) timers[#timers + 1] = { at = now + delay, fn = fn, owner = owner } end
 local function Now() return BASE + math.floor(now) end
@@ -5742,6 +5767,46 @@ end
 	B.SetRealistic(true)
 	B.State() step(1)
 	eq(B.Gain(100), nil, "what is not gear has nothing to say")
+	-- the other faction's gear is never mine: their reputations, and what only their quests and vendors give
+	e.GetFactionInfoByID = function(id) return ({ [72] = "Stormwind", [730] = "Stormpike Guard" })[id] end
+	B.Stale()
+	eq(B.TheirRep("Stormpike Guard"), true, "for the Horde the Stormpike Guard is the other side's"); eq(B.TheirRep("Theramore Expeditionary Force"), false, "a reputation of neither side is not")
+	do
+		local D = X.DT.DB
+		local wasRel, wasQ = D.RelTo, D.Q
+		D.RelTo = function(rel, _, id)
+			if rel == "rewards" then return id == 1 and { { id = 50 } } or id == 5 and { { id = 70 } } or id == 6 and { { id = 71 } } or { { id = 50 }, { id = 51 } } end
+			if rel == "sells" then return { { id = 60 } } end
+			return {}
+		end
+		D.Q = function(kind, id, field)
+			if kind == "quest" and field == "startedBy" then return ({ [70] = { { 80 } }, [71] = { { 80, 81 } } })[id] end
+			if kind == "quest" then return id == 50 and 1 or id >= 70 and 0 or 2 end
+			if kind == "npc" then return id == 81 and "AH" or "A" end
+		end
+		eq(B.OtherSide({ id = 5, src = { ["Quest reward"] = true } }), true, "no races told: an Alliance giver makes it Alliance's")
+		eq(B.OtherSide({ id = 6, src = { ["Quest reward"] = true } }), false, "a giver for both sides makes it anyone's")
+		eq(B.QuestSide(70) .. B.QuestSide(71) .. B.QuestSide(51), "AH", "a quest's side: by its giver, none where givers differ, by its races")
+		eq(X.DT.SamePlace("Sunken Temple"), "The Temple of Atal'Hakkar", "one place under two names: one"); eq(X.DT.SamePlace("Uldaman"), "Uldaman", "the rest as they are")
+		eq(B.OtherSide({ id = 1, src = { ["Quest reward"] = true } }), true, "a reward only an Alliance quest gives is not for the Horde")
+		eq(B.OtherSide({ id = 2, src = { ["Quest reward"] = true } }), false, "one a Horde quest gives too is")
+		eq(B.OtherSide({ id = 3, src = { Vendor = true } }), true, "sold only by an Alliance vendor: not for the Horde")
+		eq(B.OtherSide({ id = 4, src = { Vendor = true, Drop = true } }), false, "but a drop is anyone's")
+		-- a reward of a quest in a city that a raid boss's drop starts (Nefarian's head): the raid's
+		D.Q = function(kind, id, field)
+			if kind == "item" and id == 19383 and field == "questRewards" then return { 7784 } end
+			if kind == "quest" and field == "zoneOrSort" then return 1637 end
+			if kind == "quest" and field == "startedBy" then return { nil, nil, { 19003 } } end
+			if kind == "item" and id == 19003 and field == "npcDrops" then return { 11583 } end
+			if kind == "npc" and field == "zoneID" then return 2677 end
+		end
+		eq(B.FromRaid(19383, { "pre", "Pre-raid", {} }), true, "pre-raid: a reward for Nefarian's head is the raid's")
+		eq(B.FromRaid(19383, { "bwl", "BWL", { "Blackwing Lair" } }), false, "with Blackwing Lair in the phase it is not barred")
+		D.RelTo, D.Q = wasRel, wasQ
+	end
+	e.GetFactionInfoByID = nil
+	B.Stale()
+	B.State() step(1)
 	local tip = e.GameTooltip
 	tip.lines = {}
 	X.tooltipHook(tip, { id = 9003 })
@@ -5761,7 +5826,8 @@ end
 	s = B.State()
 	eq(#s.upg, 1, "the legs on the list are worse than mine: one upgrade"); eq(s.upg[1].id, 9003, "the helm"); eq(s.rank[9003], 1, "numbered")
 	eq(B.Item(9015).lvl, 50, "a listed helm for level 50"); check(not s.rank[9015] and s.bis.rows[1] ~= 9015, "is no upgrade and not in the best set at level 10")
-	check(B.Gain(9015, true) == nil or (B.Gain(9015) and B.Gain(9015).level == 50), "its tooltip still says from which level")
+	local g15 = B.Gain(9015)
+	check(g15 and g15.level == 50 and B.Gain(9015, true) == g15, "its tooltip still says from which level, once worked out")
 	-- the Upgrades filter: by where an item is from, or one dungeon
 	check(B.Passes(9003, "all"), "no filter: every upgrade")
 	eq(B.Passes(9003, B.Kind(9003) or "boe"), true, "its own kind passes"); eq(B.Passes(9003, "d:Nowhere"), false, "a dungeon that does not drop it does not")
@@ -5881,7 +5947,11 @@ end
 	e.LibQuestieDB = nil; eq(Row(9010).icon.texture, 1000 + 9010, "and its picture")
 	check(Row(9014).from.text:find("Dungeon", 1, true), "a dungeon drop: " .. Row(9014).from.text); check(Row(9011).from.text:find("Crafted", 1, true), "crafted"); check(Row(9012).from.text:find("World Drop", 1, true), "a world drop not seen on the auction house")
 	Row(9014).item.scripts.OnEnter(Row(9014).item)
-	eq(tip.lines[#tip.lines], "item:9014", "a line shows its item's tooltip")
+	eq(tip.lines[#tip.lines - 1], "item:9014", "a line shows its item's tooltip")
+	check(tip.lines[#tip.lines]:find("lock", 1, true), "and says a right-click locks it")
+	Row(9014).item.scripts.OnClick(Row(9014).item, "RightButton")
+	eq(B.Locks()[1], 9014, "a right-click locks it in the slot"); check(G.head.text:find("1 locked", 1, true), "the heading says so"); check(G.slots[1].name.text:find("[L]", 1, true), "and the slot shows it")
+	B.Lock(1); eq(B.Locks()[1], nil, "unlocked again")
 	click(G.slots[9])
 	eq(G.head.text, "Legs", "a click on a slot shows that slot"); eq(G.slots[9].sel.shown, true, "and marks it")
 	check(L[1].head.text:find("Nothing found beats", 1, true), "a slot with nothing better says so")
@@ -6362,19 +6432,19 @@ end)()
 		return table.concat(ids, ",")
 	end
 	eq(B.ViewLevel(), 40, "my own level to begin with"); Look()
-	eq(List(), "9303,9302", "gear for my level, and not what is more than fifteen levels below it")
+	eq(List(), "9303,9302,9301", "gear up to my level, however far below it: stats decide")
 	eq(B.finder.kind[9309], "dungeon", "a boss's drop is a dungeon's drop also where the dungeon is for higher levels than the one looked at, not a world drop")
 	local facts = B.db.facts
 	B.SetLevel(20); Look()
 	eq(B.ViewLevel(), 20, "a level picked"); eq(List(), "9301", "its own gear: the lower bound goes with the level")
 	B.SetLevel(60); Look()
-	eq(List(), "9305,9304,9307", "the last level: pre-raid gear, no raid's")
+	eq(List(), "9305,9304,9307,9303,9302,9301", "the last level: pre-raid gear and lower gear that still beats nothing worn, no raid's")
 	eq(B.finder.kind[9308], nil, "nor the drop of a raid the dungeon list does not have: it is known for a raid's by where the mob that drops it stands")
 	B.SetLevel(nil)
 	eq(B.ViewLevel(), 40, "back to my level"); eq(B.db.level[B.me], nil, "nothing kept of it"); B.SetLevel(40); eq(B.db.level[B.me], nil, "my own level picked is nothing picked")
 	B.SetLevel(99); eq(B.ViewLevel(), 60, "no more than the last level"); B.SetLevel(0); eq(B.ViewLevel(), 1, "no less than one"); B.SetLevel("x"); eq(B.ViewLevel(), 40, "a word is no level")
 	Look()
-	eq(List(), "9303,9302", "my level again"); check(rawequal(B.db.facts, facts) and facts[9304] ~= nil and facts[9302] ~= nil, "what was learned of items stays with a change of level")
+	eq(List(), "9303,9302,9301", "my level again"); check(rawequal(B.db.facts, facts) and facts[9304] ~= nil and facts[9302] ~= nil, "what was learned of items stays with a change of level")
 	-- the phase, at the last level
 	eq(B.Phase(), nil, "below the last level there is no phase")
 	B.SetLevel(60); Look()
@@ -6390,7 +6460,7 @@ end)()
 	eq(set1.rows[1], 9305, "the best set has the best helm there is before the raids"); eq(set2.rows[1], 9305, "the one that reaches every cap too, there being none"); eq(set3.rows[1], 9305, "and the one of what I own and the best finds")
 	click(G.slots[1]); eq(G.head.text, "Head", "a slot clicked: its list"); click(G.back); eq(G.head.text, "Whole set", "and back")
 	B.SetPhase("Onyxia's Lair"); Look()
-	eq(B.Phase()[2], "Pre-raid + Onyxia's Lair", "a raid ticked"); eq(List(), "9306,9305,9304,9307", "has its drops too"); eq(B.finder.kind[9308], nil, "not those of a raid not ticked (Naxxramas)"); eq(B.Perm(2).rows[1], 9306, "and the set the raid's helm")
+	eq(B.Phase()[2], "Pre-raid + Onyxia's Lair", "a raid ticked"); eq(List(), "9306,9305,9304,9307,9303,9302,9301", "has its drops too"); eq(B.finder.kind[9308], nil, "not those of a raid not ticked (Naxxramas)"); eq(B.Perm(2).rows[1], 9306, "and the set the raid's helm")
 	B.SetPhase("Naxxramas"); Look()
 	eq(B.Phase()[2], "Pre-raid + Onyxia's Lair, Naxxramas", "a second one"); eq(B.finder.kind[9308], "boe", "and that raid's drop as well")
 	B.SetPhase("Naxxramas"); eq(B.Phase()[2], "Pre-raid + Onyxia's Lair", "clicked again: unticked")
@@ -7111,7 +7181,7 @@ end)()
 		step(120)
 		check(F2.DT.DB.Root() ~= F1.DT.DB.Root(), "it does not come by itself within two minutes")
 		F2.slash("db sync")
-		check(F2.printed[#F2.printed]:find("1 member who shares", 1, true), "Sync now asks her at once: " .. F2.printed[#F2.printed])
+		check(F2.printed[#F2.printed]:find("asked 1 sharing member for", 1, true), "Sync now asks her at once: " .. F2.printed[#F2.printed])
 		step(60)
 		eq(F2.DT.DB.Root(), F1.DT.DB.Root(), "and it has come")
 		F2.DT.db.settings.share = false

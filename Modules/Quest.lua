@@ -76,8 +76,9 @@ local zoneNames = {}
 local function ZoneName(zone)
 	if not zone or zone == 0 then return "" end
 	if zone < 0 then return SORTS[zone] or "Other" end
+	if DT.ZoneName then return DT.ZoneName(zone) end -- (the NPC module's: the same names everywhere)
 	if not zoneNames[zone] then
-		zoneNames[zone] = C_Map and C_Map.GetAreaInfo and C_Map.GetAreaInfo(zone) or ("Zone " .. zone)
+		zoneNames[zone] = DT.SamePlace and DT.SamePlace(C_Map and C_Map.GetAreaInfo and C_Map.GetAreaInfo(zone)) or ("Zone " .. zone)
 	end
 	return zoneNames[zone]
 end
@@ -170,6 +171,7 @@ local function Entry(id, v)
 	local t = e.types
 	-- which instance it is for: OneForAll's lists, else what it names (above), else the zone it is filed under
 	e.instance = FromOneForAll(id) or e.instance or (INSTANCE[e.zoneName] and e.zoneName) or nil
+	if e.instance and DT.SamePlace then e.instance = DT.SamePlace(e.instance) end
 	local tag = Tag(id)
 	if tag then t[tag] = true end
 	if e.instance then t[INSTANCE[e.instance] or "Dungeon"] = true end
@@ -449,13 +451,14 @@ end
 
 -- Which side a quest is for: "A", "H", or "" (both, or not told): by the races it is open to.
 local ALLIANCE_BITS, HORDE_BITS = { 1, 4, 8, 64, 1024 }, { 2, 16, 32, 128, 512 }
-function Q.Side(e)
-	if not e.races or e.races == 0 then return "" end
+function Q.SideOf(races)
+	if type(races) ~= "number" or races == 0 then return "" end
 	local a, h = false, false
-	for _, bit in ipairs(ALLIANCE_BITS) do a = a or Has(e.races, bit) end
-	for _, bit in ipairs(HORDE_BITS) do h = h or Has(e.races, bit) end
+	for _, bit in ipairs(ALLIANCE_BITS) do a = a or Has(races, bit) end
+	for _, bit in ipairs(HORDE_BITS) do h = h or Has(races, bit) end
 	return a and not h and "A" or h and not a and "H" or ""
 end
+function Q.Side(e) return Q.SideOf(e.races) end
 
 -- The quests Questie itself hides as not in the game (old copies, duplicates: the second The Videre Elixir), read
 -- from the Questie addon while the game runs; {} where it is not installed. Its "hide on map" ones stay.
@@ -1546,12 +1549,12 @@ local function Build(parent)
 		Q.Refresh(true)
 	end)
 	panel:SetScript("OnSizeChanged", function() Q.Refresh(true) end) -- (the same quests, laid out anew)
-	panel:SetScript("OnUpdate", function()
+	DT.OnUpdate(panel, "tab: Quests", function()
 		-- (in a fight the game cuts off a script that takes long: reading and searching the list wait for its end)
 		if InCombatLockdown and InCombatLockdown() then return end
 		-- the reading goes on a little every frame, and says how far it is
 		if reading then
-			Q.Step(8)
+			Q.Step(16)
 			Q.Refresh()
 			return
 		end
@@ -1629,7 +1632,7 @@ end
 function Q.ReadForTip(tip)
 	if not Q.Start() then return end
 	Q.background = Q.background or CreateFrame("Frame")
-	Q.background:SetScript("OnUpdate", function(self)
+	DT.OnUpdate(Q.background, "Quests: reading in the background", function(self)
 		if InCombatLockdown and InCombatLockdown() then return end
 		if Q.Step(4) then self:SetScript("OnUpdate", nil) end
 	end)
@@ -1706,7 +1709,7 @@ DT:RegisterModule("quest", {
 			if not ok then geterrorhandler()(err) end -- (what was not moved is still there for the next login)
 		end
 		db.types = db.types or {}
-		DT:Background({ Start = Q.Start, Step = Q.Step })
+		DT:Background({ name = "quests list", Start = Q.Start, Step = Q.Step })
 		-- (done and not-mine are left out unless asked for; what cannot be taken yet stays in)
 		if db.hideDone == nil then db.hideDone = true end
 		if db.mine == nil then db.mine = true end
@@ -1717,7 +1720,7 @@ DT:RegisterModule("quest", {
 		end
 		DT:On("QUEST_TURNED_IN", function(id) Q.Turned(id) end) -- (before the handler below, which reads what is done anew)
 		if TooltipDataProcessor and TooltipDataProcessor.AddTooltipPostCall and Enum and Enum.TooltipDataType then
-			TooltipDataProcessor.AddTooltipPostCall(Enum.TooltipDataType.Item, Q.OnTooltip)
+			TooltipDataProcessor.AddTooltipPostCall(Enum.TooltipDataType.Item, function(...) DT.Timed("tooltip: Quest", Q.OnTooltip, ...) end)
 		end
 		for _, event in ipairs({ "QUEST_TURNED_IN", "QUEST_ACCEPTED", "QUEST_REMOVED", "PLAYER_LEVEL_UP" }) do
 			DT:On(event, function()

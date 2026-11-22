@@ -249,7 +249,7 @@ local function MakeFrame()
 	E.driver = CreateFrame("Frame", nil, UIParent)
 	E.driver:Hide()
 	local since = 0
-	E.driver:SetScript("OnUpdate", function(_, elapsed)
+	DT.OnUpdate(E.driver, "tool: Enemies", function(_, elapsed)
 		since = since + (elapsed or EVERY)
 		if since < EVERY then return end
 		since = 0

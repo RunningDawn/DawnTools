@@ -268,6 +268,7 @@ local L = DT.DBLogic
 local store
 local open, opened = {}, 0 -- [chunk] = its rows, taken apart
 local stamp = 0            -- counts the writes: what was worked out from rows is good while it stands
+local stampOf = {}         -- the same, per kind of row ("qreward"): a loot count does not undo the quest rewards
 
 local function Store()
 	if store then return store end
@@ -296,6 +297,8 @@ local function Write(chunk, rows)
 	local db = Store()
 	local text = L.Build(rows)
 	stamp = stamp + 1
+	local kind = chunk:match("^(%a+):")
+	if kind then stampOf[kind] = (stampOf[kind] or 0) + 1 end
 	if text == "" then
 		db.chunks[chunk], db.hash[chunk] = nil, nil
 	else
@@ -339,7 +342,7 @@ end
 local tables = {}
 function DB.Table(what, parse)
 	local held = tables[what]
-	if held and held.stamp == stamp then return held.rows end
+	if held and held.stamp == (stampOf[what] or 0) then return held.rows end
 	local rows = {}
 	for chunk, text in pairs(Store().chunks) do
 		if chunk:match("^(%a+):") == what then
@@ -350,7 +353,7 @@ function DB.Table(what, parse)
 			end
 		end
 	end
-	tables[what] = { stamp = stamp, rows = rows }
+	tables[what] = { stamp = stampOf[what] or 0, rows = rows }
 	return rows
 end
 
@@ -730,6 +733,15 @@ end
 
 function DB.ForgetHolders() byItem = nil end
 
+-- (a count of mine laid into the holders at once: rebuilding them reads every loot chunk, a lag at the next tooltip)
+local function Held(what, id, items)
+	if not byItem or (what ~= "loot" and what ~= "oloot") then return end
+	for item in pairs(items) do
+		byItem[item] = byItem[item] or {}
+		byItem[item][(what == "oloot" and "object:" or "npc:") .. id] = true
+	end
+end
+
 -- My own counter of a mob, chest or boss: its key, how many times, and { [item] = times seen }
 local function Mine(what, id)
 	local key = what .. ":" .. id .. ":" .. DB.Origin()
@@ -744,7 +756,7 @@ function DB.Count(what, id, items)
 	local key, n, seen = Mine(what, id)
 	for item in pairs(items) do seen[item] = (seen[item] or 0) + 1 end
 	DB.Put(key, L.Counter(n + 1, seen))
-	byItem = nil
+	Held(what, id, items)
 end
 
 -- A count from a store of before (the Dungeons tab's own) laid under my origin: the larger of it and what I hold,
@@ -753,7 +765,7 @@ function DB.Raise(what, id, n, items)
 	local key, had, seen = Mine(what, id)
 	for item, k in pairs(items) do seen[item] = math.max(seen[item] or 0, k) end
 	DB.Put(key, L.Counter(math.max(had, n), seen))
-	byItem = nil
+	Held(what, id, items)
 end
 
 -- the loot window is open
@@ -945,7 +957,7 @@ function DB.Slash(rest)
 	if (rest or ""):match("^%s*sync%s*$") then
 		local n = DT.DBSync and DT.DBSync.Now()
 		if n == nil then return DT:Print("db sync: sharing is off (/dt settings).") end
-		return DT:Print("db sync: a hello sent; %d member%s who shares asked for their game database list now. Settings, Data Sync shows how it goes.", n, n == 1 and "" or "s")
+		return DT:Print("db sync: a hello sent; asked %d sharing member%s for their game database list now. Settings, Data Sync shows how it goes.", n, n == 1 and "" or "s")
 	end
 	local cmd, a, b = (rest or ""):match("^%s*bench%s*(%S*)%s*(%d*)%s*(.-)%s*$")
 	if cmd == "make" then Make()
