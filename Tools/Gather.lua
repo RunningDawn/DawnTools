@@ -171,8 +171,26 @@ local STARTER_NODES = {
 	["gold vein"] = { k = "ore", s = 155 }, ["mithril deposit"] = { k = "ore", s = 175 },
 	["truesilver deposit"] = { k = "ore", s = 230 }, ["dark iron deposit"] = { k = "ore", s = 230 },
 	["small thorium vein"] = { k = "ore", s = 245 }, ["rich thorium vein"] = { k = "ore", s = 275 },
-	["small obsidian chunk"] = { k = "ore", s = 305 }, ["large obsidian chunk"] = { k = "ore", s = 305 },
-	-- Treasure & chests
+    	["ooze covered silver vein"] = { k = "ore", s = 75 }, ["ooze covered gold vein"] = { k = "ore", s = 155 },
+    	["ooze covered mithril deposit"] = { k = "ore", s = 175 }, ["ooze covered truesilver deposit"] = { k = "ore", s = 230 },
+    	["ooze covered thorium vein"] = { k = "ore", s = 245 }, ["ooze covered rich thorium vein"] = { k = "ore", s = 275 },
+    	["small obsidian chunk"] = { k = "ore", s = 305 }, ["large obsidian chunk"] = { k = "ore", s = 305 },
+    	["fel iron deposit"] = { k = "ore", s = 300 }, ["adamantite deposit"] = { k = "ore", s = 325 },
+    	["rich adamantite deposit"] = { k = "ore", s = 350 }, ["khorium vein"] = { k = "ore", s = 375 },
+    	["nethercite deposit"] = { k = "ore", s = 350 }, ["ancient gem vein"] = { k = "ore", s = 375 },
+    	["cobalt deposit"] = { k = "ore", s = 350 }, ["rich cobalt deposit"] = { k = "ore", s = 375 },
+    	["saronite deposit"] = { k = "ore", s = 400 }, ["rich saronite deposit"] = { k = "ore", s = 425 },
+    	["pure saronite deposit"] = { k = "ore", s = 450 }, ["titanium vein"] = { k = "ore", s = 450 },
+    	-- TBC & Wrath herbs
+    	["felweed"] = { k = "herb", s = 300 }, ["dreaming glory"] = { k = "herb", s = 315 },
+    	["ragveil"] = { k = "herb", s = 325 }, ["flame cap"] = { k = "herb", s = 335 },
+    	["terocone"] = { k = "herb", s = 325 }, ["ancient lichen"] = { k = "herb", s = 340 },
+    	["netherbloom"] = { k = "herb", s = 350 }, ["nightmare vine"] = { k = "herb", s = 365 },
+    	["mana thistle"] = { k = "herb", s = 375 }, ["goldclover"] = { k = "herb", s = 350 },
+    	["tiger lily"] = { k = "herb", s = 375 }, ["talandra's rose"] = { k = "herb", s = 385 },
+    	["adder's tongue"] = { k = "herb", s = 400 }, ["lichbloom"] = { k = "herb", s = 425 },
+    	["icethorn"] = { k = "herb", s = 435 }, ["frost lotus"] = { k = "herb", s = 450 },
+    	-- Treasure & chests
 	["battered chest"] = { k = "chest", s = 1 }, ["solid chest"] = { k = "chest", s = 1 },
 	["large battered chest"] = { k = "chest", s = 1 }, ["large solid chest"] = { k = "chest", s = 1 },
 	["large iron bound chest"] = { k = "chest", s = 1 }, ["large mithril bound chest"] = { k = "chest", s = 1 },
@@ -192,8 +210,10 @@ local STARTER_NODES = {
 for low, info in pairs(STARTER_NODES) do
 	G.baseline[low] = { k = info.k, s = info.s }
 end
+local KIND_ALIAS = { mining = "ore", vein = "ore", herbs = "herb", treasure = "chest", fish = "fishing" }
 for low, info in pairs(DT.GatherNodes or {}) do
-	G.baseline[low] = { k = info.k, s = info.s or 1, id = (info.id and info.id > 0) and info.id or nil }
+	local k = KIND_ALIAS[info.k] or info.k
+	G.baseline[low] = { k = k, s = info.s or 1, id = (info.id and info.id > 0) and info.id or nil }
 	if info.id and info.id > 0 then G.index[low] = info.id end
 end
 
@@ -292,6 +312,7 @@ local function ProfToKind(prof)
 end
 
 local KEYWORD_RULES = {
+	{ kind = "ore",      words = { "vein", "deposit", "lode", "obsidian chunk", "nethercite" } },
 	{ kind = "fishing",  words = { "school of", "floating wreckage", "wreckage", "oil spill", "swarm", "pool", "giant clam", "clam", "lobster", "shellfish" } },
 	{ kind = "chest",    words = { "chest", "strongbox", "coffer", "lockbox", "footlocker", "reliquary", "cache", "stash", "treasure", "safebox" } },
 	{ kind = "barrel",   words = { "barrel", "crate", "cask", "keg", "sack", "supplies", "driftwood", "debris", "rubble", "urn", "vase", "basket", "bundle", "baggage", "box", "mound of dirt", "loose dirt" } },
@@ -444,45 +465,52 @@ local function InspectSoftInteract(name)
 		learned = nil
 	end
 	local base = G.baseline[low]
-	local kind = (learned and learned.k) or (base and base.k)
-	local skill = (learned and learned.s) or (base and base.s)
-	local itemID = (learned and learned.id) or (base and base.id) or G.index[low]
+    	local kind = (base and base.k) or (learned and learned.k)
+    	local skill = (base and base.s) or (learned and learned.s)
+    	local itemID = (base and base.id) or (learned and learned.id) or G.index[low]
 	local isQuest = false
 
 	local lines = ReadSoftInteractLines()
-	local quests = G.db and G.db.settings and G.db.settings.quests and ActiveQuestTitles() or nil
-	for _, text in ipairs(lines) do
-		local prof, req = text:match(SKILL_PAT)
-		if prof then
-			kind = ProfToKind(prof) or kind
-			skill = tonumber(req) or skill
-		else
-			local pOnly = text:match("^Requires%s+(.+)$")
-			if pOnly then kind = ProfToKind(pOnly) or kind end
-		end
-		if quests and (quests[text] or text:match("^%s*%-?%s*.+:%s*%d+/%d+%s*$")) then
-			isQuest = true
-		end
-	end
-
-	if not kind then
-		local probedKind, probedID = ProbeItemCache(name)
-		if probedKind then
-			kind, itemID = probedKind, itemID or probedID
-		end
-	end
-
-	if not kind then
-		kind = ClassifyByKeywords(low)
-	end
-
-	if kind then
-		G.LearnNode(name, kind, skill or 1, itemID, false)
-	end
-
-	local res = { k = kind or (isQuest and "quest" or nil), s = skill or 1, id = itemID, quest = isQuest }
-	seenThisSession[low] = res
-	return res
+    	local quests = G.db and G.db.settings and G.db.settings.quests and ActiveQuestTitles() or nil
+    	for _, rawText in ipairs(lines) do
+    		local text = rawText:gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", "")
+    		local prof, req = text:match(SKILL_PAT)
+    		if prof then
+    			kind = ProfToKind(prof) or kind
+    			skill = tonumber(req) or skill
+    		else
+    			local pOnly = text:match("^Requires%s+(.+)$")
+    			if pOnly then
+    				kind = ProfToKind(pOnly) or kind
+    			else
+    				kind = ProfToKind(text) or kind
+    			end
+    		end
+    		if quests and (quests[text] or text:match("^%s*%-?%s*.+:%s*%d+/%d+%s*$")) then
+    			isQuest = true
+    		end
+    	end
+    
+    	if not kind then
+    		local probedKind, probedID = ProbeItemCache(name)
+    		if probedKind then
+    			kind, itemID = probedKind, itemID or probedID
+    		end
+    	end
+    
+    	if not kind then
+    		kind = ClassifyByKeywords(low)
+    	end
+    
+    	if kind then
+    		G.LearnNode(name, kind, skill or 1, itemID, false)
+    	end
+    
+    	local res = { k = kind or (isQuest and "quest" or nil), s = skill or 1, id = itemID, quest = isQuest }
+    	if res.k then
+    		seenThisSession[low] = res
+    	end
+    	return res
 end
 
 ---------------------------------------------------------------------------
@@ -534,14 +562,27 @@ DT:RegisterModule("gather_sync", {
 -- Profession Ranks, Difficulty Colors & Tauren Cultivation Check
 ---------------------------------------------------------------------------
 
+local PROF_SPELLS = {
+	herb   = { 2366, 2368, 3570, 11993, 28695, 50300, 2383 },
+	ore    = { 2575, 2576, 3564, 10248, 29354, 50310, 2656, 2580 },
+	chest  = { 1804 },
+	corpse = { 8613, 8617, 8618, 10768, 32678, 50305 },
+}
+
+local function HasKnownProfSpell(kind)
+	local list = PROF_SPELLS[kind]
+	if not list then return false end
+	for _, id in ipairs(list) do
+		if (IsPlayerSpell and IsPlayerSpell(id)) or (IsSpellKnown and IsSpellKnown(id)) then
+			return true
+		end
+	end
+	return false
+end
+
 local function GetSkillRanks()
 	local ranks = {}
-	if GetNumSkillLines and GetSkillLineInfo then
-		for i = 1, GetNumSkillLines() do
-			local name, header, _, rank = GetSkillLineInfo(i)
-			if name and not header then ranks[name:lower()] = rank or 0 end
-		end
-	elseif GetProfessions and GetProfessionInfo then
+	if GetProfessions and GetProfessionInfo then
 		local slots = { GetProfessions() }
 		for i = 1, 6 do
 			if slots[i] then
@@ -550,15 +591,32 @@ local function GetSkillRanks()
 			end
 		end
 	end
+	if GetNumSkillLines and GetSkillLineInfo then
+		for i = 1, GetNumSkillLines() do
+			local name, header, _, rank = GetSkillLineInfo(i)
+			if name and not header then
+				local low = name:lower()
+				if ranks[low] == nil then ranks[low] = rank or 0 end
+			end
+		end
+	end
 	return ranks
 end
 
 local function PlayerRankFor(kind)
 	local ranks = GetSkillRanks()
-	if kind == "herb" then return ranks[HERB_PROF:lower()] or ranks["herbalism"] end
-	if kind == "ore" then return ranks[MINE_PROF:lower()] or ranks["mining"] end
-	if kind == "chest" then return ranks[LOCK_PROF:lower()] or ranks["lockpicking"] end
-	if kind == "corpse" then return ranks[SKIN_PROF:lower()] or ranks["skinning"] end
+	if kind == "herb" then
+		return ranks[HERB_PROF:lower()] or ranks["herbalism"] or (HasKnownProfSpell("herb") and 1 or nil)
+	end
+	if kind == "ore" then
+		return ranks[MINE_PROF:lower()] or ranks["mining"] or (HasKnownProfSpell("ore") and 1 or nil)
+	end
+	if kind == "chest" then
+		return ranks[LOCK_PROF:lower()] or ranks["lockpicking"] or (HasKnownProfSpell("chest") and 1 or nil)
+	end
+	if kind == "corpse" then
+		return ranks[SKIN_PROF:lower()] or ranks["skinning"] or (HasKnownProfSpell("corpse") and 1 or nil)
+	end
 	return nil
 end
 
@@ -595,6 +653,9 @@ local CATEGORY_COLORS = {
 
 local function DifficultyBand(kind, reqSkill)
 	local rank = PlayerRankFor(kind)
+	if (kind == "herb" or kind == "ore") and not rank then
+		return "red"
+	end
 	if not (rank and reqSkill) then return nil end
 	if rank < reqSkill then return "red" end
 	if rank < reqSkill + 25 then return "orange" end
@@ -624,23 +685,22 @@ local function PassesFilters(info)
 	if not (s and info) then return false end
 	local k = info.k
 	if info.quest and s.quests then return true end
-	if k == "herb" and not s.herbs then return false end
-	if k == "ore" and not s.ore then return false end
-	if k == "chest" and not s.chests then return false end
-	if k == "barrel" and not s.barrels then return false end
-	if k == "fishing" and not s.fishing then return false end
-	if k == "corpse" and not s.corpses then return false end
-	if k == "interact" and not s.interact then return false end
-	if not k then return s.allObjects and true or false end
-	if s.smartProf and (k == "herb" or k == "ore") then
-		local hasHerb = PlayerRankFor("herb") ~= nil
-		local hasMine = PlayerRankFor("ore") ~= nil
-		if hasHerb or hasMine then
-			if k == "herb" and not hasHerb then return false end
-			if k == "ore" and not hasMine then return false end
-		end
+	if k == "herb" then
+		return (s.herbs or (s.smartProf and PlayerRankFor("herb") ~= nil)) and true or false
 	end
-	return true
+	if k == "ore" then
+		return (s.ore or (s.smartProf and PlayerRankFor("ore") ~= nil)) and true or false
+	end
+	if k == "chest" then
+		return (s.chests or (s.smartProf and PlayerRankFor("chest") ~= nil)) and true or false
+	end
+	if k == "barrel" then return s.barrels and true or false end
+	if k == "fishing" then return s.fishing and true or false end
+	if k == "corpse" then
+		return (s.corpses or (s.smartProf and PlayerRankFor("corpse") ~= nil)) and true or false
+	end
+	if k == "interact" then return s.interact and true or false end
+	return s.allObjects and true or false
 end
 
 ---------------------------------------------------------------------------
@@ -1093,20 +1153,28 @@ local function UpdateVisualRig(rig, now, info, nodeName, isPreview)
 		end
 	end
 
-	-- 6. Floating Label & Market Price / Cultivation Tag
-	local showLabel = s.fxLabel and nodeName and nodeName ~= ""
-	rig.label:SetShown(showLabel and true or false)
-	if showLabel then
-		rig.label:ClearAllPoints()
-		rig.label:SetPoint("BOTTOM", rig, "CENTER", 0, 24 * sc)
-		rig.label:SetText(nodeName)
-		rig.label:SetTextColor(r1, g1, b1, baseAlpha)
-		local subText = FormatSubtitle(info, nodeName)
-		rig.sub:SetShown(subText ~= nil)
-		if subText then rig.sub:SetText(subText) end
-	else
-		rig.sub:Hide()
-	end
+	-- 6. Floating Label & Market Price / Cultivation Tag (independent toggles)
+    	local hasName = nodeName and nodeName ~= ""
+    	local showLabel = (s.fxLabel and hasName) and true or false
+    	rig.label:SetShown(showLabel)
+    	if showLabel then
+    		rig.label:ClearAllPoints()
+    		rig.label:SetPoint("BOTTOM", rig, "CENTER", 0, 24 * sc)
+    		rig.label:SetText(nodeName)
+    		rig.label:SetTextColor(r1, g1, b1, baseAlpha)
+    	end
+    
+    	local subText = hasName and FormatSubtitle(info, nodeName) or nil
+    	rig.sub:SetShown(subText ~= nil)
+    	if subText then
+    		rig.sub:ClearAllPoints()
+    		if showLabel then
+    			rig.sub:SetPoint("TOP", rig.label, "BOTTOM", 0, -1)
+    		else
+    			rig.sub:SetPoint("BOTTOM", rig, "CENTER", 0, 24 * sc)
+    		end
+    		rig.sub:SetText(subText)
+    	end
 end
 
 ---------------------------------------------------------------------------
@@ -1158,6 +1226,9 @@ local function PlayChime(forceId)
 	end
 end
 
+local UNKNOWN_NAME = UNKNOWNOBJECT or "Unknown"
+local pendingSync = false
+
 local function SyncWorldTarget()
 	if not (worldFrame and G.db and G.db.settings and G.db.settings.enabled) then
 		if worldFrame then worldFrame:Hide() end
@@ -1166,8 +1237,24 @@ local function SyncWorldTarget()
 	end
 	local plate = C_NamePlate and C_NamePlate.GetNamePlateForUnit and C_NamePlate.GetNamePlateForUnit("softinteract")
 	local name = UnitName and UnitName("softinteract")
-	if name and name ~= "" then lastKnownName = name end
-	local info = plate and name and InspectSoftInteract(name)
+	local unresolved = (not name or name == "" or name == UNKNOWN_NAME or name == "Unknown")
+	if not unresolved then
+		lastKnownName = name
+	elseif (plate or (UnitExists and UnitExists("softinteract"))) and C_Timer and C_Timer.After and not pendingSync then
+		pendingSync = true
+		C_Timer.After(0.08, function()
+			pendingSync = false
+			SyncWorldTarget()
+		end)
+	end
+	if not unresolved and not plate and C_Timer and C_Timer.After and not pendingSync then
+		pendingSync = true
+		C_Timer.After(0.05, function()
+			pendingSync = false
+			SyncWorldTarget()
+		end)
+	end
+	local info = (plate and not unresolved) and InspectSoftInteract(name) or nil
 	if plate and info and PassesFilters(info) then
 		local changed = (plate ~= activePlate or name ~= activeName)
 		activePlate, activeInfo, activeName = plate, info, name
@@ -1196,16 +1283,31 @@ local function EnsureWorldOverlay()
 	worldFrame:Hide()
 	worldRig = CreateVisualRig(worldFrame)
 	worldFrame:SetScript("OnUpdate", function()
-		if not (activePlate and activePlate:IsShown()) then
-			SyncWorldTarget()
-			return
-		end
+    		if not (activePlate and activePlate:IsShown() and PassesFilters(activeInfo)) then
+    			SyncWorldTarget()
+    			return
+    		end
 		local now = GetTime()
 		local interval = ActiveQuality().interval
 		if interval > 0 and (now - lastAnimUpdate) < interval then return end
 		lastAnimUpdate = now
 		UpdateVisualRig(worldRig, now, activeInfo, activeName, false)
 	end)
+end
+
+local TARGET_CVARS_LOWER = {}
+for k, val in pairs(TARGET_CVARS) do
+	TARGET_CVARS_LOWER[k:lower()] = { key = k, val = val }
+end
+
+local function ResyncAfterZoneChange()
+	if not (G.db and G.db.settings and G.db.settings.enabled) then return end
+	activePlate, activeInfo, activeName = nil, nil, nil
+	if worldFrame then worldFrame:Hide() end
+	UpdateResolutionMetrics()
+	EnsureWorldOverlay()
+	ApplyCVars(true)
+	SyncWorldTarget()
 end
 
 function G.SetEnabled(on)
@@ -1249,7 +1351,18 @@ DT:On("UNIT_SPELLCAST_SUCCEEDED", function(unit, _, spellID)
 	end
 end)
 
-for _, ev in ipairs({ "PLAYER_SOFT_INTERACT_CHANGED", "NAME_PLATE_UNIT_ADDED", "NAME_PLATE_UNIT_REMOVED", "QUEST_LOG_UPDATE", "DISPLAY_SIZE_CHANGED", "UI_SCALE_CHANGED" }) do
+for _, ev in ipairs({
+	"PLAYER_SOFT_INTERACT_CHANGED",
+	"UNIT_NAME_UPDATE",
+	"NAME_PLATE_UNIT_ADDED",
+	"NAME_PLATE_UNIT_REMOVED",
+	"QUEST_LOG_UPDATE",
+	"DISPLAY_SIZE_CHANGED",
+	"UI_SCALE_CHANGED",
+	"PLAYER_ENTERING_WORLD",
+	"ZONE_CHANGED_NEW_AREA",
+	"LOADING_SCREEN_DISABLED",
+}) do
 	DT:On(ev, function()
 		if ev == "DISPLAY_SIZE_CHANGED" or ev == "UI_SCALE_CHANGED" then
 			UpdateResolutionMetrics()
@@ -1257,10 +1370,29 @@ for _, ev in ipairs({ "PLAYER_SOFT_INTERACT_CHANGED", "NAME_PLATE_UNIT_ADDED", "
 			for k, v in pairs(seenThisSession) do
 				if v.quest then seenThisSession[k] = nil end
 			end
+		elseif ev == "PLAYER_ENTERING_WORLD" or ev == "ZONE_CHANGED_NEW_AREA" or ev == "LOADING_SCREEN_DISABLED" then
+			ResyncAfterZoneChange()
+			if C_Timer and C_Timer.After then
+				C_Timer.After(0.5, ResyncAfterZoneChange)
+				C_Timer.After(2.0, ResyncAfterZoneChange)
+			end
+			return
 		end
 		if G.db and G.db.settings and G.db.settings.enabled then SyncWorldTarget() end
 	end)
 end
+
+DT:On("CVAR_UPDATE", function(cvarName)
+	if not (G.db and G.db.settings and G.db.settings.enabled) then return end
+	local entry = type(cvarName) == "string" and TARGET_CVARS_LOWER[cvarName:lower()]
+	if entry and GetCVar and SetCVar then
+		local ok, cur = pcall(GetCVar, entry.key)
+		if ok and tostring(cur) ~= entry.val then
+			pcall(SetCVar, entry.key, entry.val)
+			SyncWorldTarget()
+		end
+	end
+end)
 
 DT:On("DT_MARKET_UPDATE", function()
 	if G.db then G.RebuildIndex() end
@@ -1336,9 +1468,10 @@ local function Build(panel)
 	local s = G.db.settings
 	local refreshers = {}
 	local function RefreshControls()
-		for _, fn in ipairs(refreshers) do fn() end
-		if DT.UI and DT.UI.Refresh then DT.UI:Refresh() end
-	end
+    		for _, fn in ipairs(refreshers) do fn() end
+    		if s.enabled then SyncWorldTarget() end
+    		if DT.UI and DT.UI.Refresh then DT.UI:Refresh() end
+    	end
 
 	local function Label(parent, font, x, y, text)
 		local fs = parent:CreateFontString(nil, "OVERLAY", font)
@@ -1479,9 +1612,12 @@ local function Build(panel)
 	Check(panel, 356, y, "Lore & Shrines", "interact")
 
 	y = y - 20
-	Check(panel, 6, y, "All Objects", "allObjects")
-	Check(panel, 108, y, "Smart Profession Filter", "smartProf")
-	Check(panel, 268, y, "Tauren Cultivation Prompt", "cultivation")
+    	Check(panel, 6, y, "All Objects", "allObjects")
+    	Check(panel, 108, y, "Smart Profession Filter", "smartProf", function(on)
+    		s.smartProf = on
+    		if s.enabled then SyncWorldTarget() end
+    	end)
+    	Check(panel, 268, y, "Tauren Cultivation Prompt", "cultivation")
 
 	y = y - 26
 	Label(panel, "GameFontNormal", 6, y, "Visual Layers & Quality")
