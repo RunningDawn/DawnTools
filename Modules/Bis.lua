@@ -1,6 +1,6 @@
 -- DawnTools :: BiS
 -- The best gear for a spec: of what I own, and of a list of pre-raid gear. Local only: nothing is sent.
---   What an item gives is read from the game (GetItemStats and its tooltip's lines), once per item a session.
+--   What an item gives is read from the game (GetItemStats and its tooltip's lines) once ever, in the background, and kept.
 --   What I am without gear = the character sheet less what the gear I wear gives: talents and racials are in
 --     it without being known one by one. Enchants are in it too (an item's stats are those of the bare item).
 --   A profile says what a point of each stat is worth and where its caps are; its weights and caps can be
@@ -106,11 +106,12 @@ local function ItemOf(id)
 		partial[id], asked[id], tried[id] = nil, nil, (tried[id] or 0) + 1
 	end
 	local kept = B.db and B.db.facts and B.db.facts[id]
-	if kept then items[id] = kept return kept end -- (learned in an earlier session: not asked again)
+	if kept ~= nil then items[id] = kept return kept end -- (learned in an earlier session: not asked again)
 	local info = (C_Item and C_Item.GetItemInfo) or GetItemInfo
 	local name, _, quality, _, minLevel, _, _, _, loc, icon, _, class, sub = info(id)
 	if name and not WEARABLE[loc or ""] then
 		items[id] = false
+		if B.db and B.db.facts then B.db.facts[id] = false end
 		return false
 	end
 	local lines = name and Lines(id)
@@ -272,7 +273,16 @@ function B.OtherSide(e)
 	return theirs
 end
 
+-- the lightest armor a tank of the class wears (armor subclass: 2 leather, 3 mail, 4 plate): plate from level 40
+local TANK_ARMOR = { WARRIOR = 4, PALADIN = 4, DRUID = 2 }
 local function Usable(it, who, later)
+	-- (a tank wears the heaviest armor its class has, cloaks aside: a protection warrior's leather is lost armor)
+	if it.class == 4 and (it.sub or 0) >= 1 and it.sub <= 4 and it.loc ~= "INVTYPE_CLOAK" and B.db then
+		local p = B.Profile()
+		local min = p and p.raw.role == "tank" and TANK_ARMOR[p.raw.class] or 0
+		if min == 4 and who.level < 40 then min = 3 end
+		if it.sub < min then return false end
+	end
 	if it.rep and TheirRep(it.rep) then return false end -- (the other faction's reputation: never mine to have)
 	if (it.q or 0) >= 5 then return false end -- (a legendary, Atiesh: nobody's pre-raid, nobody's plan)
 	if it.rep and Realistic() and not who.foreign and not B.RepOk(it) then return false end
@@ -306,113 +316,21 @@ local function Target()
 	return class, { level = level, className = ClassName(class), foreign = true, who = { me = class, level = level, trained = false } }
 end
 
--- The gear there is to get, found by Sift below: what to look at, what was kept, where each is from. Looked at
--- anew with a level gained, another class picked, and once the item list has been read.
-local finder = { todo = {}, got = {}, kind = {}, ckind = {}, tries = {}, gone = 0 }
-local POOL = 6 -- (of the gear found, the best this many for each place to wear go into the best set: it must stay quick to work out)
-local function FinderKey()
-	local Item = DT.Item
-	local class, who = Target()
-	local phase = B.Phase()
-	return ("%d:%s:%s:%s:%s:%s:%s"):format(who.level, class, tostring(Item and Item.Ready and Item.Ready() or false), tostring(DT.Dungeon ~= nil), phase and phase[1] or "-", tostring(Realistic()), MySide())
-end
-
----------------------------------------------------------------------------
--- What the finder found, kept in the saved file
----------------------------------------------------------------------------
--- The gear there is to get (Gather and Sift below) takes the whole item index and a walk through it; what it comes to
--- is a short list of item numbers and kinds. That list is kept per key (level, class, phase), with the item facts
--- (db.facts), so that a new session shows the lists of a slot and the sets at once, without reading the index. It is
--- looked at again, quietly, when it is older than KEEP_AGE; and it is thrown away whole where what it was built from
--- changed (the shape of the facts, the versions of QuestieDB, OneForAll's dungeons and the skill-ups in the store).
--- The last KEEP_KEYS keys used are kept, no more.
--- ponytail: the dungeon list that AtlasLoot adds and a guild's news are not in the stamp: they come with the look again after KEEP_AGE.
-local KEEP_KEYS, KEEP_AGE = 6, 30 * 86400 -- (looked through again by hand, the Recalculate button; or where some never loaded)
-local keptList = setmetatable({}, { __mode = "k" }) -- (an entry's saved pairs, as rows)
+-- The gear there is (Catalog, the loader and Pool, below): every wearable item, asked of the game once ever.
+local catalog -- (built once the item list is read: see Catalog)
+local Pool, Quick, Upgrades -- (below, with the slots they need)
+local POOL = 6 -- (of the pool, the best this many for each place to wear go into the recommended set: it must stay quick to work out)
 local function Clock() return GetServerTime and GetServerTime() or time and time() or 0 end
 -- "5 min", "3 h", "2 days": how long ago a time of Clock was
 local function Ago(t)
 	local ago = math.max(0, Clock() - t)
 	return ago < 3600 and (math.floor(ago / 60) .. " min") or ago < 172800 and (math.floor(ago / 3600) .. " h") or (math.floor(ago / 86400) .. " days")
 end
+-- how the item facts are read and what the item list is made of: a change of either, every set worked out anew
 local function Stamp()
-	local DB, out = DT.DB, { FACTS, "k7" } -- ("k2": how the kept list itself is made; a change of that throws old ones away)
+	local DB, out = DT.DB, { FACTS, "p1" }
 	for _, source in ipairs({ "questie", "oneforall", "skillup" }) do out[#out + 1] = tostring(DB and DB.Base and DB.Base(source)) end
 	return table.concat(out, "|")
-end
-local function BaseKey()
-	local class, who = Target()
-	local phase = B.Phase()
-	return ("%d:%s:%s:%s:%s"):format(who.level, class, phase and phase[1] or "-", Realistic() and "r" or "a", MySide())
-end
--- the kept entry for what is looked at now, or nil
-local function Entry()
-	local k = B.db and B.db.kept
-	if not k then return nil end
-	local stamp = Stamp()
-	if k.stamp ~= stamp then
-		k.stamp, k.keys, k.order = stamp, {}, {} -- (built from something else: none of it is right)
-		finder.key, finder.keptKey = nil, nil
-	end
-	return k.keys[BaseKey()]
-end
--- the entry, if it is young enough to be taken as it is
-local function Fresh()
-	local e = Entry()
-	return e and Clock() - (e.at or 0) < KEEP_AGE and e or nil
-end
--- what has been found, for the key looked at: what the finder has once it is done, else what was kept, else what it has so far
-local function Cands()
-	local mine = finder.key == FinderKey()
-	if mine and #finder.todo == 0 then return finder.got end
-	local e = Entry()
-	if e then
-		local list = keptList[e]
-		if not list then
-			list = {}
-			for i = 1, #e.got, 2 do
-				list[#list + 1] = { id = e.got[i], kind = e.got[i + 1] }
-				finder.ckind[e.got[i]] = e.got[i + 1]
-			end
-			keptList[e] = list
-		end
-		return list
-	end
-	return mine and finder.got or {}
-end
-local function Touch(key)
-	local order = B.db.kept.order
-	if order[1] == key then return end
-	for i = #order, 1, -1 do
-		if order[i] == key then table.remove(order, i) end
-	end
-	table.insert(order, 1, key)
-	while #order > KEEP_KEYS do B.db.kept.keys[table.remove(order)] = nil end
-end
--- the finder is done: what it found is kept under its key (by item number, so the same finds are the same list), and
--- where that differs from what was kept the sets are worked out anew
-local function Keep()
-	local k = B.db and B.db.kept
-	if finder.keptKey == finder.key or not k or k.stamp ~= Stamp() then return end
-	finder.keptKey = finder.key
-	local sorted = {}
-	for i, c in ipairs(finder.got) do sorted[i] = c end
-	table.sort(sorted, function(a, b) return a.id < b.id end)
-	local flat = {}
-	for _, c in ipairs(sorted) do
-		flat[#flat + 1] = c.id
-		flat[#flat + 1] = c.kind
-	end
-	local key, old = BaseKey(), k.keys[BaseKey()]
-	local same = old and #old.got == #flat
-	for i = 1, same and #flat or 0 do
-		if old.got[i] ~= flat[i] then same = false break end
-	end
-	k.keys[key] = same and old or { got = flat }
-	-- (some never loaded: the list is looked at again in a quarter of an hour, not after KEEP_AGE)
-	k.keys[key].at = Clock() - (finder.gone > 0 and KEEP_AGE - 900 or 0)
-	Touch(key)
-	if not same then B.Stale() end
 end
 
 local function Name(id)
@@ -447,7 +365,7 @@ end
 function B.SetLevel(n)
 	n = tonumber(n)
 	n = n and math.max(1, math.min(B.MAX_LEVEL, math.floor(n))) or nil
-	B.db.level[B.me], B.slotMode, B.scroll = n ~= Level() and n or nil, false, 0
+	B.db.level[B.me], B.scroll = n ~= Level() and n or nil, 0
 	resolved = nil
 	B.Stale()
 end
@@ -470,14 +388,14 @@ function B.Phase()
 	return { table.concat(raids, "+"), "Pre-raid + " .. table.concat(raids, ", "), raids }
 end
 function B.SetRealistic(on)
-	B.db.settings.realistic, B.slotMode, B.scroll = on and true or false, false, 0
+	B.db.settings.realistic, B.scroll = on and true or false, 0
 	B.Stale()
 end
 -- "pre": no raid; a raid's name: that one ticked or unticked
 function B.SetPhase(id)
 	local on = type(B.db.phase[B.me]) == "table" and B.db.phase[B.me] or {}
 	if id == "pre" then on = {} else on[id] = not on[id] or nil end
-	B.db.phase[B.me], B.slotMode, B.scroll = next(on) and on or nil, false, 0
+	B.db.phase[B.me], B.scroll = next(on) and on or nil, 0
 	B.Stale()
 end
 
@@ -657,6 +575,7 @@ B.Stale = Stale
 
 -- Locks: an item kept in a row (ROWS) by hand, for the sets to compare; per character and spec, kept over a /reload
 local LOCKED = "|cffffd100[L]|r "
+local REC = "|cff40ff40[R]|r " -- (a piece of the recommended set)
 local function LockKey() local p = B.db and B.db.locks and B.Profile() return p and (B.me .. "|" .. p.id) end
 function B.Locks() local k = LockKey() return k and B.db.locks[k] or {} end
 -- (the same id again, or none: unlocked)
@@ -879,9 +798,6 @@ local function Solve(list, s, locks)
 	return { picks = picks, gear = gear, score = score, short = short }
 end
 
-local worker = CreateFrame("Frame")
-worker:Hide()
-
 -- What the sets and the upgrades are worked out from, as one text: the same text, the same answer. The weights and
 -- caps (with what was typed), the level, the phase, the hands, what I wear, what I own, what was found; and how
 -- the item facts are read (Stamp).
@@ -903,7 +819,6 @@ local function Sig(s, mine)
 		for _, c in ipairs(list) do out[#out + 1] = c.id .. "x" .. (c.n or 1) end
 	end
 	if not mine then
-		out[#out + 1] = "|" .. table.concat(s.queue, ",")
 		local locks = {}
 		for r, id in pairs(s.locks or {}) do locks[#locks + 1] = r .. "=" .. id end
 		table.sort(locks)
@@ -912,13 +827,13 @@ local function Sig(s, mine)
 	return table.concat(out, ";")
 end
 
--- Kept in the saved file, per character and spec (db.saved): the two sets and the upgrades, with every gain worked
--- out, so that a /reload shows them without working anything out. Not while items are still loading.
+-- Kept in the saved file, per character and spec (db.saved): the two sets, so that a /reload shows them without
+-- working them out. Not while items are still loading.
 local function Bare(set) return set and { picks = set.picks, gear = set.gear, score = set.score, short = set.short } end
 local function Save(s)
 	if s.foreign or s.pending > 0 or not s.sig or s ~= state then return end
 	s.at = Clock()
-	B.db.saved[s.skey] = { sig = s.sig, at = s.at, best = Bare(s.best), bis = Bare(s.bis), upg = s.upg, gains = gains }
+	B.db.saved[s.skey] = { sig = s.sig, at = s.at, best = Bare(s.best), bis = Bare(s.bis) }
 end
 
 -- Everything worked out anew: what I wear, the best of what I own, the best of the list. False in a fight.
@@ -974,42 +889,37 @@ function B.Compute()
 		end
 	end
 	table.sort(s.own, function(a, b) return a.id < b.id end)
-	-- the list: what of it the game knows and this class may wear, whatever the level; and with it the best of
-	-- what the finder (below) found for this class in the quests, dungeons, crafts and drops, a few of each place to wear
+	-- the list: what of it the game knows and this class may wear at the level looked at; and with it the best of
+	-- the pool (every item there is that this class may wear and can get), a few of each place to wear
 	s.list = DT.BisLists and DT.BisLists[prof.id]
-	s.queue, s.upg = {}, {}
+	s.upg = {}
 	local all, seen, found = {}, {}, {}
 	local function Add(id, it)
 		seen[id] = true
 		all[#all + 1] = { id = id, loc = it.loc, s = it.s, n = 1 }
-		if not s.have[id] and not s.foreign then s.queue[#s.queue + 1] = id end
 	end
 	for id in pairs(s.list or {}) do
 		local it = B.Item(id)
 		if it == nil then
 			s.pending = s.pending + 1
-		elseif it and Usable(it, s.who) then -- (only what may be worn at the level looked at: the list is what to aim for there)
+		elseif it and Usable(it, s.who) then
 			Add(id, it)
 		end
 	end
-	local cands = Cands()
-	finder.used = #cands
-	for _, c in ipairs(cands) do
-		local it = not seen[c.id] and B.Item(c.id)
-		-- (a kept list may be older than what I have learned to wear since)
-		if it and Usable(it, s.who) then
-			found[it.loc] = found[it.loc] or {}
-			table.insert(found[it.loc], { id = c.id, it = it, v = (BL.Score(it.s, {}, prof)) })
+	-- (and what I own: the recommended set never gives up a piece I have for a worse one)
+	for _, o in ipairs(s.foreign and {} or s.own) do
+		if not seen[o.id] then
+			seen[o.id] = true
+			all[#all + 1] = o
 		end
 	end
-	-- (the least of what I wear in each place: a find past the best few of its place that beats it is still looked
-	-- at for Upgrades, though it does not go into the best set; one for a place I wear nothing in, too)
-	local worn = {}
-	for _, id in pairs(s.cur) do
-		local it = B.Item(id)
+	DT.Timed("BiS: pool", function() s.pool = Pool(s.who) end)
+	s.pool = s.pool or {}
+	for _, c in ipairs(s.pool) do
+		local it = not seen[c.id] and B.Item(c.id)
 		if it then
-			local v = BL.Score(it.s, {}, prof)
-			if not worn[it.loc] or v < worn[it.loc] then worn[it.loc] = v end
+			found[it.loc] = found[it.loc] or {}
+			table.insert(found[it.loc], { id = c.id, it = it, v = (BL.Score(it.s, {}, prof)) })
 		end
 	end
 	for _, list in pairs(found) do
@@ -1030,61 +940,66 @@ function B.Compute()
 				end
 			end
 		end
-		-- ponytail: by the item alone against the worn one; a find that only helps a cap through the set is missed past the best few
-		for i = POOL + 1, #list do
-			local c = list[i]
-			if not s.foreign and not seen[c.id] and not s.have[c.id] and (not worn[c.it.loc] or c.v > worn[c.it.loc]) then s.queue[#s.queue + 1] = c.id end
-		end
 	end
 	if #all > 0 then
 		table.sort(all, function(a, b) return a.id < b.id end)
-		table.sort(s.queue)
 		s.all = all
 	end
 	-- what was worked out from the very same as now, in this session or an earlier one: taken as it is
 	s.sig, s.gsig, s.skey = Sig(s), Sig(s, true), B.me .. "|" .. prof.id
 	local saved = not s.foreign and B.db.saved[s.skey]
-	local had, kept
+	local had
 	B.stats.computes = B.stats.computes + 1
-	-- (the same as what is worked out already, or still being worked out: kept, with what the worker has done so far.
-	-- Selling junk changes the bags, not what may be worn: every sale at a vendor began it all anew)
+	-- (the same as what is worked out already: kept. Selling junk changes the bags, not what may be worn)
 	if state and state.sig == s.sig and state.skey == s.skey then
 		B.stats.kept = B.stats.kept + 1
 		dirty = false
+		-- (the pool grew, with items the loader brought, though not among the few that go into the sets: the upgrades anew)
+		if s.pool.key ~= (state.pool or {}).key and not state.foreign then
+			state.pool, state.upg, state.rank, gains = s.pool, {}, {}, {}
+			DT.Timed("BiS: upgrades weighed", Upgrades, state)
+		end
 		return true
 	end
 	if saved and saved.sig == s.sig then
-		s.best, s.bis, s.upg, s.queue, s.at, had = Bare(saved.best), Bare(saved.bis), saved.upg, {}, saved.at, saved.gains
-		for i, u in ipairs(s.upg) do s.rank[u.id] = i end
+		s.best, s.bis, s.at, had = Bare(saved.best), Bare(saved.bis), saved.at, true
 	else
 		if state and state.gsig == s.gsig and state.skey == s.skey and not state.foreign then
-			-- (only what I wear, or what was found, moved: the best of what I own and every gain stand, but for
-			-- what I own, which the bags say anew)
-			s.best, kept = state.best, {}
-			for id, g in pairs(gains) do
-				if not (g and g.owned) and not s.have[id] then kept[id] = g end
-			end
+			s.best = state.best -- (only what I wear, or the pool, moved: the best of what I own stands)
 		else
 			DT.Timed("BiS: best set of what I own", function() s.best = Solve(s.own, s) end)
 		end
-		if s.all then DT.Timed("BiS: best set there is", function() s.bis = Solve(all, s, s.locks) end) end
+		if s.all then DT.Timed("BiS: recommended set", function() s.bis = Solve(all, s, s.locks) end) end
 	end
 	s.best.rows = Lay(s.best.picks, s.cur)
 	s.best.has = {}
 	for _, id in pairs(s.best.rows) do s.best.has[id] = true end
 	if s.bis then s.bis.rows = Lay(s.bis.picks, s.cur) end
-	state, dirty, gains = s, false, had or kept or {}
-	if not had and #s.queue == 0 then Save(s) end
-	worker:SetShown(#s.queue > 0)
+	state, dirty, gains = s, false, {}
+	if not s.foreign then DT.Timed("BiS: upgrades weighed", Upgrades, s) end
+	if not had then Save(s) end
 	return true
 end
 
--- Worked out anew by hand (the Recalculate button): what was saved for the spec, and the gear found for it, go
+-- the Recalculate button: asked first, as it takes a while
+if StaticPopupDialogs then
+	StaticPopupDialogs.DAWNTOOLS_BIS_RECALC = {
+		text = "DawnTools BiS: work everything out anew?\n\nThe item list is read again and items the game did not answer for are asked again. It can take a few minutes.",
+		button1 = "Recalculate", button2 = "Cancel",
+		OnAccept = function() B.Recalc() end,
+		timeout = 0, whileDead = true, hideOnEscape = true,
+	}
+end
+function B.AskRecalc()
+	if StaticPopup_Show then StaticPopup_Show("DAWNTOOLS_BIS_RECALC") else B.Recalc() end
+end
+
+-- Worked out anew by hand (the Recalculate button): what was saved for the spec goes, the item list is read again,
+-- and items the game did not answer for are asked again
 function B.Recalc()
 	local s = state
 	if s and s.skey then B.db.saved[s.skey] = nil end
-	if B.db.kept.keys then B.db.kept.keys[BaseKey()] = nil end
-	finder.key, finder.keptKey = nil, nil
+	B.Reload()
 	Stale()
 end
 
@@ -1100,93 +1015,20 @@ function B.State()
 	return state
 end
 
--- What an item would do for my best set: { d = gain in score, pct, slots = { names of the slots it changes },
--- reach = { stats whose hard cap it gets me to }, owned, best, no = cannot wear, level = wearable from }.
--- nil while it cannot be said (not loaded, not gear, a fight with nothing worked out).
--- (lazy: with what was worked out last, for a tooltip, which must not wait for a new working out)
+-- What an item would do for my best set (Quick, below): { d = gain in score, pct, slots = { names of the slots it
+-- changes }, reach = { stats whose hard cap it gets me to }, breaks = { hard caps it takes me under }, owned, best,
+-- no = cannot wear, level = wearable from }. nil while it cannot be said (not loaded, not gear, a fight with nothing
+-- worked out). (lazy: with what was worked out last, for a tooltip, which must not wait for a new working out)
 function B.Gain(id, lazy)
 	local s = lazy and state or B.State()
 	if not s then return nil end
 	if gains[id] ~= nil then return gains[id] or nil end
-	if Fight() then return nil end -- (nothing asked of the game, nothing worked out, in a fight)
-	local it = B.Item(id)
-	if it == nil then return nil end
-	if lazy and not s.have[id] and it and Usable(it, s.who, true) then
-		-- (a tooltip does not wait for a solve, tens of ms or more: the item goes to the front of the worker's line,
-		-- and its line shows from the next look on)
-		for i, q in ipairs(s.queue) do
-			if q == id then table.remove(s.queue, i) break end
-		end
-		s.queue[#s.queue + 1] = id
-		worker:Show()
-		return nil
-	end
-	local g = false
-	if it then
-		g = {}
-		if s.have[id] then
-			g.owned, g.best = true, s.best.has[id] or false
-		elseif not Usable(it, s.who, true) then
-			g.no = true
-		elseif Fight() then
-			return nil
-		else
-			local list = { unpack(s.own) }
-			list[#list + 1] = { id = id, loc = it.loc, s = it.s, n = 1 }
-			local with = Solve(list, s)
-			local den = s.bis and s.bis.score or s.best.score
-			g.d, g.slots, g.reach = with.score - s.best.score, {}, {}
-			g.pct = den > 0 and g.d / den * 100 or nil
-			for i, pick in ipairs(with.picks) do
-				if Key(pick) ~= Key(s.best.picks[i]) then
-					-- (a ring or trinket takes one place; the hands say which: two-hand, main hand, off hand)
-					local name = BL.SLOTS[i][1]
-					if i == 11 or i == 12 then name = name:sub(1, -2) end
-					if i == 13 then
-						name = it.loc == "INVTYPE_2HWEAPON" and "Two-hand" or (pick.ids[2] == id or it.loc == "INVTYPE_SHIELD" or it.loc == "INVTYPE_HOLDABLE") and "Off hand" or "Main hand"
-					end
-					g.slots[#g.slots + 1] = name
-				end
-			end
-			for word in pairs(s.best.short) do
-				if not with.short[word] then g.reach[#g.reach + 1] = word end
-			end
-			if it.lvl > s.who.level then g.level = it.lvl end
-			-- (nothing gained, though it reaches a cap: it does help)
-			g.up = g.d > 0.005 or #g.reach > 0
-		end
-	end
+	if Fight() then return nil end
+	local g = Quick(s, id)
+	if g == nil then return nil end
 	gains[id] = g
 	return g or nil
 end
-
--- the list's items I do not own, one a frame: what each would gain, the most first
-DT.OnUpdate(worker, "BiS: worker", function(self)
-	local s = state
-	if not s or dirty or #s.queue == 0 then return self:Hide() end
-	if Fight() then return end
-	-- ponytail: a solve takes tens of ms and cannot be cut short: one a frame at most, then about nine times as long
-	-- left alone. A cheaper gain (only the slots the item touches) would be the next step.
-	local now = GetTime and GetTime() or 0
-	if now < (self.rest or 0) then return end
-	local t0 = debugprofilestop and debugprofilestop()
-	local id = table.remove(s.queue)
-	local g
-	DT.Timed("BiS: one upgrade weighed", function() g = B.Gain(id) end)
-	if t0 then self.rest = now + (debugprofilestop() - t0) * 9 / 1000 end
-	if g and g.up and not g.level then s.upg[#s.upg + 1] = { id = id, g = g } end
-	if #s.queue == 0 then
-		table.sort(s.upg, function(a, b)
-			if (#a.g.reach > 0) ~= (#b.g.reach > 0) then return #a.g.reach > 0 end
-			if a.g.d ~= b.g.d then return a.g.d > b.g.d end
-			return a.id < b.id
-		end)
-		for i, u in ipairs(s.upg) do s.rank[u.id] = i end
-		Save(s)
-		B.redraw = true
-		self:Hide()
-	end
-end)
 
 -- where an item of the list is from: the boss that drops it, the profession that makes it; else the list's word
 function B.Source(id)
@@ -1203,18 +1045,17 @@ end
 local function Signed(n) return ("%+.1f"):format(n) end
 
 -- an item that would improve my best set, as worked out (Upgrades); nil where not known or another class is looked at
--- ponytail: what is worked out so far only. An item not looked at yet (or still in line) says nothing.
 function B.IsUpgrade(id)
 	if not B.db then return nil end -- (BiS switched off, or not started yet)
 	local s = state or B.State() -- (the saved sets, where the BiS tab has not been open this session)
 	if not s or s.foreign then return nil end
-	local g = gains[id]
+	local g = B.Gain(id, true)
 	return g and g.up and not g.level and not g.owned or false
 end
 
 -- the words for a gain: "+12.4 (+1.8%)  Head, Rings"
 function B.GainText(g)
-	if g.owned then return g.best and "|cff40ff40in your best set|r" or "|cff888888owned, not in your best set|r" end
+	if g.owned then return "" end -- (the tooltip says what it does against what I wear)
 	if g.no then return "|cff888888not for your class|r" end
 	if not g.up then return "|cff888888no gain|r" end
 	local text = "|cff40ff40" .. Signed(g.d) .. "|r"
@@ -1241,14 +1082,20 @@ local function TooltipLine(tip, data)
 	-- (one I own but do not wear, or one that does not better the best set: what it does against what I wear now)
 	local worn = false
 	for _, w in pairs(s.cur) do worn = worn or w == id end
-	local vs = ""
-	if not worn and (g.owned or not g.up) then
+	local text = B.GainText(g)
+	if worn then text = "|cff888888worn|r"
+	elseif g.owned or not g.up then
 		local _, d, p = B.VsWorn(s, id)
 		if d and math.abs(d) > 0.05 then
-			vs = ("  |cff%s%s%s vs worn|r"):format(d > 0 and "40ff40" or "c86464", Signed(d), p and (" (%+.1f%%)"):format(p) or "")
+			text = ("|cff%s%s%s|r"):format(d > 0 and "40ff40" or "c86464", Signed(d), p and (" (%+.1f%%)"):format(p) or "")
+		elseif g.owned then text = "|cff888888no change|r" end
+		if d and d > 0.05 and not g.up and g.breaks and #g.breaks > 0 then -- (more score, but under a cap I reach now)
+			local names = {}
+			for i, word in ipairs(g.breaks) do names[i] = LABEL[word] or word end
+			text = text .. "  |cffc86464drops " .. table.concat(names, ", ") .. " below cap|r"
 		end
 	end
-	tip:AddDoubleLine(DT.TIP .. "BiS  |cff888888" .. s.prof.title .. "|r", B.GainText(g) .. vs .. rank, 0.78, 0.68, 0.37, 1, 1, 1)
+	tip:AddDoubleLine(DT.TIP .. "BiS  |cff888888" .. s.prof.title .. "|r", text .. rank, 0.78, 0.68, 0.37, 1, 1, 1)
 	for _, word in ipairs(g.reach or {}) do
 		tip:AddDoubleLine(" ", ("|cff40ff40reaches %s %g|r"):format(LABEL[word] or word, s.prof.caps[word].cap), 1, 1, 1, 1, 1, 1)
 	end
@@ -1439,6 +1286,81 @@ local function Fits(r, loc, prof)
 	return false
 end
 
+-- What an item does swapped in for what I wear, alone: in the place where it does most (of two rings or trinkets,
+-- the weaker), the score of what I wear with it less without (a two-hander takes the off hand out too, an off hand
+-- a two-hander), and that in percent of the weight of the piece it replaces: as the slot's list says it. A swap that
+-- takes me under a hard cap I meet now is no upgrade, whatever it adds. See B.Gain.
+-- ponytail: one piece at a time, the rest as worn; the recommended set is where pieces go together.
+function Quick(s, id)
+	local it = B.Item(id)
+	if it == nil then return nil end
+	if not it then return false end
+	local g = {}
+	if s.have[id] then g.owned, g.best = true, s.best.has[id] or false return g end
+	if not Usable(it, s.who, true) then g.no = true return g end
+	local rows, top = s.cur, nil
+	for r = 1, #ROWS do
+		if Fits(r, it.loc, s.prof) then
+			local gear = BL.Add({}, s.curGear)
+			local function Out(x)
+				local o = x and B.Item(x)
+				if o then BL.Add(gear, o.s, -1) end
+			end
+			Out(rows[r])
+			if r == 15 and it.loc == "INVTYPE_2HWEAPON" then Out(rows[16]) end
+			local mh = r == 16 and rows[15] and B.Item(rows[15])
+			if mh and mh.loc == "INVTYPE_2HWEAPON" then Out(rows[15]) end
+			BL.Add(gear, it.s)
+			local score, short = BL.Score(gear, s.base, s.prof)
+			local breaks = 0
+			for word in pairs(short) do if not s.curShort[word] then breaks = breaks + 1 end end
+			if not top or breaks < top.breaks or (breaks == top.breaks and score > top.score) then
+				top = { score = score, short = short, r = r, breaks = breaks, gear = gear }
+			end
+		end
+	end
+	if not top then g.no = true return g end
+	g.d = top.score - s.curScore
+	local out = rows[top.r]
+	local was = out and Worth(s, s.curGear, out, out) or 0
+	g.pct = was > 0.05 and g.d / was * 100 or nil
+	local name = ROWS[top.r][1]:gsub(" %d$", "")
+	if it.loc == "INVTYPE_2HWEAPON" then name = "Two-hand" end
+	g.slots, g.reach, g.breaks = { name }, {}, {}
+	for word in pairs(s.curShort) do
+		if not top.short[word] then g.reach[#g.reach + 1] = word end
+	end
+	-- (breaks: every cap I meet now that it takes me under, soft or hard; only a hard one stops it being an upgrade)
+	for word, cap in pairs(s.prof.caps) do
+		local before, after = (s.base[word] or 0) + (s.curGear[word] or 0), (s.base[word] or 0) + (top.gear[word] or 0)
+		if before >= cap.cap - 1e-9 and after < cap.cap - 1e-9 then g.breaks[#g.breaks + 1] = word end
+	end
+	table.sort(g.reach)
+	table.sort(g.breaks)
+	if it.lvl > s.who.level then g.level = it.lvl end
+	g.up = top.breaks == 0 and (g.d > 0.005 or #g.reach > 0)
+	return g
+end
+
+-- every item of the pool and the list I do not own that would better what I wear: s.upg, the most first
+function Upgrades(s)
+	local seen = {}
+	local function Try(id)
+		if seen[id] or s.have[id] then return end
+		seen[id] = true
+		local g = B.Gain(id)
+		if g and g.up and not g.level then s.upg[#s.upg + 1] = { id = id, g = g } end
+	end
+	for _, c in ipairs(s.pool or {}) do Try(c.id) end
+	for id in pairs(s.list or {}) do Try(id) end
+	table.sort(s.upg, function(a, b)
+		if (#a.g.reach > 0) ~= (#b.g.reach > 0) then return #a.g.reach > 0 end
+		if a.g.d ~= b.g.d then return a.g.d > b.g.d end
+		return a.id < b.id
+	end)
+	for i, u in ipairs(s.upg) do s.rank[u.id] = i end
+end
+
 -- An item against the worn piece it would replace (the weaker of two rings or trinkets; none: an empty slot):
 -- its weight there, the change, and that in percent of the worn piece's weight (nil for an empty slot).
 -- nil where it cannot be said (not loaded, or worn in no slot this spec uses).
@@ -1461,144 +1383,151 @@ function B.VsWorn(s, id)
 end
 
 ---------------------------------------------------------------------------
--- What there is to get: quest rewards, dungeon drops, crafted and world-drop gear of about my level
+-- The gear there is
 ---------------------------------------------------------------------------
 -- Which items there are is not DawnTools' own: read at runtime from QuestieDB as the Items tab reads it (quest
--- rewards, drops), from the dungeon list (Modules/Dungeon.lua) and the recipes (DT.Recipes: from the store, Core/DBSeed.lua). What each
--- gives is asked of the game, a batch a pass, and rated with the profile in use.
--- ponytail: gear of any level up to mine, the best few of each type by item level (the game is asked for each once
--- and its facts kept); WINDOW: which dungeons count as near, for a boss drop never cut. A quest reward counts whichever side gives the quest.
+-- rewards, drops, vendors), from the dungeon list (Modules/Dungeon.lua) and the recipes (DT.CraftSkill). Every
+-- wearable one is asked of the game once, ever, a few a frame in the background (the loader); what it gives is kept
+-- in the saved file (db.facts). A spec's pool is then every one its class may wear at the level looked at and can
+-- get, read from there: no item is left out for its level or its type.
+-- ponytail: an item the game never answers for is left out this session and asked again the next (or on Recalculate).
 
-local WINDOW = 15
-local function Cap0(type) return type < 300 and 60 or type < 402 and 150 or 100 end
-local function Cap(type) if type > 10000 then return math.floor(Cap0(type - 10000) / 4) end return Cap0(type) end -- (asked of the game for a weapon type, for rings, necks, trinkets and cloaks, for an armor type)
 -- the words for where an item is from (the owner's: crafted, bought, found, quest); a boss's drop is a Raid where its dungeon is one
 local TAG = { quest = "Quest", crafted = "Crafted", boe = "World Drop", vendor = "Vendor", dungeon = "Dungeon", owned = "Owned" }
 local LISTKIND = { ["dungeon drop"] = "dungeon", crafted = "crafted", quest = "quest", ["world drop"] = "boe" } -- (the words of Data/BisLists.lua)
 local RANK = { dungeon = 5, quest = 4, crafted = 3, boe = 2, vendor = 1 } -- (an item of two kinds is listed under the higher)
-B.finder = finder
 
--- the items to look at, for the class picked and its level; false while the item list is still being read
-local function Gather()
-	local Item = DT.Item
-	local class, who = Target()
-	local level = who.level
-	if finder.key == FinderKey() then return true end
-	if Fight() then return false end -- (a walk through every item there is: not in a fight)
-	if Item and Item.Start and Item.Start() then -- (still reading: read on a little)
-		Item.Step(16)
-		if not Item.Ready() then return false end
-	end
-	finder.key, finder.todo, finder.got, finder.kind, finder.tries, finder.who, finder.gone, B.wheres = FinderKey(), {}, {}, {}, {}, who, 0, {}
-	finder.keptKey = nil -- (looked through anew: what it comes to is kept again)
-	local lo = level - WINDOW
-	local V = DT.Market and DT.Market.View
-	-- (far: a boss's drop of a dungeon that is not for this level. It is not looked for as that dungeon's, but
-	-- where the item list has it anyway it is still called a dungeon's drop, not a world drop)
-	local drops, barred, far, Dg, phase = {}, {}, {}, DT.Dungeon, B.Phase()
-	for _, d in ipairs(Dg and Dg.All and Dg.All() or {}) do
-		local near, ok = (d.lo or 0) <= level and (d.hi or 99) >= lo, RaidOk(phase, d)
+-- Every wearable item there is: { ids, kind = { [id] = where it is from }, entry = { [id] = the item list's },
+-- boss = { [id] = the dungeon whose boss drops it } }; nil until the item list is read.
+-- (made anew when the item list or the dungeon list is another, and the loader then goes over it again)
+local function Catalog()
+	local Item, Dg = DT.Item, DT.Dungeon
+	if not (Item and Item.Ready and Item.Ready()) then return nil end
+	local list, dl = Item.All and Item.All() or {}, Dg and Dg.All and Dg.All() or {}
+	if catalog and catalog.list == list and catalog.dl == dl then return catalog end
+	local c = { ids = {}, kind = {}, entry = {}, boss = {}, list = list, dl = dl }
+	for _, d in ipairs(dl) do
 		for _, boss in ipairs(d.bosses) do
-			for id in pairs(boss.has) do
-				-- (a raid this phase does not have: its drops are not looked for elsewhere either)
-				if not near then far[id] = true elseif ok then drops[id] = true else barred[id] = true end
+			for id in pairs(boss.has) do c.boss[id] = d end
+		end
+	end
+	local function Add(id, kind)
+		if not c.kind[id] then c.ids[#c.ids + 1] = id end
+		if (RANK[kind] or 0) > (RANK[c.kind[id]] or 0) then c.kind[id] = kind end
+	end
+	for _, e in ipairs(list) do
+		if e.c == 2 or e.c == 4 then
+			local kind = c.boss[e.id] and "dungeon" or e.src["Quest reward"] and "quest" or ((DT.CraftSkill and DT.CraftSkill[e.id]) or e.src.Crafted) and "crafted"
+				or e.src.Drop and "boe" or e.src.Vendor and "vendor" or nil
+			if kind then
+				c.entry[e.id] = e
+				Add(e.id, kind)
 			end
 		end
 	end
-	-- what the item list says without the game loading anything: gear, of a kind the class may use, of a level that suits
-	local want, seen = {}, {}
-	for _, e in ipairs(Item and Item.All and Item.All() or {}) do
-		local boss = drops[e.id]
-		if boss then seen[e.id] = true end
-		-- (no level asked for: many a ring and cloak; its level is seen once the game has loaded it)
-		-- (FromRaid: only asked of gear of a raid's item level, and only where the phase leaves raids out)
-		-- (any level it asks up to mine: stats decide, not level; the best by item level of each type are asked, below)
-		if (e.c == 2 or e.c == 4) and e.req <= level and (boss or not barred[e.id])
-			and not ((e.ilvl or 0) >= 58 and B.FromRaid(e.id, phase)) then
-			local ok, may = pcall(function() return not (V and V.MayUse) or V.MayUse(e.c, e.s, who.who) end)
-			if (not ok or may ~= false) and not (not boss and B.OtherSide(e)) then
-				local kind = (boss or far[e.id] and not drops[e.id]) and "dungeon" or e.src["Quest reward"] and "quest" or ((DT.CraftSkill and DT.CraftSkill[e.id]) or e.src.Crafted) and "crafted"
-					or e.src.Drop and "boe" or e.src.Vendor and "vendor" or nil
-				if kind then
-					finder.kind[e.id] = kind
-					want[#want + 1] = { id = e.id, ilvl = e.ilvl or 0, type = e.c * 100 + e.s + (kind == "quest" and 10000 or 0), boss = boss }
-				end
-			end
-		end
+	for id in pairs(c.boss) do Add(id, "dungeon") end
+	table.sort(c.ids)
+	catalog = c
+	if B.loader and not B.loader:IsShown() then
+		B.load.at, B.load.waiting, B.load.left = 1, 0, nil
+		B.loader:Show()
 	end
-	for id in pairs(drops) do -- (a boss's drop the item list does not know: looked at first, there are few)
-		if not seen[id] then finder.kind[id], want[#want + 1] = "dungeon", { id = id, ilvl = 999, type = 0 } end
-	end
-	-- ponytail: of each armor or weapon type only the best few by item level (see Cap) are asked of the game, the
-	-- best of every type first (item level tracks strength closely enough; a plain piece for a slot that has few
-	-- high ones can be missed). A slot cap needs the slot, which only the game's loading says.
-	-- A boss's drop of a dungeon for this level is never cut: few, and the ones a list most often names (Sunken
-	-- Temple's plate at 60 stood below a hundred higher pieces of plate and was never looked at). A quest's reward is ranked among quests' only (type + 10000).
-	local types = {}
-	for _, w in ipairs(want) do
-		types[w.type] = types[w.type] or {}
-		table.insert(types[w.type], w)
-	end
-	local kept = {}
-	for kind, list in pairs(types) do
-		table.sort(list, function(a, b) if a.ilvl ~= b.ilvl then return a.ilvl > b.ilvl end return a.id < b.id end)
-		for i, w in ipairs(list) do
-			if kind == 0 or w.boss or i <= Cap(kind) then w.rank, kept[#kept + 1] = kind == 0 and 0 or math.min(i, Cap(kind)) * (kind > 10000 and 4 or 1), w else finder.kind[w.id] = nil end
-		end
-	end
-	table.sort(kept, function(a, b)
-		if a.rank ~= b.rank then return a.rank < b.rank end
-		if a.ilvl ~= b.ilvl then return a.ilvl > b.ilvl end
-		return a.id < b.id
-	end)
-	for i, w in ipairs(kept) do finder.todo[i] = w.id end
-	return true
+	return c
 end
+B.Catalog = Catalog
 
--- how many are still to look at for the key looked at
-function B.Left() return finder.key == FinderKey() and #finder.todo or 0 end
-
--- a batch of them asked of the game; what is gear the class may wear is kept. Once all are looked at, what was
--- found goes into the best set (and its upgrades).
-local function Sift()
-	if Fight() then return end
-	local fresh = Fresh()
-	if fresh then return Touch(BaseKey()) end -- (kept, and not old: the index is not read at all)
-	if not Gather() then return end
-	if #finder.todo == 0 then return Keep() end
-	-- (about 8 ms looked at a pass, and no more than 40 of them asked of the server; the best prospects come first)
-	local who = finder.who
-	local keep, later, unloaded = {}, {}, 0
-	local t0, over = debugprofilestop and debugprofilestop(), false
-	for n, id in ipairs(finder.todo) do
-		if not over and t0 and n % 8 == 0 and debugprofilestop() - t0 > 8 then over = true end
-		if over or n > 300 or unloaded >= 40 then
-			keep[#keep + 1] = id
-		else
-			local it = B.Item(id)
-			if it == nil then
-				-- (not loaded yet: behind the rest, asked again, until the game is not going to say)
-				unloaded = unloaded + 1
-				if B.Gone(id) then finder.gone = finder.gone + 1 else later[#later + 1] = id end
-			elseif it then
-				local kind = finder.kind[id]
-				if it.lvl <= who.level and (kind ~= "boe" or it.boe) and Usable(it, who) then
-					finder.got[#finder.got + 1] = { id = id, loc = it.loc, kind = kind }
-				end
+-- The loader: every item of the catalog asked of the game once (ItemOf keeps what it gives), out of a fight, a few
+-- milliseconds a frame, and no more than RATE questions to the game a second (an item it never answers for is asked
+-- ASKS times, GAP seconds apart, then left for the session). A pass over all of them that finds none waiting is the
+-- last; while it goes, the sets are worked out anew every few seconds with what came in.
+local RATE = 100
+local loader = CreateFrame("Frame")
+local load = { at = 1, waiting = 0, left = nil, budget = RATE, last = nil, got = 0, shown = 0 }
+B.load, B.loader = load, loader
+DT.OnUpdate(loader, "BiS: item loader", function(self)
+	if Fight() or not B.db then return end
+	local c = Catalog()
+	if not c then return end
+	local now = Now()
+	load.budget = math.min(RATE, load.budget + (now - (load.last or now)) * RATE)
+	load.last = now
+	local facts = B.db.facts or {}
+	local t0 = debugprofilestop and debugprofilestop()
+	for _ = 1, 400 do
+		if load.at > #c.ids then
+			load.left, load.at, load.waiting = load.waiting, 1, 0
+			if load.left == 0 then
+				self:Hide()
+				Stale()
+				return
 			end
 		end
+		local id = c.ids[load.at]
+		local unknown = items[id] == nil and facts[id] == nil
+		-- (one the game is asked about now: within the budget, or on from here next frame)
+		local asks = unknown and (asked[id] or 0) < ASKS and (not askedAt[id] or now - askedAt[id] >= GAP)
+		if asks then
+			if load.budget < 1 then break end
+			load.budget = load.budget - 1
+		end
+		load.at = load.at + 1
+		if unknown then
+			if ItemOf(id) ~= nil then load.got = load.got + 1 elseif not B.Gone(id) then load.waiting = load.waiting + 1 end
+		end
+		if t0 and debugprofilestop() - t0 > 3 then break end
 	end
-	for _, id in ipairs(later) do keep[#keep + 1] = id end
-	finder.todo = keep
-	B.redraw = true
-	-- (the set is worked out with what was found as it comes in, every few seconds, and once more when all are looked at)
-	if Cands() == finder.got and #finder.got ~= finder.used and (#keep == 0 or Now() - (finder.shown or 0) >= 3) then
-		finder.shown = Now()
+	if load.got > 0 and now - load.shown >= 5 then
+		load.got, load.shown = 0, now
 		Stale()
 	end
-	if #keep == 0 then Keep() end
+end)
+
+-- how many items are still to come from the game (0: all there is is known; nil: the item list is not read yet)
+function B.Left()
+	if not Catalog() then return nil end
+	if not loader:IsShown() then return 0 end
+	return load.left and math.max(load.left, load.waiting) or #catalog.ids - load.at + 1 + load.waiting
 end
-B.Sift = Sift
+
+-- read again (the Recalculate button): the item list, and every item the game did not answer for
+function B.Reload()
+	catalog = nil
+	for id in pairs(asked) do
+		if items[id] == nil then asked[id], askedAt[id] = nil, nil end
+	end
+	load.at, load.waiting, load.left = 1, 0, nil
+	loader:Show()
+end
+
+-- The pool for who (as Target gives it) at the phase looked at: { { id, kind }... } of every item of the catalog the
+-- game has told of that they may wear and can get: not the other faction's, not a raid's the phase leaves out.
+local otherSide, fromRaid = {}, {} -- (my side and a raid's place do not change in a session: asked once an item)
+function Pool(who)
+	local c = Catalog()
+	if not c then return {} end
+	local phase = B.Phase()
+	local key = phase and phase[1] or "-"
+	fromRaid[key] = fromRaid[key] or {}
+	local raided = fromRaid[key]
+	local out, ids = {}, {}
+	for _, id in ipairs(c.ids) do
+		local it = items[id]
+		if it == nil and B.db.facts then it = B.db.facts[id] end
+		if it and it.lvl <= who.level and (c.kind[id] ~= "boe" or it.boe) and Usable(it, who) then
+			local d, e, ok = c.boss[id], c.entry[id], true
+			if d then
+				ok = RaidOk(phase, d)
+			elseif e then
+				if otherSide[id] == nil then otherSide[id] = B.OtherSide(e) end
+				if raided[id] == nil then raided[id] = (e.ilvl or 0) >= 58 and B.FromRaid(id, phase) or false end
+				ok = not otherSide[id] and not raided[id]
+			end
+			if ok then out[#out + 1], ids[#ids + 1] = { id = id, kind = c.kind[id] }, id end
+		end
+	end
+	out.key = table.concat(ids, ",") -- (the same items, the same pool)
+	return out
+end
 
 -- Two rings, two trinkets: the row of the other one
 local PAIR = { [11] = 12, [12] = 11, [13] = 14, [14] = 13 }
@@ -1617,7 +1546,7 @@ local PAIR = { [11] = 12, [12] = 11, [13] = 14, [14] = 13 }
 --   pct = the gain as a part of the weight of the one to beat (none where that is nothing: an empty slot is "new");
 --   two worn (rings, trinkets): the one to beat is the weaker, and ref says which;
 --   the worn item is the one to beat, not the best I own: an owned one that is not worn says so (kind owned).
--- ponytail: what is looked at is what the finder kept (B.finder.got), what I own and the list's items; a hard cap
+-- ponytail: what is looked at is the pool (every item there is for the spec), what I own and the list's items; a hard cap
 -- not yet reached counts as the weight of its stat only, as in every score: the sets (B.Perm) are where it comes first.
 function B.Rank(r, above, below)
 	local s = state
@@ -1647,7 +1576,7 @@ function B.Rank(r, above, below)
 		end
 	end
 	for _, o in ipairs(s.own) do Add(o.id, "owned") end
-	for _, c in ipairs(Cands()) do Add(c.id, c.kind) end
+	for _, c in ipairs(s.pool or {}) do Add(c.id, c.kind) end
 	for id, word in pairs(s.list or {}) do Add(id, LISTKIND[word] or "dungeon") end
 	table.sort(pool, function(a, b)
 		if a.worth ~= b.worth then return a.worth > b.worth end
@@ -1675,106 +1604,22 @@ function B.Tag(id, kind)
 	return TAG[kind] or "World Drop"
 end
 
--- Whole sets to compare at the last level, each worked out from the same candidates (the list's and what the finder
--- found) with BL.Solve, when asked for and kept until the state is worked out anew:
---   What I wear: the set worn, to stand beside the others on every cap
---   Best set: the set with the best score (s.bis; the best I own where nothing was found)
---   Every cap reached: the same with every cap a hard one, so as close to each as the gear there is goes before score
---   Owned + 3 best finds: what I own and the three biggest upgrades there are (s.upg), and nothing else
+-- What I wear (1), and the recommended set (2: the best there is for the spec, the hard caps first, what is locked kept
+-- in its place: s.bis; the best I own where the pool is empty).
 B.scroll = 0 -- (how far the list on the right is scrolled)
-B.PERMS, B.perm = { "What I wear", "Best set", "Every cap reached", "Owned + 3 best finds" }, 2
 function B.Perm(i)
 	local s = state
 	if not s or Fight() then return nil end
-	s.perms = s.perms or {}
-	if s.perms[i] then return s.perms[i] end
-	local set
-	if i == 1 then
-		set = { rows = s.cur, gear = s.curGear, score = s.curScore, short = s.curShort }
-	elseif i == 2 then
-		set = s.bis or s.best
-	elseif i == 3 then
-		local prof = {}
-		for k, v in pairs(s.prof) do prof[k] = v end
-		prof.caps = {}
-		for word, cap in pairs(s.prof.caps) do prof.caps[word] = { cap = cap.cap, over = cap.over, hard = true } end
-		set = Solve(s.all or s.own, { prof = prof, base = s.base }, s.locks)
-		set.rows = Lay(set.picks, s.cur)
-	else
-		local list = { unpack(s.own) }
-		for k = 1, math.min(3, #s.upg) do
-			local it = B.Item(s.upg[k].id)
-			if it then list[#list + 1] = { id = s.upg[k].id, loc = it.loc, s = it.s, n = 1 } end
-		end
-		set = Solve(list, s, s.locks)
-		set.rows = Lay(set.picks, s.cur)
-	end
-	-- (the upgrades are still being worked out: not kept, so the set is made again once they are)
-	if i ~= 4 or #s.queue == 0 then s.perms[i] = set end
-	return set
+	if i == 1 then return { rows = s.cur, gear = s.curGear, score = s.curScore, short = s.curShort } end
+	return s.bis or s.best
 end
 
 -- "Hit" for "Hit %"
 function B.Short(word) return ((LABEL[word] or word):gsub("%s*%%$", "")) end
 
--- What swapping just one piece of a set into the set I wear does, for every slot where they differ: { r, id, d = the
--- change in score, pct (of the weight of the piece it replaces), caps = { [stat] = { before, after } }, words = the
--- capped stats, breaks = those it takes from reached to short, order, needs = { { word, by = the slot whose piece
--- brings most of that stat } } }. The order: swaps that break no cap I meet now first, the biggest gain first, then
--- those that break one (each says which piece to get first: the one that adds most of what it takes away).
--- ponytail: one swap at a time; two that only work together (a ring for a ring) are said as "after the other".
-function B.Swaps(s, set)
-	if set.swaps then return set.swaps end
-	local swaps, list, words = {}, {}, {}
-	for word in pairs(s.prof.caps) do words[#words + 1] = word end
-	table.sort(words)
-	for r = 1, #ROWS do
-		local id, cur = set.rows[r], s.cur[r]
-		local it = id and id ~= cur and B.Item(id)
-		if it then
-			local g = BL.Add({}, s.curGear)
-			local function Out(x)
-				local o = x and B.Item(x)
-				if o then BL.Add(g, o.s, -1) end
-			end
-			Out(cur)
-			if r == 15 and it.loc == "INVTYPE_2HWEAPON" then Out(s.cur[16]) end
-			BL.Add(g, it.s)
-			local w = { r = r, id = id, d = BL.Score(g, s.base, s.prof) - s.curScore, caps = {}, breaks = {}, words = words }
-			local was = cur and Worth(s, s.curGear, cur, cur) or 0
-			w.pct = was > 0.05 and w.d / was * 100 or nil
-			for _, word in ipairs(words) do
-				local cap = s.prof.caps[word].cap
-				local before, after = (s.base[word] or 0) + (s.curGear[word] or 0), (s.base[word] or 0) + (g[word] or 0)
-				w.caps[word] = { before = before, after = after }
-				if before >= cap - 1e-9 and after < cap - 1e-9 then w.breaks[#w.breaks + 1] = word end
-			end
-			swaps[r], list[#list + 1] = w, w
-		end
-	end
-	table.sort(list, function(a, b)
-		if (#a.breaks == 0) ~= (#b.breaks == 0) then return #a.breaks == 0 end
-		if a.d ~= b.d then return a.d > b.d end
-		return a.r < b.r
-	end)
-	for k, w in ipairs(list) do
-		w.order, w.needs = k, {}
-		for j, word in ipairs(w.breaks) do
-			local most, at = 0.05, nil
-			for _, o in ipairs(list) do
-				local got = o ~= w and o.caps[word].after - o.caps[word].before or 0
-				if got > most then most, at = got, o end
-			end
-			w.needs[j] = { word = word, by = at and at.r }
-		end
-	end
-	set.swaps = swaps
-	return swaps
-end
-
--- where an item of the list is from, as far as the finder and the list say (nil: not known)
+-- where an item is from, as far as the catalog and the list say (nil: not known)
 function B.Kind(id)
-	return finder.kind[id] or finder.ckind[id] or state and state.list and LISTKIND[state.list[id]] or nil
+	return catalog and catalog.kind[id] or state and state.list and LISTKIND[state.list[id]] or nil
 end
 
 local PLAIN = { ["world drop"] = true, ["quest reward"] = true, ["sold by a vendor"] = true, dungeon = true, crafted = true }
@@ -1900,7 +1745,7 @@ local function Slot(f, r)
 	b:SetScript("OnClick", function(self, button)
 		if self.id and ItemClick(self.id, button) then return end
 		if button == "RightButton" and B.Locks()[self.row] then return B.Lock(self.row) end
-		picked, B.slotMode, B.scroll = self.row, true, 0
+		picked, B.scroll = self.row, 0
 		B.Refresh()
 	end)
 	return b
@@ -1927,8 +1772,8 @@ local function Line(f)
 	local highlight = l.item:CreateTexture(nil, "HIGHLIGHT")
 	highlight:SetAllPoints()
 	highlight:SetColorTexture(1, 1, 1, 0.08)
-	l.n, l.wt, l.diff, l.pct = Text(f, "GameFontDisableSmall"), Text(f, nil, "RIGHT"), Text(f, nil, "RIGHT"), Text(f, "GameFontDisableSmall", "RIGHT")
-	l.from, l.warn = Text(f), Text(f)
+	l.wt, l.diff, l.pct = Text(f, nil, "RIGHT"), Text(f, nil, "RIGHT"), Text(f, "GameFontDisableSmall", "RIGHT")
+	l.from = Text(f)
 	return l
 end
 
@@ -1948,39 +1793,12 @@ local function BuildGear(f)
 	gear.note:SetPoint("LEFT", gear.head, "RIGHT", 10, 0)
 	gear.note:SetPoint("RIGHT", f, "RIGHT", -206, 0)
 	gear.cols = {}
-	for c = 1, 7 do gear.cols[c] = Text(f, "GameFontNormalSmall", c >= 2 and c <= 4 and "RIGHT" or "LEFT") end -- (the muted gold of the other tabs)
-	-- (the last level: the whole set to begin with, in a few versions to compare as tabs; a way back to it from a slot)
-	gear.perms = {}
-	for k, name in ipairs(B.PERMS) do
-		local b = CreateFrame("Button", nil, f)
-		b:SetSize(150, 18)
-		b.sel = b:CreateTexture(nil, "BACKGROUND")
-		b.sel:SetAllPoints()
-		b.sel:SetColorTexture(1, 0.82, 0, 0.18)
-		local highlight = b:CreateTexture(nil, "HIGHLIGHT")
-		highlight:SetAllPoints()
-		highlight:SetColorTexture(1, 1, 1, 0.08)
-		b.label = Text(b, "GameFontHighlightSmall", "CENTER")
-		b.label:SetAllPoints()
-		b.label:SetText(name)
-		b:SetScript("OnClick", function() B.perm, B.scroll = k, 0 B.Refresh() end)
-		gear.perms[k] = b
-	end
-	gear.back = CreateFrame("Button", nil, f)
-	gear.back:SetSize(90, 18)
-	local shade = gear.back:CreateTexture(nil, "BACKGROUND")
-	shade:SetAllPoints()
-	shade:SetColorTexture(1, 1, 1, 0.08)
-	gear.back.label = Text(gear.back, "GameFontHighlightSmall", "CENTER")
-	gear.back.label:SetAllPoints()
-	gear.back.label:SetText("Whole set")
-	gear.back:SetScript("OnClick", function() B.slotMode, B.scroll = false, 0 B.Refresh() end)
+	for c = 1, 5 do gear.cols[c] = Text(f, "GameFontNormalSmall", c <= 3 and "RIGHT" or "LEFT") end -- (the muted gold of the other tabs)
 	-- (what is shown is kept from one session to the next: looked through and worked out anew on a click)
 	gear.redo = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
 	gear.redo:SetSize(90, 18)
 	gear.redo:SetText("Recalculate")
-	gear.redo:SetScript("OnClick", function() B.Recalc() end)
-	gear.sum = {} -- (the set's score and caps beside mine: a small table of its own above the items)
+	gear.redo:SetScript("OnClick", function() B.AskRecalc() end)
 	-- the thin scroll bar of the NPC tab, for a list that is longer than the panel
 	gear.bar = CreateFrame("Slider", nil, f)
 	gear.bar:SetOrientation("VERTICAL")
@@ -2019,8 +1837,8 @@ local function DrawSlot(b, r, s)
 	local part = (bis and shown == bis) and 1 or (worth and top and top > 0) and worth / top or nil
 	if part then b.tier:SetColorTexture(Tier(part)) else b.tier:SetColorTexture(1, 1, 1, shown and 0.25 or 0.08) end
 	b.score:SetText(worth and (Fmt(worth) .. (part and (" |cff888888%d%%|r"):format(math.floor(part * 100 + 0.5)) or "")) or "")
-	-- (a green mark: something I own is better here)
-	b.name:SetText((not s.foreign and best and best ~= cur and "|cff40ff40>|r " or "") .. (B.Locks()[r] and LOCKED or "") .. (shown and Name(shown) or "|cff666666nothing worn|r"))
+	-- (a green mark: the recommended set has another piece here)
+	b.name:SetText((not s.foreign and bis and bis ~= cur and "|cff40ff40>|r " or "") .. (B.Locks()[r] and LOCKED or "") .. (shown and Name(shown) or "|cff666666nothing worn|r"))
 end
 
 -- a number with its sign, in green or a muted red; nothing worth saying: grey
@@ -2037,10 +1855,10 @@ local function DrawGear(f, s)
 	gear.progress.width = LEFT_W - 6
 	if s.foreign then
 		gear.progress:Set(0, "gold", s.bis and ("%s: %s"):format(s.list and "Best pre-raid set" or "Best set found", Fmt(s.bis.score))
-			or B.Left() > 0 and "|cff888888Looking for gear...|r" or "|cff888888No gear found for this spec yet|r")
+			or (B.Left() or 1) > 0 and "|cff888888Loading items...|r" or "|cff888888No gear found for this spec yet|r")
 	elseif s.bis and s.bis.score > 0 then
 		local part = s.curScore / s.bis.score
-		gear.progress:Set(part, part >= 0.995 and "met" or "gold", ("%d%% of the best %s"):format(math.floor(part * 100 + 0.5), s.list and "pre-raid set" or "set found"))
+		gear.progress:Set(part, part >= 0.995 and "met" or "gold", ("%d%% of the recommended set%s"):format(math.floor(part * 100 + 0.5), s.list and "" or "  |cff888888(no pre-raid list yet)|r"))
 	else
 		local part = s.best.score > 0 and s.curScore / s.best.score or 0
 		gear.progress:Set(part, part >= 0.995 and "met" or "gold", ("%d%% of the best I own  |cff888888(no pre-raid list yet)|r"):format(math.floor(part * 100 + 0.5)))
@@ -2093,122 +1911,55 @@ local function DrawGear(f, s)
 		b:SetSize(LEFT_W - 6, rowH - 1)
 		DrawSlot(b, r, s)
 	end
-	-- the right: at the last level the whole set to begin with (a breakpoint game: the set I wear and sets to compare,
-	-- where each stands on its caps, and what each piece alone would do); below it, and at the last level once a slot
-	-- is clicked, one list for the slot
+	-- the right: the slot clicked, every item for it (the recommended one marked), what I wear among them
 	local x, rw = LEFT_W + 10, w - LEFT_W - 24
 	local phase = B.Phase()
-	local showSet = phase ~= nil and not B.slotMode
-	local vis = s.foreign and { 2, 3 } or { 1, 2, 3, 4 } -- (the sets shown: not "what I wear" for another class)
-	if s.foreign and (B.perm == 1 or B.perm == 4) then B.perm = 2 end
-	local perm = showSet and B.Perm(B.perm) or nil
 	gear.head:ClearAllPoints()
 	gear.head:SetPoint("TOPLEFT", x, -top)
 	local nlock = 0
 	for _ in pairs(B.Locks()) do nlock = nlock + 1 end
-	gear.head:SetText((showSet and "Whole set" or ROWS[picked][1]) .. (nlock > 0 and (" |cff888888(%d locked)|r"):format(nlock) or ""))
-	gear.back:ClearAllPoints()
-	gear.back:SetPoint("TOPRIGHT", f, "TOPRIGHT", -14, -top)
-	gear.back:SetShown(phase ~= nil and not showSet)
+	gear.head:SetText(ROWS[picked][1] .. (nlock > 0 and (" |cff888888(%d locked)|r"):format(nlock) or ""))
 	gear.redo:ClearAllPoints()
-	gear.redo:SetPoint("TOPRIGHT", f, "TOPRIGHT", -108, -top)
+	gear.redo:SetPoint("TOPRIGHT", f, "TOPRIGHT", -14, -top)
 	gear.redo:SetShown(not s.foreign)
-	for _, b in ipairs(gear.perms) do b:Hide() end
-	for k, idx in ipairs(vis) do
-		local b = gear.perms[idx]
-		b:ClearAllPoints()
-		b:SetPoint("TOPLEFT", x + (k - 1) * 154, -top - 20)
-		b:SetShown(showSet)
-		b.sel:SetShown(idx == B.perm)
-	end
-	local ready = Fresh() and true or Gather()
 	local left = B.Left()
-	gear.note:SetText(not ready and "reading the item list..." or left > 0 and ("%d items still to look at, the best so far are shown..."):format(left)
+	local ready = left ~= nil
+	gear.note:SetText(not ready and "reading the item list..." or left > 0 and ("%d items still to load, the best so far are shown..."):format(left)
 		or ("level %d, %s%s%s"):format(s.who.level, s.who.className, phase and (", " .. phase[2]:lower()) or "", s.at and (", worked out %s ago"):format(Ago(s.at)) or ""))
-	-- the columns: icon, name, then right-aligned numbers (weight, difference, percent), the source and, in a set, a warning
-	local P
-	if showSet then
-		P = { n = 0, nw = 54, icon = 56, name = 74, namew = 142, diff = 220, diffw = 48, pct = 272, pctw = 50, kind = 330, warnw = 128 }
-	else
-		P = { icon = 2, name = 20, namew = 170, wt = 194, wtw = 44, diff = 242, diffw = 48, pct = 294, pctw = 50, kind = 352 }
-	end
-	P.warn = showSet and rw - P.warnw or nil
-	P.wherew = math.max(40, (P.warn and P.warn - 6 or rw) - P.kind)
-	-- the caps, as I stand and as the set would: reached (over by how much) or short by how much
-	local function Standing(total, cap)
-		if total >= cap - 1e-9 then
-			return ("|cff%s%s %s%s|r"):format(total >= cap * 1.1 and "60a8e0" or "40ff40", Fmt(total), total >= cap * 1.1 and "well over" or "reached", total > cap + 0.05 and (", +" .. Fmt(total - cap)) or "")
+	-- the columns: icon, name, then right-aligned numbers (weight, difference, percent), the source
+	local P = { icon = 2, name = 20, namew = 170, wt = 194, wtw = 44, diff = 242, diffw = 48, pct = 294, pctw = 50, kind = 352 }
+	P.wherew = math.max(40, rw - P.kind)
+	local hy = top + 22 -- (the column titles, one line above the rows)
+	local titles = { { P.wt, "weight", P.wtw }, { P.diff, s.foreign and "" or "vs worn", P.diffw }, { P.pct, s.foreign and "" or "%", P.pctw },
+		{ P.kind, "source", P.wherew }, { P.name, "item", P.namew } }
+	for c, col in ipairs(gear.cols) do
+		local t = titles[c]
+		col:ClearAllPoints()
+		if t then
+			col:SetPoint("TOPLEFT", x + t[1], -hy)
+			col:SetWidth(t[3])
 		end
-		return ("|cffe8a030%s short by %s|r"):format(Fmt(total), Fmt(cap - total))
-	end
-	-- the whole set: its score and every cap beside mine, as a small table of their own above the items
-	local sum = {}
-	if showSet and perm then
-		local mine, other = not s.foreign, B.perm ~= 1
-		sum[1] = { "", mine and "|cffffd100You now|r" or "", other and ("|cffffd100" .. B.PERMS[B.perm] .. "|r") or "" }
-		sum[2] = { "Score", mine and Fmt(s.curScore) or "", other and Fmt(perm.score) or "" }
-		for _, word in ipairs(words) do
-			local cap = s.prof.caps[word].cap
-			local now, there = (s.base[word] or 0) + (s.curGear[word] or 0), (s.base[word] or 0) + (perm.gear[word] or 0)
-			sum[#sum + 1] = { ("%s %scap %s|r"):format(LABEL[word] or word, GREY, Fmt(cap)), mine and Standing(now, cap) or "", other and Standing(there, cap) or "" }
-		end
-	end
-	for k = 1, math.max(#sum, #gear.sum) do
-		local l = gear.sum[k]
-		if not l and sum[k] then
-			l = { Text(f, "GameFontNormalSmall"), Text(f), Text(f) }
-			gear.sum[k] = l
-		end
-		for c = 1, l and 3 or 0 do
-			l[c]:ClearAllPoints()
-			l[c]:SetPoint("TOPLEFT", x + ({ 4, 134, 334 })[c], -(top + 42 + (k - 1) * 14))
-			l[c]:SetWidth(c == 1 and 126 or 196)
-			l[c]:SetText(sum[k] and sum[k][c] or "")
-		end
-	end
-	local hy = showSet and top + 42 + #sum * 14 + (#sum > 0 and 8 or 0) or top + 22 -- (the column titles, one line above the rows)
-	local titles = { { P.n, "slot", P.nw }, { P.wt, "weight", P.wtw }, { P.diff, s.foreign and "" or "vs worn", P.diffw }, { P.pct, s.foreign and "" or "%", P.pctw },
-		{ P.kind, "source", P.wherew }, { P.warn, "breakpoints", P.warnw }, { P.name, "item", P.namew } }
-	for c, t in ipairs(titles) do
-		gear.cols[c]:ClearAllPoints()
-		if t[1] then
-			gear.cols[c]:SetPoint("TOPLEFT", x + t[1], -hy)
-			gear.cols[c]:SetWidth(t[3])
-		end
-		gear.cols[c]:SetText(t[1] and t[2] or "")
+		col:SetText(t and t[2] or "")
 	end
 	local ry = hy + 16
-	-- what there is to show, as lines: { head = a note } or { c = an item row, label = the slot in a set }; then those that fit
+	-- what there is to show, as lines: { head = a note } or { c = an item row }; then those that fit
 	local rows = {}
-	local function Add(head, c, label) rows[#rows + 1] = { head = head, c = c, label = label } end
-	if showSet and perm then
-		local swaps = B.perm > 1 and not s.foreign and B.Swaps(s, perm) or {}
-		for r = 1, #ROWS do
-			local id, cur = perm.rows[r], s.cur[r]
-			if id then
-				local c = { id = id, kind = s.have[id] and id ~= cur and "owned" or B.Kind(id), worn = id == cur, swap = swaps[r] }
-				if swaps[r] then c.gain, c.pct = swaps[r].d, swaps[r].pct end
-				Add(nil, c, ROWS[r][1])
-			else
-				Add(GREY .. ROWS[r][1] .. ": nothing|r")
-			end
+	local function Add(head, c) rows[#rows + 1] = { head = head, c = c } end
+	local rec = {} -- (the recommended set's pieces)
+	for _, id in pairs(s.bis and s.bis.rows or {}) do rec[id] = true end
+	local rank = ready and B.Rank(picked, 500, s.foreign and 0 or BELOW) or nil
+	if rank then
+		if PAIR[picked] and not s.foreign then
+			Add(("%sTwo of them: compared with your weaker one%s|r"):format(GREY, rank.ref ~= picked and (" (" .. ROWS[rank.ref][1] .. ")") or ""))
 		end
-	elseif not showSet then
-		local extra = PAIR[picked] and 1 or 0
-		local rank = ready and B.Rank(picked, 500, s.foreign and 0 or BELOW) or nil
-		if rank then
-			if extra == 1 and not s.foreign then
-				Add(("%sTwo of them: compared with your weaker one%s|r"):format(GREY, rank.ref ~= picked and (" (" .. ROWS[rank.ref][1] .. ")") or ""))
-			end
-			for _, c in ipairs(rank.above) do Add(nil, c) end
-			if not s.foreign then
-				if rank.blocked then Add(GREY .. "You wield a two-hander: no off hand to compare.|r") end
-				if #rank.above == 0 and not rank.blocked then Add("|cff40ff40Nothing found beats what you wear here.|r") end
-				if rank.worn then Add(nil, rank.worn) else Add(GREY .. "nothing worn|r") end
-				for _, c in ipairs(rank.below) do Add(nil, c) end
-			elseif rank.none then
-				Add(GREY .. "nothing for this slot|r")
-			end
+		for _, c in ipairs(rank.above) do Add(nil, c) end
+		if not s.foreign then
+			if rank.blocked then Add(GREY .. "You wield a two-hander: no off hand to compare.|r") end
+			if #rank.above == 0 and not rank.blocked then Add("|cff40ff40Nothing found beats what you wear here.|r") end
+			if rank.worn then Add(nil, rank.worn) else Add(GREY .. "nothing worn|r") end
+			for _, c in ipairs(rank.below) do Add(nil, c) end
+		elseif rank.none then
+			Add(GREY .. "nothing for this slot|r")
 		end
 	end
 	-- (as many lines as the panel has room for; the mouse wheel and the bar move the rest)
@@ -2240,13 +1991,12 @@ local function DrawGear(f, s)
 			l.rule1:SetSize(rw, 1)
 			l.rule2:SetPoint("TOPLEFT", x, y - ROW + 1)
 			l.rule2:SetSize(rw, 1)
-			local worn = c and c.worn and not showSet
+			local worn = c and c.worn
 			l.band:SetShown(worn and true or false)
 			l.rule1:SetShown(worn and true or false)
 			l.rule2:SetShown(worn and true or false)
 			At(l.head, 4, rw - 8, row and row.head or "")
 			local it = c and B.Item(c.id)
-			At(l.n, P.n, P.nw or 10, c and row.label and GREY .. row.label .. "|r" or "")
 			l.icon:ClearAllPoints()
 			l.icon:SetPoint("TOPLEFT", x + P.icon, y - 2)
 			l.icon:SetTexture(it and it.icon or nil)
@@ -2273,38 +2023,12 @@ local function DrawGear(f, s)
 			local tag, where = "", ""
 			if c then tag, where = B.SourceText(c.id, c.worn) end
 			At(l.from, P.kind, P.wherew, c and ("|cff%s%s|r%s"):format(KIND[tag] or "c080ff", tag, where ~= "" and ("  " .. GREY .. where .. "|r") or "") or "")
-			-- (a set: what this piece alone does to the set I wear, in amber where it breaks a cap; else its place in the order to buy in)
-			local sw = c and c.swap
-			local warn, tip = "", nil
-			if sw then
-				local deltas, lines = {}, { ("Just this piece in your set: %+.1f score%s"):format(sw.d, sw.pct and (" (%+.1f%%)"):format(sw.pct) or "") }
-				for _, word in ipairs(sw.words) do
-					local capw, c2 = s.prof.caps[word], sw.caps[word]
-					local d = c2.after - c2.before
-					if math.abs(d) > 0.05 then deltas[#deltas + 1] = ("%s %+.1f"):format(B.Short(word), d) end
-					lines[#lines + 1] = ("%s %s: %s -> %s"):format(LABEL[word] or word, Fmt(capw.cap), Fmt(c2.before), Fmt(c2.after))
-				end
-				local names = {}
-				for j, word in ipairs(sw.breaks) do
-					names[j] = B.Short(word)
-					local need = sw.needs and sw.needs[j]
-					lines[#lines + 1] = ("|cffe8a030Takes you under the %s cap you meet now%s|r"):format(LABEL[word] or word,
-						need and need.by and (": get the " .. ROWS[need.by][1]:lower() .. " first") or " and nothing else found makes it up")
-				end
-				if #sw.breaks > 0 then
-					local need = sw.needs and sw.needs[1]
-					warn = ("|cffe8a030! %s %s|r"):format(table.concat(names, ","), need and need.by and ("after " .. ROWS[need.by][1]:lower()) or "no fix found")
-				else
-					warn = ("%s#%d %s|r"):format(GREY, sw.order, table.concat(deltas, " ", 1, math.min(2, #deltas)))
-				end
-				tip = lines
-			end
-			At(l.warn, P.warn, P.warnw or 10, warn)
-			l.item.quest, l.item.note, l.item.swap = c and c.kind == "quest" and B.quests[c.id] or nil, where, tip
-			local lrow = not showSet and not s.foreign and c and picked or nil
+			l.item.quest, l.item.note = c and c.kind == "quest" and B.quests[c.id] or nil, where
+			local lrow = not s.foreign and c and picked or nil
 			l.item.locked = lrow and B.Locks()[lrow] == c.id or nil
 			l.item.lock = lrow and function() B.Lock(lrow, c.id) end or nil
-			if l.item.locked then l.item.text:SetText(LOCKED .. Name(c.id)) end
+			-- (marks: locked here, and a piece of the recommended set)
+			if c then l.item.text:SetText((l.item.locked and LOCKED or "") .. (rec[c.id] and REC or "") .. Name(c.id)) end
 		end
 	end
 end
@@ -2379,7 +2103,7 @@ local function BuildUp(f)
 	up.redo:SetSize(90, 20)
 	up.redo:SetText("Recalculate")
 	up.redo:SetPoint("TOPRIGHT", f, "TOPRIGHT", -306, -1)
-	up.redo:SetScript("OnClick", function() B.Recalc() end)
+	up.redo:SetScript("OnClick", function() B.AskRecalc() end)
 	up.heads = {}
 	for c in ipairs(UPCOLS) do up.heads[c] = Text(f, "GameFontNormalSmall", UPCOLS[c][3]) end
 end
@@ -2388,19 +2112,18 @@ local function DrawUp(f, s)
 	local list = Filtered(s)
 	local fit = math.max(1, math.floor((f:GetHeight() - 42) / ROW_H))
 	offset = math.max(0, math.min(offset, math.max(0, #list - fit)))
-	local left = #s.queue
+	local left = 0
 	local name = up.filter:sub(1, 2) == "d:" and up.filter:sub(3)
 	for _, e in ipairs(FILTERS) do if e[1] == up.filter then name = e[2] end end
 	up.pick.label:SetText(name or "All sources")
 	local text = (s.foreign and "|cff888888Another class's spec: there is nothing of yours to upgrade.|r"
-		or B.Left() > 0 and ("|cff888888Looking through the gear there is for this spec: %d more to go...|r"):format(B.Left())
-		or left > 0 and ("|cff888888Working out %d more...|r"):format(left)
+		or (B.Left() or 1) > 0 and ("|cff888888Loading the items there are: %s more to go. The list grows as they come.|r"):format(B.Left() or "the item list and")
 		or not s.all and "|cff888888No gear found for this spec yet. The tooltip line still says what an item would gain over the gear you own.|r"
 		or #s.upg == 0 and "|cff40ff40Nothing found would improve your best set.|r"
 		or up.filter ~= "all" and (#list == 0 and ("|cffff8040None of the %d upgrades is from %s.|r"):format(#s.upg, name)
 			or ("%d of the %d upgrades from %s, the biggest gain first."):format(#list, #s.upg, name))
 		or ("%d would improve your best set, the biggest gain first. |cff888888A gain is in score, and in percent of the best set %s.|r"):format(#s.upg, s.list and "of the pre-raid list" or "found"))
-	if s.at and left == 0 and B.Left() == 0 and not s.foreign then
+	if s.at and B.Left() == 0 and not s.foreign then
 		text = text .. ("  |cff888888Worked out %s ago.|r"):format(Ago(s.at))
 	end
 	up.note:SetText(text)
@@ -2889,16 +2612,11 @@ local function Build(parent)
 		Refresh()
 	end)
 	panel:SetScript("OnSizeChanged", Refresh)
-	local nextUpdate, nextSift = 0, 0
+	local nextUpdate = 0
 	DT.OnUpdate(panel, "tab: BiS", function()
-		-- (the gear there is to get: looked at a batch at a time, while the tab is up)
 		if held and GetTime() >= held.at then -- (a button of the level held down: it goes on)
 			held.at, fired = GetTime() + 0.07, true
 			Step(held.d)
-		end
-		if state and GetTime() >= nextSift then
-			nextSift = GetTime() + ((DT.Item and DT.Item.Ready and not DT.Item.Ready()) and 0 or 0.2) -- (the item list still read: every frame)
-			Sift()
 		end
 		if not (dirty or B.redraw) or GetTime() < nextUpdate or Fight() then return end
 		nextUpdate = GetTime() + 0.5
@@ -2924,10 +2642,10 @@ DT:RegisterModule("bis", {
 	onEnable = function(mod)
 		B.db, B.me = mod.db, UnitGUID("player")
 		if B.db.factsV ~= FACTS then B.db.facts, B.db.factsV = {}, FACTS end
-		for _, key in ipairs({ "pick", "edit", "base", "last", "facts", "level", "phase", "kept", "seen", "saved", "locks" }) do
+		for _, key in ipairs({ "pick", "edit", "base", "last", "facts", "level", "phase", "seen", "saved", "locks" }) do
 			if type(B.db[key]) ~= "table" then B.db[key] = {} end
 		end
-		B.db.kept.keys, B.db.kept.order = type(B.db.kept.keys) == "table" and B.db.kept.keys or {}, type(B.db.kept.order) == "table" and B.db.kept.order or {}
+		B.db.kept = nil -- (the lists an older finder kept: the loader has no need of them)
 		for _, event in ipairs({ "BAG_UPDATE_DELAYED", "PLAYER_EQUIPMENT_CHANGED", "BANKFRAME_CLOSED", "PLAYER_LEVEL_UP", "CHARACTER_POINTS_CHANGED", "PLAYER_REGEN_ENABLED" }) do
 			DT:On(event, Stale)
 		end
@@ -2952,7 +2670,7 @@ DT:RegisterModule("bis", {
 				return
 			end
 			if not asked[id] or items[id] ~= nil then return end
-			if not state or state.have[id] or (state.list and state.list[id]) then Stale() else B.redraw = true end
+			if state and (state.have[id] or (state.list and state.list[id])) then Stale() end -- (the rest: the loader's, a few seconds on)
 		end)
 		DT:On("START_LOOT_ROLL", function(rollID) B.OnRoll(rollID) end)
 		if TooltipDataProcessor and TooltipDataProcessor.AddTooltipPostCall then

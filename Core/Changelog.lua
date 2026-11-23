@@ -6,6 +6,21 @@
 local _, DT = ...
 
 DT.CHANGELOG = {
+	{ "0.55.2", "2026-11-22", {
+		"BiS: the item tooltip shows only the gain against what you wear, +score (+%), and says when an item would drop you below a cap.",
+	} },
+	{ "0.55.1", "2026-11-22", {
+		"BiS: no whole-set view at level 60: every level shows the list of the slot clicked, the recommended piece marked [R], and the slot marked where the recommended set has another piece.",
+		"BiS: the recommended set counts what you own, so it never gives up a piece you have for a worse one.",
+		"BiS: tanks are only shown their heaviest armor (plate for warriors and paladins from level 40, leather for bears).",
+		"BiS: the tooltip and Upgrades compare with what you wear, the same numbers as the slot list.",
+		"BiS: Recalculate asks first.",
+	} },
+	{ "0.55.0", "2026-11-22", {
+		"BiS rebuilt: every item there is is loaded once, in the background, and kept. No item is left out for its level or type any more (Avenguard Helm), and nothing is looked through again after a /reload.",
+		"BiS: the Gear view sets what you wear beside one recommended set, which keeps your locked items and reaches the defense cap, then hit, first.",
+		"BiS: upgrades and the tooltip line are worked out at once, by swapping the item into your best set; a piece that takes you under a hard cap is no upgrade.",
+	} },
 	{ "0.54.5", "2026-11-21", {
 		"BiS: gear of the other faction is left out: its reputations (cities, battlegrounds), and what only its quests (by their races, or else by who gives them) or vendors give. Where both sides have a quest for it, yours is the one named.",
 		"BiS: before a raid is in the phase, rewards for its bosses' drops are left out too (the Head of Nefarian's, handed in in a city).",
