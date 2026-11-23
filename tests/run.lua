@@ -7054,6 +7054,9 @@ end)()
 		eq(F1.DT.DB.Take("loot:2", ("loot:645:aaaaaa	%d	guild	3;1:9"):format(F1.DT.Now())), 1, "she learns something new")
 		step(120)
 		check(F2.DT.DB.Root() ~= F1.DT.DB.Root(), "it does not come by itself within two minutes")
+		-- (her guild channel named him only "Finn": his whispers, from "Finn Smith", are still a member's)
+		local fp = F1.DT.Comms.peers
+		fp["Finn"], fp["Finn Smith"] = fp["Finn Smith"], nil
 		F2.slash("db sync")
 		check(F2.printed[#F2.printed]:find("asked 1 sharing member for", 1, true), "Sync now asks her at once: " .. F2.printed[#F2.printed])
 		step(60)

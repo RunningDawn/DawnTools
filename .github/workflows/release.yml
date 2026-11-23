@@ -44,5 +44,10 @@ jobs:
           git tag -a "${{ steps.version.outputs.version }}" -m "${{ steps.version.outputs.version }}"
           git push origin "${{ steps.version.outputs.version }}"
 
-      - uses: BigWigsMods/packager@v2
+      # (the packager, run on a branch push with HEAD tagged, waits for the tag's own run and packages nothing; a tag
+      # pushed with GITHUB_TOKEN starts no run, so it is told it runs for the tag)
+      - name: Package and upload
         if: steps.version.outputs.new == 'true'
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: curl -fsSL https://raw.githubusercontent.com/BigWigsMods/packager/v2/release.sh | GITHUB_REF="refs/tags/$VERSION" GITHUB_REF_NAME="$VERSION" bash

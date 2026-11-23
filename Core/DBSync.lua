@@ -142,7 +142,9 @@ function comm:OnComm(prefix, text, distribution, sender)
 	-- only guildmates (who have said hello on the guild channel), and no more than is worth unpacking
 	local kind, id, i, n, piece = text:match("^(%u[%?=])(%d+):(%d+):(%d+);([%w%(%)]*)$")
 	i, n = tonumber(i), tonumber(n)
-	local member = DT.Comms.peers[sender] or DT.Comms.peers[(sender:gsub("%-", " "))]
+	-- (the guild channel may name them "First Surname", "First-Surname" or only "First")
+	local guild, first, rest = DT.Comms.peers, sender:match("^([^%- ]+)[%- ](.+)$")
+	local member = guild[sender] or first and (guild[first .. " " .. rest] or guild[first .. "-" .. rest] or guild[first])
 	sender = Who(sender)
 	if not member then
 		if kind == "H?" then early[sender] = GetTime() end -- (their hello may be on its way)

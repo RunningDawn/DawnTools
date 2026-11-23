@@ -6,6 +6,9 @@
 local _, DT = ...
 
 DT.CHANGELOG = {
+	{ "0.55.3", "2026-11-22", {
+		"Data Sync: whispers from a guildmate are no longer turned away when the guild channel gives their name in another form.",
+	} },
 	{ "0.55.2", "2026-11-22", {
 		"BiS: the item tooltip shows only the gain against what you wear, +score (+%), and says when an item would drop you below a cap.",
 	} },
