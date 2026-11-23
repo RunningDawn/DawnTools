@@ -16,10 +16,11 @@ DT = DT or {}
 local BL = {}
 DT.BisLogic = BL
 
--- How much rating buys one percent (one point of defense). Client 1.60.1: hit, haste and expertise 10, crit 14.
--- ponytail: defense, dodge, parry and block rating are taken one for one until somebody reads them off a
--- character sheet; BL.RATING is the knob.
-BL.RATING = { hit = 10, shit = 10, haste = 10, exp = 10, crit = 14, scrit = 14, def = 1, dodge = 1, parry = 1, block = 1 }
+-- How much rating buys one percent (one point of defense). Client 1.60.1, at level 60: hit, haste and expertise 10,
+-- crit 14, dodge 12 (Warrior's Embrace: 18 rating, 1.5% on the sheet), parry 15, block 5.
+-- ponytail: parry and block from the same level-60 table, not yet read off a sheet; defense one for one, as
+-- Forever's items give it in skill points. BL.RATING is the knob (and FACTS in Modules/Bis.lua, to read items anew).
+BL.RATING = { hit = 10, shit = 10, haste = 10, exp = 10, crit = 14, scrit = 14, def = 1, dodge = 12, parry = 15, block = 5 }
 
 -- the game's own numbers (GetItemStats): key = our word, or { word, rating = true }
 local GAME = {
@@ -76,6 +77,8 @@ local TEXT = {
 	{ "healing done by spells and effects by up to " .. NUM, "heal" },
 	{ "healing power by " .. NUM, "heal" },
 	{ "restores " .. NUM .. " mana per 5 sec", "mp5" },
+	{ "^%(" .. NUM .. " damage per second%)$", "dps" },
+	{ "^" .. NUM .. " armor$", "armor" },
 }
 -- only what is always on: a "Use:" or "Chance on hit:" line is not the item's stats
 local SKIP = { "^use:", "^chance on hit:", "^set:", "^%(%d%) set" }
@@ -358,25 +361,33 @@ function BL.Solve(slots, base, prof)
 	table.sort(caps, function(a, b) return a.word < b.word end)
 	local n = #caps
 	local states, trail = { [n > 4 and "" or 0] = { v = 0, g = {} } }, {}
+	local g, min, floor = {}, math.min, math.floor -- (g: worked out in place; a table is made only for a state that wins)
 	for i, slot in ipairs(slots) do
 		local nextStates, back = {}, {}
 		for key, st in pairs(states) do
+			local sg, sv = st.g, st.v
 			for ci, cand in ipairs(slot.cands) do
-				local g, k = {}, n > 4 and "" or 0 -- (more caps than fit a number: the key as text)
+				local k, cs = n > 4 and "" or 0, cand.s -- (more caps than fit a number: the key as text)
 				for c = 1, n do
 					local cap = caps[c]
-					local got = math.min((st.g[c] or 0) + (cand.s[cap.word] or 0), cap.need)
+					local got = min((sg[c] or 0) + (cs[cap.word] or 0), cap.need)
 					g[c] = got
-					local at = math.floor(got / cap.step + 0.5)
+					local at = floor(got / cap.step + 0.5)
 					if n > 4 then k = k .. at .. ":" else k = k * 4096 + at end
 				end
-				local v = st.v + cand.lin
+				local v = sv + cand.lin
 				-- (of two in one step, the one worth more with what each has toward the caps: steps may be coarse)
 				local w = v
 				for c = 1, n do w = w + caps[c].gain * g[c] end
 				local at = nextStates[k]
-				if not at or w > at.w or (w == at.w and ci < back[k][2]) then
-					nextStates[k], back[k] = { v = v, w = w, g = g }, { key, ci }
+				if not at then
+					local copy = {}
+					for c = 1, n do copy[c] = g[c] end
+					nextStates[k], back[k] = { v = v, w = w, g = copy }, { key, ci }
+				elseif w > at.w or (w == at.w and ci < back[k][2]) then
+					at.v, at.w = v, w
+					for c = 1, n do at.g[c] = g[c] end
+					back[k][1], back[k][2] = key, ci
 				end
 			end
 		end

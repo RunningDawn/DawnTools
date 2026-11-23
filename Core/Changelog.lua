@@ -6,6 +6,31 @@
 local _, DT = ...
 
 DT.CHANGELOG = {
+	{ "0.56.1", "2026-11-23", {
+		"BiS: items the game never answers for are not asked again for a week (or until a new game build); Recalculate no longer asks for them.",
+		"BiS: items the item list has no type for (some of Forever's own) are found by the type the game gives them.",
+		"BiS: armor is read from the tooltip where the game gives no number; armor pieces stored without armor are read again once.",
+		"BiS weights: hunters count attack power on gear for the bow too.",
+		"BiS weights: every spec counts armor a little (0.01 a point; tanks as before), so of two like pieces the one with more armor ranks higher.",
+		"BiS: a ranged weapon's DPS counts for nothing except to hunters.",
+		"/dt bis load also counts the items the game never answered.",
+		"/dt bis <item> says why an item is not in the BiS item list.",
+		"Settings: the in-game navigation switch is gone (it did nothing on Forever).",
+	} },
+	{ "0.56.0", "2026-11-23", {
+		"BiS: item stats are shared with the guild (where sharing is on): a member who has them asks the game for none of those items. Where the game says otherwise of an item after a patch, the newer stats reach everyone.",
+		"BiS: items are asked of the game more gently, twenty a second at most, and items it already holds are read at once.",
+		"BiS: working out the best set makes far less garbage, for less stutter.",
+		"BiS: a dungeon drop says the dungeon, the boss and the drop chance where known, as \"Dungeon, Boss (12%)\".",
+		"Dungeons: items AtlasLoot lists for a dungeon the list already has (Forever's own, like Gutcutter Hatchet in Zul'Farrak) count as that dungeon's drops, no longer as world drops.",
+		"BiS: when the sets cannot be worked out, the tab says why instead of staying empty.",
+		"BiS: dodge, parry and block rating count as the character sheet does (12, 15 and 5 a percent): dodge gear no longer looks twelve times better than it is. Only gear with those ratings, and weapons, is read anew once; the rest stays as stored.",
+		"BiS: items load much faster and none are given up on wrongly: each is taken as the game answers, and the count of items to load goes down as they come. Less stutter while they load with the tab open.",
+		"Market: prices from the guild no longer stop with \"script ran too long\" on a big price history: it is tidied a little each frame.",
+		"BiS: weapon DPS now counts for every warrior and paladin spec, Enhancement, Combat daggers and melee Survival (as much as Feral tanks and rogues weigh it): low-damage weapons stop winning on stats alone.",
+		"Market: no error at a vendor whose name the game keeps hidden; its prices are not taken then.",
+		"BiS: /dt bis <item> says in chat where an item stands: found or not, its stats, whether you can use it, and what it does against what you wear. /dt bis load says how far the item loader is and what it still waits for.",
+	} },
 	{ "0.55.3", "2026-11-22", {
 		"Data Sync: whispers from a guildmate are no longer turned away when the guild channel gives their name in another form.",
 	} },

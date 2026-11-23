@@ -179,11 +179,18 @@ end
 
 -- Drops what is older than KEEP_DAYS, sums up the days older than FULL_DAYS, drops a line that does not read, then
 -- the longest-unseen items above MAX_ITEMS. Returns how many are left.
-function L.Prune(items, now)
+-- pause: called every 100 items, where it may yield (a coroutine spreads a big house over frames); the items are
+-- gone over as they were at the start, so one taken in meanwhile is safe.
+function L.Prune(items, now, pause)
 	local cutoff, today, count = now - L.KEEP_DAYS * L.DAY, math.floor(now / L.DAY), 0
 	local cutDay, sumDay = today - L.KEEP_DAYS, today - L.FULL_DAYS
-	for id, item in pairs(items) do
-		if not item.t or item.t < cutoff or type(item.d) ~= "table" then
+	local ids = {}
+	for id in pairs(items) do ids[#ids + 1] = id end
+	for i, id in ipairs(ids) do
+		if pause and i % 100 == 0 then pause() end
+		local item = items[id]
+		if not item then -- (gone meanwhile)
+		elseif not item.t or item.t < cutoff or type(item.d) ~= "table" then
 			items[id] = nil
 		else
 			count = count + 1

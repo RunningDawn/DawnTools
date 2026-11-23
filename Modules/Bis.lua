@@ -66,8 +66,36 @@ end
 
 local partial = {} -- [id] = an item whose tooltip never came: its stats as far as the game gave them, for this session
 local items, asked, askedAt = {}, {}, {} -- [id] = { id, loc, s, name, q, lvl, class, sub, only } or false (not gear); [id] = times asked, and when last
-local FACTS = 3 --(the shape of what is kept in db.facts: raise it when BL.Stats counts something else, and every item is learned anew)
+local FACTS = 4 --(the shape of what is kept in db.facts: raise it when BL.Stats counts something else, and every item is learned anew)
 local RANGED = { INVTYPE_RANGED = true, INVTYPE_RANGEDRIGHT = true, INVTYPE_THROWN = true }
+-- the facts kept by an older version: from 3, only what 4 reads otherwise is learned anew (dodge, parry and block
+-- rating, counted one for one before; a weapon's damage per second, not read before); from any other, all of them
+local WEAPON = { INVTYPE_WEAPON = true, INVTYPE_2HWEAPON = true, INVTYPE_WEAPONMAINHAND = true, INVTYPE_WEAPONOFFHAND = true,
+	INVTYPE_RANGED = true, INVTYPE_RANGEDRIGHT = true, INVTYPE_THROWN = true }
+function B.Upgrade(db)
+	if db.factsV == FACTS then
+	elseif db.factsV == 3 and type(db.facts) == "table" then
+		for id, it in pairs(db.facts) do
+			if it and (WEAPON[it.loc or ""] or it.s and (it.s.dodge or it.s.parry or it.s.block)) then db.facts[id] = nil end
+		end
+	else
+		db.facts = {}
+	end
+	db.factsV = FACTS
+	-- (armor kept by 0.56.0 and before: where the game gave no number, its tooltip is read now. An armor piece without
+	-- any is learned anew, once)
+	if not db.armorRead and type(db.facts) == "table" then
+		for id, it in pairs(db.facts) do
+			if B.NoArmor(it) then db.facts[id] = nil end
+		end
+	end
+	db.armorRead = true
+end
+-- cloth, leather, mail, plate or a shield with no armor read: wrongly read (a row so is not taken either)
+function B.NoArmor(it)
+	local sub = it and it.class == 4 and it.s and not it.s.armor and it.sub
+	return sub and (sub >= 1 and sub <= 4 or sub == 6) or false
+end
 local RETRY, tried = 30, {} -- (a bare-stats item is looked at again after RETRY seconds; tried = how often)
 local ASKS, GAP = 6, 4 -- (an item is asked of the game this many times, this many seconds apart, then left alone)
 local function Now() return GetTime and GetTime() or 0 end
@@ -95,36 +123,11 @@ local function Lines(id)
 	return out
 end
 
--- An item's facts; false for what is not worn; nil while the game has not loaded it (asked again every few seconds, six times).
-local function ItemOf(id)
-	local it = items[id]
-	if it ~= nil then return it end
-	local p = partial[id]
-	if p then
-		-- (a bare-stats item is looked at again after RETRY seconds, three times: its tooltip may have come since)
-		if (tried[id] or 0) >= 3 or Now() - p.at < RETRY then return p end
-		partial[id], asked[id], tried[id] = nil, nil, (tried[id] or 0) + 1
-	end
-	local kept = B.db and B.db.facts and B.db.facts[id]
-	if kept ~= nil then items[id] = kept return kept end -- (learned in an earlier session: not asked again)
-	local info = (C_Item and C_Item.GetItemInfo) or GetItemInfo
-	local name, _, quality, _, minLevel, _, _, _, loc, icon, _, class, sub = info(id)
-	if name and not WEARABLE[loc or ""] then
-		items[id] = false
-		if B.db and B.db.facts then B.db.facts[id] = false end
-		return false
-	end
-	local lines = name and Lines(id)
-	if not name or (lines == nil and (asked[id] or 0) < ASKS) then
-		if (asked[id] or 0) < ASKS and (not askedAt[id] or Now() - askedAt[id] >= GAP) and C_Item and C_Item.RequestLoadItemDataByID then
-			asked[id], askedAt[id] = (asked[id] or 0) + 1, Now()
-			pcall(C_Item.RequestLoadItemDataByID, id)
-		end
-		return nil
-	end
+-- An item's facts, from the game's answers: { id, loc, name, icon, q, lvl, class, sub, s, only, races, unique, boe, rep, repAt }
+local function FactsOf(id, name, quality, minLevel, loc, icon, class, sub, lines)
 	local get = (C_Item and C_Item.GetItemStats) or GetItemStats
 	local ok, stats = pcall(function() return get and get("item:" .. id) end)
-	it = { id = id, loc = loc, name = name, icon = icon, q = quality or 1, lvl = minLevel or 0, class = class, sub = sub,
+	local it = { id = id, loc = loc, name = name, icon = icon, q = quality or 1, lvl = minLevel or 0, class = class, sub = sub,
 		s = BL.Stats(ok and type(stats) == "table" and stats or nil, lines) }
 	-- (a bow's or wand's damage is the ranged weapon's: another word, as a profile weighs it apart)
 	if it.s.dps and RANGED[loc or ""] then it.s.rdps, it.s.dps = it.s.dps, nil end
@@ -136,10 +139,104 @@ local function ItemOf(id)
 		local faction, standing = text:match(REP)
 		if faction then it.rep, it.repAt = faction, standing end
 	end
+	return it
+end
+
+-- Shared with the guild through the game database (Core/DB.lua): "istat:<item>" = what the game said of it, as one
+-- text; it passes with the rest of the store where sharing was agreed to. A member whose game says otherwise (a
+-- patch) writes a newer row, and the newer row stands everywhere. FACTS is its first value: a row read another way
+-- is left alone, and asked of the game anew.
+-- ponytail: names and the "Classes:" / "Races:" lines are in the game's language; a guild of one language is assumed.
+local DBL = DT.DBLogic
+local function RowText(it)
+	if not it then return DBL.Pack({ FACTS, false }, 2) end
+	local words = {}
+	for word in pairs(it.s) do words[#words + 1] = word end
+	table.sort(words)
+	for i, word in ipairs(words) do words[i] = word .. "=" .. DBL.Pack({ it.s[word] }, 1) end
+	return DBL.Pack({ FACTS, it.loc, it.name, it.q, it.lvl, it.class, it.sub, table.concat(words, ";"), it.only, it.races,
+		it.rep, it.repAt, it.unique or false, it.boe or false, it.icon }, 15)
+end
+B.RowText = RowText
+local function FromRow(id, text)
+	local v = DBL.Unpack(text or "")
+	if not v or v[1] ~= FACTS then return nil end
+	if v[2] == false then return false end
+	if type(v[2]) ~= "string" or not WEARABLE[v[2]] or type(v[3]) ~= "string" then return nil end
+	local s = {}
+	for word, n in (v[8] or ""):gmatch("([%w_]+)=([%-%d%.]+)") do s[word] = tonumber(n) end
+	local function Text(x) return type(x) == "string" and x ~= "" and x:gsub("[|%c]", "") or nil end
+	if B.NoArmor({ class = tonumber(v[6]), sub = tonumber(v[7]), s = s }) then return nil end
+	return { id = id, loc = v[2], name = Text(v[3]) or ("item " .. id), q = tonumber(v[4]) or 1, lvl = tonumber(v[5]) or 0,
+		class = tonumber(v[6]), sub = tonumber(v[7]), s = s, only = Text(v[9]), races = Text(v[10]), rep = Text(v[11]),
+		repAt = Text(v[12]), unique = v[13] == true or nil, boe = v[14] == true or nil, icon = tonumber(v[15]) or v[15], shared = true }
+end
+-- a guildmate's row for the item, taken for this session (nil: none, or not of this shape)
+local function Shared(id)
+	local row = DT.DB and DT.DB.Row and DT.DB.Row("istat:" .. id)
+	local it = row and FromRow(id, row.v)
+	if it ~= nil then items[id] = it end
+	return it
+end
+B.Shared = Shared
+-- what my game said, into the store where sharing was agreed to (written only where it says something new)
+-- (gathered, and written a moment on, all at once: a chunk of the store is written once for many rows)
+local toShare
+local function Flush()
+	local rows = toShare
+	toShare = nil
+	if rows and DT.DB and DT.DB.PutMany then DT.Timed("BiS: stats shared", DT.DB.PutMany, rows) end
+end
+local function Share(id, it)
+	if not (DT.Shares and DT:Shares()) then return end
+	if not toShare then
+		toShare = {}
+		if C_Timer and C_Timer.After then C_Timer.After(0.5, Flush) end
+	end
+	toShare["istat:" .. id] = RowText(it)
+	if not (C_Timer and C_Timer.After) then Flush() end
+end
+
+-- An item's facts; false for what is not worn; nil while the game has not loaded it (asked again every few seconds, six times).
+-- Where from, in this order: this session's, the saved file's (my game's own answers, kept), a guildmate's row,
+-- and last the game, asked.
+local function ItemOf(id)
+	local it = items[id]
+	if it ~= nil then return it end
+	local p = partial[id]
+	if p then
+		-- (a bare-stats item is looked at again after RETRY seconds, three times: its tooltip may have come since)
+		if (tried[id] or 0) >= 3 or Now() - p.at < RETRY then return p end
+		partial[id], asked[id], tried[id] = nil, nil, (tried[id] or 0) + 1
+	end
+	local kept = B.db and B.db.facts and B.db.facts[id]
+	if kept ~= nil then items[id] = kept return kept end -- (learned in an earlier session: not asked again)
+	if not p then
+		local shared = Shared(id)
+		if shared ~= nil then return shared end
+	end
+	local info = (C_Item and C_Item.GetItemInfo) or GetItemInfo
+	local name, _, quality, _, minLevel, _, _, _, loc, icon, _, class, sub = info(id)
+	if name and not WEARABLE[loc or ""] then
+		items[id] = false
+		if B.db and B.db.facts then B.db.facts[id] = false end
+		Share(id, false)
+		return false
+	end
+	local lines = name and Lines(id)
+	if not name or (lines == nil and (asked[id] or 0) < ASKS) then
+		if (asked[id] or 0) < ASKS and (not askedAt[id] or Now() - askedAt[id] >= GAP) and C_Item and C_Item.RequestLoadItemDataByID then
+			asked[id], askedAt[id] = (asked[id] or 0) + 1, Now()
+			pcall(C_Item.RequestLoadItemDataByID, id)
+		end
+		return nil
+	end
+	it = FactsOf(id, name, quality, minLevel, loc, icon, class, sub, lines)
 	-- (kept only with its tooltip: without, the stats its text gives are missing, and the next look may find them)
 	if lines then
 		items[id] = it
 		if B.db and B.db.facts then B.db.facts[id] = it end
+		Share(id, it)
 	else
 		it.partial, it.at = true, Now()
 		partial[id] = it
@@ -182,9 +279,16 @@ function B.Item(id)
 	return mine
 end
 
--- the game will not tell of this item: asked for as often as we do, the last time a while ago
+-- the game will not tell of this item: asked for as often as we do, the last time a while ago; or so in the
+-- last week, in this build of the game (db.never: not asked again every session)
+local WEEK = 7 * 24 * 3600
+function B.Never(id)
+	local never, at = B.db and B.db.never, nil
+	at = never and never[id]
+	return at and time and time() - at < WEEK or false
+end
 function B.Gone(id)
-	return (asked[id] or 0) >= ASKS and Now() - (askedAt[id] or 0) >= GAP
+	return B.Never(id) or (asked[id] or 0) >= ASKS and Now() - (askedAt[id] or 0) >= GAP
 end
 
 -- Realistic (db.settings.realistic): gear that asks for a standing I do not have is left out.
@@ -527,9 +631,9 @@ function B.Profile()
 	local p = { id = raw.id, title = raw.title, hands = hands, w = {}, caps = {}, raw = raw }
 	for word, n in pairs(raw.w) do p.w[word] = n end
 	-- (profiles weigh "dps" for the weapon the class fights with: a hunter's is the ranged one, anyone else's the melee one;
-	-- the other kind counts a tenth. ponytail: one tenth for all, until the sims say what an off kind is worth.)
+	-- for the other kind: a hunter's melee one counts a tenth; anyone else's ranged one nothing, it is for pulling.)
 	if p.w.rdps == nil and p.w.dps then
-		if raw.class == "HUNTER" then p.w.rdps, p.w.dps = p.w.dps, p.w.dps / 10 else p.w.rdps = p.w.dps / 10 end
+		if raw.class == "HUNTER" then p.w.rdps, p.w.dps = p.w.dps, p.w.dps / 10 else p.w.rdps = 0 end
 	end
 	-- The caps are those of the last level. Below it the defense cap is lower, five a level (it is what a boss
 	-- three levels up asks for: 440 at 60), and it is not yet a thing to reach before all else.
@@ -984,7 +1088,7 @@ end
 -- the Recalculate button: asked first, as it takes a while
 if StaticPopupDialogs then
 	StaticPopupDialogs.DAWNTOOLS_BIS_RECALC = {
-		text = "DawnTools BiS: work everything out anew?\n\nThe item list is read again and items the game did not answer for are asked again. It can take a few minutes.",
+		text = "DawnTools BiS: work everything out anew?\n\nThe item list is read again and the sets worked out anew.",
 		button1 = "Recalculate", button2 = "Cancel",
 		OnAccept = function() B.Recalc() end,
 		timeout = 0, whileDead = true, hideOnEscape = true,
@@ -995,7 +1099,7 @@ function B.AskRecalc()
 end
 
 -- Worked out anew by hand (the Recalculate button): what was saved for the spec goes, the item list is read again,
--- and items the game did not answer for are asked again
+-- (items the game did not answer for wait a week, or the game's next build: see B.Never)
 function B.Recalc()
 	local s = state
 	if s and s.skey then B.db.saved[s.skey] = nil end
@@ -1007,6 +1111,7 @@ end
 function B.State()
 	if dirty and not Fight() then
 		local ok, err = pcall(B.Compute)
+		B.err = not ok and tostring(err) or nil -- (shown on the tab: an empty list must not hide it)
 		if not ok then
 			dirty = false -- (not tried again on every tooltip)
 			geterrorhandler()(err)
@@ -1390,7 +1495,7 @@ end
 -- wearable one is asked of the game once, ever, a few a frame in the background (the loader); what it gives is kept
 -- in the saved file (db.facts). A spec's pool is then every one its class may wear at the level looked at and can
 -- get, read from there: no item is left out for its level or its type.
--- ponytail: an item the game never answers for is left out this session and asked again the next (or on Recalculate).
+-- ponytail: an item the game never answers for is left out for a week, or until the game's next build.
 
 -- the words for where an item is from (the owner's: crafted, bought, found, quest); a boss's drop is a Raid where its dungeon is one
 local TAG = { quest = "Quest", crafted = "Crafted", boe = "World Drop", vendor = "Vendor", dungeon = "Dungeon", owned = "Owned" }
@@ -1415,8 +1520,12 @@ local function Catalog()
 		if not c.kind[id] then c.ids[#c.ids + 1] = id end
 		if (RANK[kind] or 0) > (RANK[c.kind[id]] or 0) then c.kind[id] = kind end
 	end
+	local instant = C_Item and C_Item.GetItemInfoInstant or GetItemInfoInstant
 	for _, e in ipairs(list) do
-		if e.c == 2 or e.c == 4 then
+		-- (no class in the item list (15, as Forever's own items may have): the game's own file says, no question to the server)
+		local cls = e.c
+		if cls == 15 and instant then cls = select(6, instant(e.id)) end
+		if cls == 2 or cls == 4 then
 			local kind = c.boss[e.id] and "dungeon" or e.src["Quest reward"] and "quest" or ((DT.CraftSkill and DT.CraftSkill[e.id]) or e.src.Crafted) and "crafted"
 				or e.src.Drop and "boe" or e.src.Vendor and "vendor" or nil
 			if kind then
@@ -1440,7 +1549,9 @@ B.Catalog = Catalog
 -- milliseconds a frame, and no more than RATE questions to the game a second (an item it never answers for is asked
 -- ASKS times, GAP seconds apart, then left for the session). A pass over all of them that finds none waiting is the
 -- last; while it goes, the sets are worked out anew every few seconds with what came in.
-local RATE = 100
+-- ponytail: twenty questions a second at most (8,700 items: some seven minutes, once ever); what a guildmate shared is no question
+local RATE = 20
+local checked = {} -- [id] = true: looked at this session for a row to share
 local loader = CreateFrame("Frame")
 local load = { at = 1, waiting = 0, left = nil, budget = RATE, last = nil, got = 0, shown = 0 }
 B.load, B.loader = load, loader
@@ -1459,34 +1570,91 @@ DT.OnUpdate(loader, "BiS: item loader", function(self)
 			if load.left == 0 then
 				self:Hide()
 				Stale()
+				if B.refresher then B.refresher:Show() end
 				return
 			end
 		end
 		local id = c.ids[load.at]
-		local unknown = items[id] == nil and facts[id] == nil
+		local unknown = items[id] == nil and facts[id] == nil and not B.Never(id)
+		if unknown and not partial[id] and Shared(id) ~= nil then unknown, load.got = false, load.got + 1 end -- (a guildmate's row)
+		-- (what my game told me in an earlier session, and nobody has shared yet: shared)
+		if not unknown and facts[id] ~= nil and not checked[id] then
+			checked[id] = true
+			if DT:Shares() and not DT.DB.Row("istat:" .. id) then Share(id, facts[id]) end
+		end
 		-- (one the game is asked about now: within the budget, or on from here next frame)
+		-- (one the game already holds is read at once, outside the budget)
 		local asks = unknown and (asked[id] or 0) < ASKS and (not askedAt[id] or now - askedAt[id] >= GAP)
+			and not (C_Item and C_Item.IsItemDataCachedByID and C_Item.IsItemDataCachedByID(id))
 		if asks then
 			if load.budget < 1 then break end
 			load.budget = load.budget - 1
 		end
 		load.at = load.at + 1
 		if unknown then
-			if ItemOf(id) ~= nil then load.got = load.got + 1 elseif not B.Gone(id) then load.waiting = load.waiting + 1 end
+			if ItemOf(id) ~= nil then load.got = load.got + 1
+			elseif B.Gone(id) then if B.db.never and time then B.db.never[id] = time() end
+			else load.waiting = load.waiting + 1 end
 		end
 		if t0 and debugprofilestop() - t0 > 3 then break end
 	end
-	if load.got > 0 and now - load.shown >= 5 then
+	-- ponytail: the sets anew every 20 seconds while items come (a few hundred ms each with the tab open); the last at the end
+	if load.got > 0 and now - load.shown >= 20 then
 		load.got, load.shown = 0, now
 		Stale()
 	end
+end)
+
+-- Items changed by a patch: once a session, after the loader, every item my game told of is read again, ten a
+-- second, from what the game holds at hand only (never a question to the server). Where it says otherwise now,
+-- that is kept, and shared: the newer row stands in every member's store.
+local refresh = { at = 1, budget = 0 }
+B.refresh = refresh
+B.refresher = CreateFrame("Frame")
+B.refresher:Hide()
+DT.OnUpdate(B.refresher, "BiS: items read again", function(self, elapsed)
+	if Fight() or not B.db or loader:IsShown() then return end
+	local cached, c = C_Item and C_Item.IsItemDataCachedByID, Catalog()
+	if not (cached and c) then self:Hide() return end
+	refresh.budget = math.min(10, refresh.budget + (tonumber(elapsed) or 0) * 10)
+	while refresh.budget >= 1 do
+		refresh.budget = refresh.budget - 1
+		if refresh.at > #c.ids then self:Hide() return end
+		local id = c.ids[refresh.at]
+		refresh.at = refresh.at + 1
+		local old = B.db.facts[id]
+		if old and cached(id) then
+			local name, _, quality, _, minLevel, _, _, _, loc, icon, _, class, sub = ((C_Item and C_Item.GetItemInfo) or GetItemInfo)(id)
+			local lines = name and WEARABLE[loc or ""] and Lines(id)
+			if lines then
+				local it = FactsOf(id, name, quality, minLevel, loc, icon, class, sub, lines)
+				if RowText(it) ~= RowText(old) then
+					B.db.facts[id], items[id] = it, it
+					Share(id, it)
+					B.refresh.changed = (B.refresh.changed or 0) + 1
+					Stale()
+				end
+			end
+		end
+	end
+end)
+
+-- an answer is taken as it comes, not on the loader's next pass over the whole list
+DT:On("GET_ITEM_INFO_RECEIVED", function(id, ok)
+	if not (ok and loader:IsShown() and B.db and items[id] == nil and asked[id]) then return end
+	if ItemOf(id) ~= nil then load.got = load.got + 1 end
 end)
 
 -- how many items are still to come from the game (0: all there is is known; nil: the item list is not read yet)
 function B.Left()
 	if not Catalog() then return nil end
 	if not loader:IsShown() then return 0 end
-	return load.left and math.max(load.left, load.waiting) or #catalog.ids - load.at + 1 + load.waiting
+	-- (counted, not kept: the items still unknown and not given up)
+	local facts, n = B.db and B.db.facts or {}, 0
+	for _, id in ipairs(catalog.ids) do
+		if items[id] == nil and facts[id] == nil and not partial[id] and not B.Gone(id) then n = n + 1 end
+	end
+	return n
 end
 
 -- read again (the Recalculate button): the item list, and every item the game did not answer for
@@ -1527,6 +1695,66 @@ function Pool(who)
 	end
 	out.key = table.concat(ids, ",") -- (the same items, the same pool)
 	return out
+end
+
+-- /dt bis <item>: every step an item goes through, to see where it falls out
+function B.Why(arg)
+	if arg == "load" then -- (the loader: where it is, and a few of the items it still waits for)
+		local c, facts, n = Catalog(), B.db and B.db.facts or {}, 0
+		DT:Print("BiS loader: running %s, in a fight %s, item list %s, at %d of %d, waiting %d, last pass left %s, budget %.1f",
+			tostring(loader:IsShown()), tostring(Fight()), c and "read" or "NOT read", load.at, c and #c.ids or 0, load.waiting,
+			tostring(load.left), load.budget or 0)
+		for _, id in ipairs(c and c.ids or {}) do
+			if items[id] == nil and facts[id] == nil and not partial[id] and not B.Gone(id) then
+				n = n + 1
+				if n <= 5 then
+					local name = ((C_Item and C_Item.GetItemInfo) or GetItemInfo)(id)
+					DT:Print("  waiting %d %s: asked %d, %.0fs ago, tooltip %s", id, tostring(name), asked[id] or 0,
+						askedAt[id] and Now() - askedAt[id] or -1, Lines(id) and "yes" or "no")
+				end
+			end
+		end
+		local shared = 0
+		for _, it in pairs(items) do if it and it.shared then shared = shared + 1 end end
+		DT:Print("BiS loader: %d items unknown and not given up; %d from guildmates' rows this session%s; read again for a patch: %s, %d changed",
+			n, shared, DT:Shares() and "" or " (sharing is off)", B.refresher:IsShown() and ("at %d"):format(refresh.at) or "not running", refresh.changed or 0)
+		local never = 0
+		for _, id in ipairs(catalog and catalog.ids or {}) do if B.Never(id) then never = never + 1 end end
+		DT:Print("BiS loader: %d items the game never answered (asked again in a week, or in a new build of the game)", never)
+		return
+	end
+	local id =tonumber(tostring(arg):match("item:(%d+)") or tostring(arg):match("^(%d+)$"))
+	if not id then DT:Print("/dt bis <item link or number>") return end
+	local s, c = B.State(), Catalog()
+	local function Say(...) DT:Print("BiS %d: " .. select(1, ...), id, select(2, ...)) end
+	if c then Say("catalog: %s%s", tostring(c.kind[id] or "NOT in it"), c.boss[id] and (", dropped in " .. tostring(c.boss[id].name)) or "")
+	else Say("the item list is not read yet") end
+	if c and not c.kind[id] then -- (why not: the item list's own type and sources for it)
+		local entry
+		for _, e in ipairs(DT.Item.All and DT.Item.All() or {}) do if e.id == id then entry = e break end end
+		local instant = C_Item and C_Item.GetItemInfoInstant or GetItemInfoInstant
+		if entry then Say("item list: type %s (the game says %s), from: %s", tostring(entry.c), tostring(instant and select(6, instant(id))), entry.srcText ~= "" and entry.srcText or "nowhere known")
+		else Say("item list: not in it") end
+	end
+	local it = items[id]
+	if it == nil and B.db.facts then it = B.db.facts[id] end
+	if it == nil then Say("not loaded (asked %d times%s)", asked[id] or 0, B.Gone(id) and ", given up" or "") return end
+	if it == false then Say("the game says it is no gear") return end
+	Say("%s, %s, class %s/%s, level %d%s: %s", tostring(it.name), tostring(it.loc), tostring(it.class), tostring(it.sub), it.lvl or 0,
+		it.partial and " (no tooltip yet)" or "", B.StatText(it.s))
+	if not s then Say("nothing worked out yet") return end
+	Say("usable: %s; level %d <= %d: %s", tostring(Usable(it, s.who)), it.lvl or 0, s.who.level, tostring((it.lvl or 0) <= s.who.level))
+	local inPool = false
+	for _, p in ipairs(s.pool or {}) do inPool = inPool or p.id == id end
+	Say("in the pool: %s", tostring(inPool))
+	local g = B.Gain(id)
+	if g then
+		Say("vs worn: %s (%s%%), upgrade %s%s", tostring(g.d), tostring(g.pct), tostring(g.up),
+			g.breaks and #g.breaks > 0 and (", breaks " .. table.concat(g.breaks, ", ")) or "")
+	end
+	for r, rid in pairs(s.bis and s.bis.rows or {}) do
+		if rid == id then Say("in the recommended set, row %d", r) end
+	end
 end
 
 -- Two rings, two trinkets: the row of the other one
@@ -1674,6 +1902,13 @@ function B.Where(id, kind)
 		else
 			text = text ~= "" and text or "quest reward"
 		end
+	elseif kind == "dungeon" and DT.Dungeon and DT.Dungeon.DropOf and DT.Dungeon.DropOf(id) then
+		-- "Zul'Farrak, Nekrum Gutchewer (12%)"; "Zul'Farrak, trash"
+		local Dg = DT.Dungeon
+		local boss = Dg.DropOf(id)
+		local chance = boss.name ~= "Trash" and Dg.Chance and Dg.Chance(boss, id)
+		text = ("%s, %s%s"):format(boss.dungeon.name, boss.name == "Trash" and "trash" or boss.name,
+			chance and (" (%s%%)"):format((("%.1f"):format(chance):gsub("%.0$", ""))) or "")
 	elseif kind == "boe" then
 		local api = DawnMarket and DawnMarket.API
 		local price = api and api.GetLatest and (api.GetLatest(id))
@@ -1924,7 +2159,7 @@ local function DrawGear(f, s)
 	gear.redo:SetShown(not s.foreign)
 	local left = B.Left()
 	local ready = left ~= nil
-	gear.note:SetText(not ready and "reading the item list..." or left > 0 and ("%d items still to load, the best so far are shown..."):format(left)
+	gear.note:SetText(B.err and ("|cffff4040Could not work out the sets: %s|r"):format(B.err:sub(1, 200)) or not ready and "reading the item list..." or left > 0 and ("%d items still to load, the best so far are shown..."):format(left)
 		or ("level %d, %s%s%s"):format(s.who.level, s.who.className, phase and (", " .. phase[2]:lower()) or "", s.at and (", worked out %s ago"):format(Ago(s.at)) or ""))
 	-- the columns: icon, name, then right-aligned numbers (weight, difference, percent), the source
 	local P = { icon = 2, name = 20, namew = 170, wt = 194, wtw = 44, diff = 242, diffw = 48, pct = 294, pctw = 50, kind = 352 }
@@ -2641,7 +2876,10 @@ DT:RegisterModule("bis", {
 	tab = { id = "bis", title = "BiS", defaultOrder = 61, group = 2, create = Build, onShow = Refresh },
 	onEnable = function(mod)
 		B.db, B.me = mod.db, UnitGUID("player")
-		if B.db.factsV ~= FACTS then B.db.facts, B.db.factsV = {}, FACTS end
+		B.Upgrade(B.db)
+		-- (what the game never answered: asked again in a new build of the game)
+		local build = GetBuildInfo and table.concat({ GetBuildInfo() }, " ", 1, 2) or ""
+		if type(B.db.never) ~= "table" or B.db.never.build ~= build then B.db.never = { build = build } end
 		for _, key in ipairs({ "pick", "edit", "base", "last", "facts", "level", "phase", "seen", "saved", "locks" }) do
 			if type(B.db[key]) ~= "table" then B.db[key] = {} end
 		end

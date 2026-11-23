@@ -27,8 +27,6 @@ B.LIST = {
 	{ id = "raidClass", label = "Raid frames: class colours", cvars = { { "raidFramesDisplayClassColor", "1", "0" } }, tip = "Per character." },
 	{ id = "combatText", label = "Scrolling combat text: on me, and my damage on enemies",
 		cvars = { { "enableFloatingCombatText", "1", "0" }, { "floatingCombatTextCombatDamage", "1", "0" } } },
-	{ id = "navigation", label = "In-game navigation: the marker in the world that points to a tracked quest or map pin",
-		cvars = { { "showInGameNavigation", "1", "0" } } },
 }
 
 local function Get(cvar)

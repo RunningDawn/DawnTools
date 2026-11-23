@@ -64,7 +64,8 @@ end
 --   2. the OneForAll addon where it is installed, read while the game runs: a newer one knows bosses and drops
 --      the shipped list does not have yet. What it adds is noted (db.adds) to be told to the guild;
 --   3. what guild members told of theirs (db.more), where sharing was agreed to;
---   4. the AtlasLootClassic addon where installed, for dungeons and raids none of the above has.
+--   4. the AtlasLootClassic addon where installed: dungeons and raids none of the above has, and the items it lists
+--      that those above do not (Forever's own, added to a boss).
 -- Read once a session, and again when the guild tells of more.
 local list, byNpc, byKey
 
@@ -124,12 +125,16 @@ function D.All()
 			name = ALIAS[Key(name)] or name -- (one place under its other name)
 			-- (the same place under another name, "Scarlet Monastery" for its four wings, "Onyxias Lair" twice: known
 			-- by a boss that is in the list already)
-			local known = false
+			local known = byKey[Key(name)]
 			for _, boss in ipairs(content.items) do
 				local npc = type(boss) == "table" and (type(boss.npcID) == "table" and boss.npcID[1] or boss.npcID)
-				known = known or (npc ~= nil and byNpc[npc] ~= nil)
+				known = known or (npc ~= nil and byNpc[npc] and byNpc[npc].dungeon)
 			end
-			if not byKey[Key(name)] and not known then
+			-- (a place the list has already: only the items it does not have, as Forever's own added to its bosses)
+			local had = {}
+			for _, b in ipairs(known and known.bosses or {}) do for id in pairs(b.has) do had[id] = true end end
+			name = known and known.name or name
+			do
 				for _, boss in ipairs(content.items) do
 					-- (not its lists of keys, tier sets and the like, which are no boss's drops)
 					if type(boss) == "table" and not boss.ExtraList and not boss.IgnoreAsSource then
@@ -142,7 +147,7 @@ function D.All()
 						for _, k in ipairs(keys) do
 							for _, entry in ipairs(boss[k]) do
 								local id = type(entry) == "table" and entry[2]
-								if type(id) == "number" and id > 0 and not seen[id] then seen[id], items[#items + 1] = true, { id, 0 } end
+								if type(id) == "number" and id > 0 and not seen[id] and not had[id] then seen[id], items[#items + 1] = true, { id, 0 } end
 							end
 						end
 						if items[1] then

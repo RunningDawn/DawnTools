@@ -4,7 +4,7 @@
 local ADDON, DT = ...
 _G.DawnTools = DT
 
-DT.VERSION = "0.55.3" -- keep in step with the .toc
+DT.VERSION = "0.56.1" -- keep in step with the .toc
 DT.LOGO = "Interface\\AddOns\\DawnTools\\logo"
 
 local DEFAULTS = {
@@ -394,6 +394,8 @@ local function Slash(input)
 	cmd = cmd:lower()
 	if cmd == "" then
 		DT.UI:Toggle()
+	elseif cmd == "bis" and rest ~= "" and DT.Bis and DT.Bis.Why then
+		DT.Bis.Why(rest)
 	elseif DT.UI:HasTab(cmd) then
 		DT.UI:Show(cmd)
 	elseif DT.Tools and DT.Tools.Has(cmd) and DT.UI:HasTab("tools") then -- (a tool of the Tools tab, by name)
@@ -698,7 +700,7 @@ StaticPopupDialogs.DAWNTOOLS_SHARE = {
 		.. "Also sent to them as you play: the auction prices you see, with your character's name (it can be left out in "
 		.. "the settings), and what vendors ask; each of your characters' names and the recipes it knows, of cooking and "
 		.. "its other professions; what a quest gave you and the level you were; what a boss dropped and how often you "
-		.. "looted it; what you catch fishing, and where; and what you loot or meet that nobody knew, under a random number.\n\n"
+		.. "looted it; what you catch fishing, and where; the stats the game gave you of gear; and what you loot or meet that nobody knew, under a random number.\n\n"
 		.. "Nothing else is sent, and you can switch it off at any time: /dt settings.",
 	button1 = "Share", button2 = "Not now",
 	OnAccept = function() DT:SetSharing(true) end,

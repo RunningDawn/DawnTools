@@ -328,6 +328,23 @@ function DB.Put(key, value, src, t)
 	return true
 end
 
+-- Many rows learned at once ({ [key] = value }), as DB.Put each: a chunk is written once, not once a row.
+-- Returns how many changed.
+function DB.PutMany(values)
+	local chunks, n, now = {}, 0, DT.Now()
+	for key, value in pairs(values) do
+		key, value = L.Clean(key), L.Clean(value)
+		local chunk = L.ChunkOf(key)
+		local rows = chunks[chunk] or Rows(chunk) -- (the one being changed: the open ones may be closed meanwhile)
+		local at = rows[key]
+		if not (at and at.v == value and at.src == "guild") then
+			rows[key], chunks[chunk], n = { t = now, src = "guild", v = value }, rows, n + 1
+		end
+	end
+	for chunk, rows in pairs(chunks) do Write(chunk, rows) end
+	return n
+end
+
 -- A row from a store of before (a module's own saved table), kept where none is held under its key or the one
 -- held is older: so that moving a file twice, or a half-moved one, loses nothing and writes nothing twice.
 function DB.Keep(key, value, t)

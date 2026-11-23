@@ -195,6 +195,17 @@ do
 	L.MAX_ITEMS = 1
 	eq(L.Prune(items5, now), 1, "over the cap"); check(items5[7] and not items5[6], "the longest unseen goes first")
 	L.MAX_ITEMS = keep
+	-- a big house, pruned in pieces: an item taken in between the pieces does no harm
+	local big = {}
+	for id = 1, 250 do L.Observe(big, ob(id, 10, 1, now - 50, "A"), now) end
+	local co = coroutine.create(function() return L.Prune(big, now, coroutine.yield) end)
+	local pieces, _, left = 0
+	repeat
+		_, left = coroutine.resume(co)
+		pieces = pieces + 1
+		L.Observe(big, ob(1000 + pieces, 10, 1, now - 50, "A"), now)
+	until coroutine.status(co) == "dead"
+	eq(pieces, 3, "a hundred items a piece"); eq(left, 250, "and every item kept"); check(big[1001] and big[1003], "with those taken in meanwhile")
 
 	eq(L.Money(12345), "1g 23s 45c", "money"); eq(L.Money(240), "2s 40c", "silver"); eq(L.Money(7), "7c", "copper")
 	eq(L.Ago(30), "just now", "seconds"); eq(L.Ago(12 * 60), "12m ago", "minutes"); eq(L.Ago(3 * 3600 + 5), "3h ago", "hours")
@@ -208,6 +219,9 @@ end
 
 do
 	local BL = assert(loadfile(DIR .. "Core/BisLogic.lua"))()
+	eq(BL.Stats(nil, { "(41.5 damage per second)" }).dps, 41.5, "a weapon's DPS from its tooltip, where the game's stats leave it out")
+	eq(BL.Stats({ ITEM_MOD_DAMAGE_PER_SECOND_SHORT = 40 }, { "(41.5 damage per second)" }).dps, 40, "the game's own number first")
+	eq(BL.Stats({ ITEM_MOD_DODGE_RATING_SHORT = 18 }).dodge, 1.5, "dodge rating: 12 a percent (Warrior's Embrace, 1.5% on the sheet)")
 	local s = BL.Stats({ ITEM_MOD_STAMINA_SHORT = 20, RESISTANCE0_NAME = 500, ITEM_MOD_HIT_RATING_SHORT = 10, ITEM_MOD_CRIT_RATING_SHORT = 28 }, {
 		"Helm of Tests", "Equip: Increased Defense +7.", "Equip: Improves your chance to hit by 1%.", "Equip: Increases your expertise rating by 13.",
 		"Use: Increases defense by 50 for 10 sec.", "Equip: Increases damage done by Shadow spells and effects by up to 20.", "38 Block",
@@ -478,8 +492,8 @@ local function NewClient(name, opts)
 		GetWidth = function(self) return self.w or 764 end,
 		GetHeight = function(self) return self.h or 426 end,
 		HasScript = function() return false end,
-		CreateFontString = function() return Widget("FontString") end,
-		CreateTexture = function() return Widget("Texture") end,
+		CreateFontString = function(self) local w = Widget("FontString") w.parent = self return w end,
+		CreateTexture = function(self) local w = Widget("Texture") w.parent = self return w end,
 		Show = function(self) self.shown = true end,
 		Hide = function(self) self.shown = false end,
 		SetShown = function(self, v) self.shown = v and true or false end,
@@ -541,7 +555,7 @@ local function NewClient(name, opts)
 		tbl[fname] = function(...) orig(...) hook(...) end
 	end
 	env.print = function(...) c.printed[#c.printed + 1] = table.concat({ ... }, " ") end
-	env.CreateFrame = function(kind) return Widget(kind) end
+	env.CreateFrame = function(kind, _, parent) local w = Widget(kind) w.parent = parent return w end
 	env.SecureHandlerWrapScript = function(_, _, _, body) c.wrapBody = body end
 	env.UIParent, env.UISpecialFrames = Widget(), {}
 	env.GameTooltip, env.ItemRefTooltip = Widget("GameTooltip"), Widget("GameTooltip")
@@ -1556,11 +1570,23 @@ search:SetText("")
 
 -- Every script of every widget is run (hover, click with both buttons, wheel, drag, typing), on every tab.
 -- Nothing may raise an error and no text may show a formatting accident.
+-- (on each tab what is shown there, and every other widget once: the window's hidden views are run too)
 local function UseEverything(label)
+	local function Visible(w)
+		while w do
+			if w.shown == false then return false end
+			w = rawget(w, "parent")
+		end
+		return true
+	end
+	local done = {}
 	for _, tab in ipairs({ "home", "market", "inventory", "fish", "food", "npc", "quest", "item", "zone", "combat", "bis", "tools", "settings" }) do
 		A.slash(tab)
+		local here = A.DT.db.lastTab
 		for _, w in ipairs(A.widgets) do
 			local s = w.scripts
+			if done[w] and not Visible(w) then s = {} end
+			done[w] = true
 			if s.OnEnter then s.OnEnter(w) end
 			if s.OnLeave then s.OnLeave(w) end
 			if s.OnMouseWheel then
@@ -1579,7 +1605,7 @@ local function UseEverything(label)
 			if s.OnClick and w.enabled ~= false then
 				click(w, "LeftButton")
 				click(w, "RightButton")
-				A.slash(tab) -- a tab button may have switched tabs
+				if A.DT.db.lastTab ~= here then A.slash(tab) end -- a tab button may have switched tabs
 			end
 		end
 		step(0.5)
@@ -1835,6 +1861,11 @@ eq(select(2, GetVendor(100)), "Kira", "the cheapest seller is kept")
 A.npcName, shop = "Kira", { { 100, 600, 20, -1 } }
 A.fire("MERCHANT_SHOW")
 eq(GetVendor(100), 30, "a seller's own price is brought up to date")
+A.env.issecretvalue = function(v) return v == "hidden" end
+A.npcName, shop = "hidden", { { 100, 100, 20, -1 } }
+A.fire("MERCHANT_SHOW")
+eq(GetVendor(100), 30, "a vendor whose name the game keeps secret: nothing taken, and no error")
+A.env.issecretvalue = nil
 A.npcName = nil
 click(section("All items"))
 ;(function() -- vendor prices are rows of the store: they go to the guild with it, under the same switch, and no name is in them
@@ -2341,7 +2372,7 @@ end)()
 	local store
 	Y.env.LoadAddOn = function(name) if name == "AtlasLootClassic_DungeonsAndRaids" then loaded = loaded + 1 store = {
 		__atlaslootdata = {},
-		Deadmines = { name = "|cffffffffDeadmines|TInterface\\AddOns\\x:18:18|t|r", LevelRange = { 10, 17, 24 }, items = { { name = "Other Boss", npcID = 1, [1] = { { 1, 100 } } } } },
+		Deadmines = { name = "|cffffffffDeadmines|TInterface\\AddOns\\x:18:18|t|r", LevelRange = { 10, 17, 24 }, items = { { name = "Other Boss", npcID = 1, [1] = { { 1, 100 }, { 2, 872 } } } } },
 		Raid = { name = "Big Raid|TInterface\\AddOns\\x:18:18|t", LevelRange = { 60, 60, 60 }, items = {
 			{ name = "Raid Boss", npcID = { 502, 503 }, [1] = { { 1, 100 }, { 16, "INV_Box_01", nil, "A heading" } }, [2] = { { 1, 100 }, { 2, 400 } } },
 			{ name = "Nothing Dropper", [1] = { { 1, "INV_Box_01" } } } } },
@@ -2362,6 +2393,11 @@ end)()
 	check(raid, "its name without AtlasLoot's badge"); eq(#raid.bosses, 1, "a boss that drops nothing is left out"); eq(raid.bosses[1].npc, 502, "a boss of several NPCs goes by the first")
 	eq(table.concat(raid.bosses[1].items, ","), "100,400", "every list of its, each item once, headings left out")
 	eq(ydm.bosses[1].name, "Rhahk'Zor", "the shipped dungeon stays as shipped")
+	local other = Yd.DropOf(100)
+	check(other and other.name == "Other Boss" and other.dungeon == ydm, "an item AtlasLoot lists in a dungeon the shipped list has, and it lacks: added to that dungeon (Forever's own)")
+	local twice = 0
+	for _, b in ipairs(ydm.bosses) do if b.has[872] then twice = twice + 1 end end
+	eq(twice, 1, "an item the shipped list has is not added again")
 	eq(Yd.Chance(ydm.bosses[1], 872), 12.5, "a chance the shipped list has not is AtlasLoot's"); eq(Dg.Chance(dm.bosses[1], 872), nil, "none without it")
 	-- the guild: what was seen to drop is the store's counters: they pass with it, where agreed to
 	local first = #sent + 1
@@ -5868,17 +5904,38 @@ end
 	check(#X.printed == before + 1 and X.printed[#X.printed]:find(GAIN, 1, true), "a roll: a line in the chat")
 	X.fire("START_LOOT_ROLL", 2)
 	eq(#X.printed, before + 1, "none for what is not gear")
+	-- /dt bis <item>: where an item stands, step by step
+	X.slash("bis |cffffffff|Hitem:9003::|h[Helm]|h|r")
+	local why = table.concat(X.printed, "\n", before + 2)
+	check(why:find("BiS 9003: usable: true", 1, true) and why:find("vs worn:", 1, true), "/dt bis says where an item stands: " .. why)
+	local at = #X.printed
+	X.slash("bis load")
+	check((X.printed[at + 1] or ""):find("BiS loader: running", 1, true) and table.concat(X.printed, "\n", at + 1):find("not given up", 1, true) and X.printed[#X.printed]:find("never answered", 1, true), "/dt bis load says where the loader is")
+	-- facts kept by version 3: only dodge/parry/block gear and weapons are learned anew
+	local old = { factsV = 3, facts = { [1] = { loc = "INVTYPE_HEAD", s = { sta = 5 } }, [2] = { loc = "INVTYPE_CHEST", s = { dodge = 18 } },
+		[3] = { loc = "INVTYPE_2HWEAPON", s = { str = 9 } }, [4] = false } }
+	X.DT.Bis.Upgrade(old)
+	check(old.facts[1] and old.facts[2] == nil and old.facts[3] == nil and old.facts[4] == false and old.factsV ~= 3,
+		"from version 3, only what reads otherwise now is learned anew")
+	local older = { factsV = 2, facts = { [1] = { loc = "INVTYPE_HEAD", s = {} } } }
+	X.DT.Bis.Upgrade(older)
+	check(next(older.facts) == nil, "from an older one, all of it")
+	local noArmor = { factsV = 4, facts = { [1] = { class = 4, sub = 4, s = { sta = 5 } }, [2] = { class = 4, sub = 4, s = { armor = 400 } },
+		[3] = { class = 4, sub = 0, s = { sta = 5 } } } }
+	X.DT.Bis.Upgrade(noArmor)
+	check(noArmor.facts[1] == nil and noArmor.facts[2] and noArmor.facts[3] and noArmor.armorRead, "a plate piece read with no armor is learned anew, once")
+	eq(X.DT.BisLogic.Stats(nil, { "Breastplate", "583 Armor", "+40 Armor" }).armor, 583, "armor from the tooltip where the game gives no number")
 	-- what there is to get: the item list (QuestieDB's as the Items tab reads it; here a stand-in), then the game's facts
 	local Item = X.DT.Item
 	Item.Start, Item.Ready = function() return false end, function() return true end
-	Item.All = function() return {
+	Item.testList = nil; Item.All = function() Item.testList = Item.testList or { -- (one list, as Item.All gives it: a new one would be a new catalog)
 		{ id = 9010, req = 1, c = 4, s = 0, src = { ["Quest reward"] = true } },
 		{ id = 9011, req = 1, c = 4, s = 0, src = { Crafted = true } },
 		{ id = 9012, req = 1, c = 4, s = 0, src = { Drop = true } },
 		{ id = 9013, req = 1, c = 4, s = 0, src = { Drop = true } },
 		{ id = 9014, req = 1, c = 4, s = 0, src = { Drop = true } },
 		{ id = 9015, req = 40, c = 4, s = 0, src = { ["Quest reward"] = true } },
-	} end
+	} return Item.testList end
 	X.DT.CraftSkill = {}
 	local hall = X.DT.Dungeon.All()[1]
 	hall.lo = 5
@@ -5922,7 +5979,7 @@ end
 	eq(G.cols[2].text, "vs worn", "with what each does against the worn one")
 	local function Row(id) for _, l in ipairs(L) do if l.item.shown and l.item.id == id then return l end end end
 	check(L[1].item.id == 9003 and L[1].from.text:find("Quest", 1, true), "the first line is the best item, with where it is from")
-	check(L[2].item.id == 9002 and L[2].from.text:find("Owned", 1, true) and L[2].from.text:find("in your bags", 1, true), "one I own and do not wear says so, and where it is")
+	check(Row(9002) and Row(9002).from.text:find("Owned", 1, true) and Row(9002).from.text:find("in your bags", 1, true), "one I own and do not wear says so, and where it is")
 	check(Row(9010).diff.text:find("+15.0", 1, true) and Row(9010).pct.text:find("+150.0%", 1, true) and Row(9010).wt.text == "25", "each with its weight, its gain over the worn one, and that as a percent of the worn one's weight, in columns of their own")
 	check(Row(9010).from.text:find("|cffffd100Quest|r", 1, true) and not Row(9010).from.text:find("Quest:", 1, true), "a quest reward is a Quest, in its own colour")
 	check(L[7].item.id == 9001 and L[7].wt.text == "10" and L[7].diff.text == "" and L[7].from.text:find("Equipped", 1, true), "the worn helm stands in its place among them, with its weight and no difference, and its own source"); eq(L[8].item.shown, false, "nothing worse")
@@ -6053,7 +6110,7 @@ end)()
 		for word, n in pairs(raw.w) do same = same and (not kept(word) or p.w[word] == n) end
 		for word, n in pairs(p.w) do same = same and (not kept(word) or raw.w[word] == n or (raw.caps[word] and n == 0)) end
 		if split then
-			local ranged = raw.class == "HUNTER" and raw.w.dps or raw.w.dps / 10
+			local ranged = raw.class == "HUNTER" and raw.w.dps or 0
 			check(p.w.rdps == ranged, raw.id .. ": a ranged weapon's DPS weighed for its slot")
 		end
 		for word, cap in pairs(raw.caps) do
@@ -6202,7 +6259,7 @@ end)()
 	-- in a fight: nothing is asked of the game, nothing said of an item not seen
 	local asks = 0
 	local real = e.C_Item.RequestLoadItemDataByID
-	e.C_Item.RequestLoadItemDataByID = function() asks = asks + 1 end
+	e.C_Item.RequestLoadItemDataByID = function(id) if id == 9160 then asks = asks + 1 end end
 	X.uncached[9160] = true
 	X.combat = true
 	eq(Line(9160), nil, "no line for an unseen item in a fight"); eq(asks, 0, "and the game is not asked about it")
@@ -6234,7 +6291,7 @@ end)()
 	leave(X)
 	for id in pairs(GEAR) do ITEMS[id] = nil end
 end)()
-;(function() -- BiS, the loader: every item there is asked of the game once, a hundred a second at most; kept for every session after
+;(function() -- BiS, the loader: every item there is asked of the game once, twenty a second at most; kept for every session after
 	local GEAR, DEAD = {}, {}
 	local SLOTS = { "INVTYPE_HEAD", "INVTYPE_CHEST", "INVTYPE_LEGS", "INVTYPE_FEET", "INVTYPE_HAND" }
 	for i = 1, 500 do GEAR[48000 + i] = { slot = SLOTS[i % 5 + 1], str = i % 50 + 1 } end
@@ -6250,7 +6307,7 @@ end)()
 	local function Client(name, db)
 		local X = NewClient(name, { db = db, globals = function(env)
 			env.UnitLevel = function() return 60 end
-			env.GetItemStats = function(link) local g = GEAR[tonumber(link:match("item:(%d+)"))] return g and { ITEM_MOD_STRENGTH_SHORT = g.str } or {} end
+			env.GetItemStats = function(link) local g = GEAR[tonumber(link:match("item:(%d+)"))] return g and { ITEM_MOD_STRENGTH_SHORT = g.str, RESISTANCE0_NAME = 300 } or {} end
 			env.C_TooltipInfo = { GetItemByID = function(id) return { lines = { { leftText = "x" } } } end }
 		end })
 		X.DT.Bis.MAX_LEVEL = 60
@@ -6263,19 +6320,32 @@ end)()
 	local X, asked = Client("BisLoad")
 	local B = X.DT.Bis
 	B.Pick("warrior-protection")
+	local late = ITEMS[48001] -- (the game is slow to answer for this one)
+	ITEMS[48001] = nil
 	for _ = 1, 5 do step(0.2) end
-	check(asked.n <= 200, "the game is asked a hundred a second at most (asked " .. asked.n .. " in a second)")
+	check(asked.n <= 40, "the game is asked twenty a second at most (asked " .. asked.n .. " in a second)")
+	-- (the slow one answers now, once it was asked)
+	for _ = 1, 300 do if asked.by[48001] then break end step(0.2) end
+	check(asked.by[48001] and not B.db.facts[48001], "an item asked and not yet answered")
+	local left = B.Left()
+	ITEMS[48001] = late
+	X.fire("GET_ITEM_INFO_RECEIVED", 48001, true)
+	check(B.db.facts[48001], "the game's answer is taken as it comes, not on the next pass")
+	eq(B.Left(), left - 1, "and the count of items to load drops with it")
 	X.combat = true
 	local before = asked.n
 	for _ = 1, 20 do step(0.2) end
 	eq(asked.n, before, "nothing is asked in a fight")
 	X.combat = false
-	for _ = 1, 600 do step(0.2) end
+	for _ = 1, 5000 do step(0.2) if not B.loader:IsShown() then break end end
 	eq(B.Left(), 0, "after a while every item is known or given up on")
+	local was = #X.printed
+	B.Why("999999")
+	check(table.concat(X.printed, " | ", was + 1):find("item list: not in it", 1, true), "/dt bis says why an item is not in the catalog: " .. table.concat(X.printed, " | ", was + 1))
 	local most = 0
 	for id, n in pairs(asked.by) do
 		most = math.max(most, n)
-		check(not GEAR[id] or n == 1, "an item the game knows is asked once")
+		check(not GEAR[id] or n == 1 or id == 48001, "an item the game knows is asked once")
 	end
 	eq(most, 6, "one it never answers for: six times, then left alone")
 	local kept = 0
@@ -6297,8 +6367,44 @@ end)()
 	B2.Pick("warrior-protection")
 	eq(B2.State().bis.rows[1], 48500, "a second session: the recommended set at once, from what was kept")
 	for _ = 1, 600 do step(0.2) end
-	for id in pairs(asked2.by) do check(DEAD[id] or not GEAR[id], "only what the game never answered is asked again: " .. id) end -- (the enchants and consumables are asked apart)
+	for id in pairs(asked2.by) do check(not GEAR[id] and not DEAD[id], "nothing is asked again, not even what the game never answered: " .. id) end -- (the enchants and consumables are asked apart)
+	eq(B2.Never(48601), true, "one never answered is remembered")
+	B2.db.never[48601] = B2.db.never[48601] - 8 * 24 * 3600
+	eq(B2.Never(48601), false, "for a week")
 	leave(Y)
+	-- shared with the guild: what my game said of an item is a row of the store, and a member who has it asks nothing
+	local function Done(B) for _ = 1, 5000 do step(0.2) if not B.loader:IsShown() then break end end end
+	local S1, askedS1 = Client("BisShare1")
+	S1.env.C_Item.IsItemDataCachedByID = function(id) return ITEMS[id] ~= nil end
+	S1.env.StaticPopupDialogs.DAWNTOOLS_SHARE.OnAccept()
+	local BS1 = S1.DT.Bis
+	BS1.Pick("warrior-protection")
+	Done(BS1)
+	local row = S1.DT.DB.Row("istat:48500")
+	check(row and BS1.RowText(BS1.db.facts[48500]) == row.v, "what my game said of an item is shared, as a row of the store")
+	check(S1.DT.DB.Row("istat:48601") == nil, "nothing of one it never answered for")
+	-- a patch: my game now says otherwise of an item it told of before; read again (from what it holds), kept, shared
+	local was = BS1.db.facts[48002].s.str
+	BS1.db.facts[48002].s.str = 1
+	BS1.refresh.at = 1
+	BS1.refresher:Show()
+	for _ = 1, 5000 do step(0.2) if not BS1.refresher:IsShown() then break end end
+	eq(BS1.db.facts[48002].s.str, was, "an item the game now says otherwise of is read again, and kept as it says now")
+	check(BS1.RowText(BS1.db.facts[48002]) == S1.DT.DB.Row("istat:48002").v, "and shared as it is now")
+	-- a guildmate with the rows, whose game holds none of these items: none is asked of the server
+	local S2, askedS2 = Client("BisShare2")
+	S2.env.StaticPopupDialogs.DAWNTOOLS_SHARE.OnAccept()
+	for id in pairs(GEAR) do S2.uncached[id] = true; S2.DT.DB.Put("istat:" .. id, S1.DT.DB.Row("istat:" .. id).v) end
+	S2.DT.DB.Put("istat:48001", "3,\"INVTYPE_HEAD\",\"Old\",3,1,4,4,\"str=500\"") -- (a row of another shape: left alone)
+	local BS2 = S2.DT.Bis
+	BS2.Pick("warrior-protection")
+	Done(BS2)
+	local gear = 0
+	for id in pairs(askedS2.by) do if GEAR[id] then gear = gear + 1 end end
+	eq(gear, 1, "a member with the rows asks the server for none of those items (only the one whose row is of another shape)")
+	eq(BS2.State().bis.rows[1], 48500, "and has the same recommended set")
+	check(askedS2.by[48001] and BS2.Item(48001) == nil, "a row of another shape is not read: the item is asked of the game")
+	leave(S1); leave(S2)
 	for id in pairs(GEAR) do ITEMS[id] = nil end
 end)()
 ;(function() -- BiS, spec and level: the tab opens on my class and spec, a level can be picked, the phase at the last level, defense as base plus gear
@@ -6367,13 +6473,13 @@ end)()
 	end
 	spire.bosses[1].has[9307], onyxia.bosses[1].has[9306] = true, true
 	Item.Start, Item.Ready = function() return false end, function() return true end
-	Item.All = function() return {
+	Item.testList = nil; Item.All = function() Item.testList = Item.testList or { -- (one list, as Item.All gives it: a new one would be a new catalog)
 		{ id = 9301, req = 5, c = 4, s = 2, src = { ["Quest reward"] = true } }, { id = 9302, req = 25, c = 4, s = 2, src = { ["Quest reward"] = true } },
 		{ id = 9303, req = 38, c = 4, s = 2, src = { ["Quest reward"] = true } }, { id = 9304, req = 55, c = 4, s = 2, src = { ["Quest reward"] = true } },
 		{ id = 9305, req = 60, c = 4, s = 2, src = { ["Quest reward"] = true } }, { id = 9306, req = 60, c = 4, s = 2, src = { Drop = true } },
 		{ id = 9307, req = 55, c = 4, s = 2, src = { Drop = true } },
 		{ id = 9308, req = 60, ilvl = 83, c = 4, s = 2, src = { Drop = true } }, { id = 9309, req = 38, c = 4, s = 2, src = { Drop = true } },
-	} end
+	} return Item.testList end
 	-- (9308: dropped by a mob that stands in a raid the dungeon list does not have; 9309: by a boss of a dungeon for higher levels than mine)
 	spire.bosses[1].has[9309] = true
 	e.LibQuestieDB = { Item = { Get = function(id, key) return id == 9308 and key == "npcDrops" and { 15990 } or nil end },
@@ -6409,6 +6515,9 @@ end)()
 	eq(B.Phase()[2], "Pre-raid", "the last level: pre-raid to begin with")
 	eq(Dg.IsRaid(onyxia), true, "Onyxia's Lair is a raid"); eq(Dg.IsRaid(spire), false, "Upper Blackrock Spire is not")
 	eq(B.Tag(9307, "dungeon"), "Dungeon", "a dungeon's drop"); eq(B.Tag(9306, "dungeon"), "Raid", "a raid's"); eq(B.Tag(1, "owned"), "Owned", "an item I own")
+	local b9307 = Dg.DropOf(9307)
+	B.wheres[9307] = nil
+	eq(B.Where(9307, "dungeon"), b9307.dungeon.name .. ", " .. b9307.name .. ((Dg.Chance(b9307, 9307) and (" (" .. ("%.1f"):format(Dg.Chance(b9307, 9307)):gsub("%.0$", "") .. "%)")) or ""), "a dungeon drop: the dungeon, the boss, its chance")
 	-- (the last level: the whole set, three versions of it, and the slot's list on a click)
 	X.DT.UI:Show("bis")
 	local G = B.gear
@@ -6478,12 +6587,10 @@ end)()
 		GEAR[99600 + i] = { "Many " .. i, 30, i }
 		ITEMS[99600 + i] = { "Many " .. i, 2, 1, 100, false, 4, 2, slot = "INVTYPE_HEAD", lvl = 30 }
 	end
-	local more = Item.All
-	Item.All = function()
-		local list = more()
-		for i = 1, 40 do list[#list + 1] = { id = 99600 + i, req = 30, c = 4, s = 2, src = { ["Quest reward"] = true } } end
-		return list
-	end
+	local longer = {}
+	for _, e in ipairs(Item.All()) do longer[#longer + 1] = e end
+	for i = 1, 40 do longer[#longer + 1] = { id = 99600 + i, req = 30, c = 4, s = 2, src = { ["Quest reward"] = true } } end
+	Item.All = function() return longer end
 	B.Pick("warrior-fury"); B.SetLevel(41); Look()
 	X.DT.UI:Show("bis"); click(G.slots[1]); B.Refresh()
 	local first = G.lines[1].item.id
