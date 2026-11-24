@@ -521,10 +521,15 @@ end
 -- line being written (a line is opened if none is); the right button shows its web page, to copy.
 -- Returns true when Shift was held (the click is dealt with).
 -- (item: its number where the row is an item's. With Alt held instead, the item is made a favourite, or no
--- longer one: see DT.Favs.)
+-- longer one: see DT.Favs. With Ctrl held, it is tried on in the dressing room, as anywhere in the game.)
 function DT:LinkClick(button, link, title, url, item)
 	if item and IsAltKeyDown and IsAltKeyDown() then
 		DT.Favs.Toggle(item, title)
+		return true
+	end
+	local dress = DressUpItemLink or DressUpLink
+	if item and link and dress and IsControlKeyDown and IsControlKeyDown() then
+		pcall(dress, link)
 		return true
 	end
 	if not (IsShiftKeyDown and IsShiftKeyDown()) then return false end

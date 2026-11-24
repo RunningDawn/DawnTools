@@ -2162,6 +2162,12 @@ end)()
 	e.IsAltKeyDown = function() return true end
 	eq(X.DT:LinkClick("LeftButton", "[x]", "Rockslicer", "url", 872), true, "an Alt-click on an item row is dealt with"); eq(Favs.Is(872), true, "it makes the item a favourite")
 	eq(X.DT:LinkClick("LeftButton", "[q]", "A quest", "url"), false, "a row that is no item is left alone")
+	e.IsAltKeyDown = nil
+	local tried
+	e.IsControlKeyDown, e.DressUpItemLink = function() return true end, function(link) tried = link end
+	eq(X.DT:LinkClick("LeftButton", "[x]", "Rockslicer", "url", 872), true, "a Ctrl-click on an item row is dealt with"); eq(tried, "[x]", "it is tried on in the dressing room")
+	e.IsControlKeyDown, e.DressUpItemLink = nil, nil
+	e.IsAltKeyDown = function() return true end
 	-- Alt-click anywhere in the game
 	X.DT.FavTab.OnModifiedClick("|cffffffff|Hitem:1475::::|h[Large Venom Sac]|h|r")
 	eq(Favs.Is(1475), true, "an Alt-click on an item anywhere in the game makes it one too")

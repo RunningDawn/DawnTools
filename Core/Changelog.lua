@@ -16,6 +16,7 @@ DT.CHANGELOG = {
 		"/dt bis load also counts the items the game never answered.",
 		"/dt bis <item> says why an item is not in the BiS item list.",
 		"Settings: the in-game navigation switch is gone (it did nothing on Forever).",
+		"Ctrl-click on an item in any DawnTools list tries it on in the dressing room.",
 	} },
 	{ "0.56.0", "2026-11-23", {
 		"BiS: item stats are shared with the guild (where sharing is on): a member who has them asks the game for none of those items. Where the game says otherwise of an item after a patch, the newer stats reach everyone.",
