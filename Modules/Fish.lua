@@ -607,9 +607,10 @@ local function MakeRow(i)
 	end)
 	row:SetScript("OnLeave", function() GameTooltip:Hide() end)
 	-- a click on an item's row: the link to read up on it
-	row:SetScript("OnMouseUp", function(self)
+	row:SetScript("OnMouseUp", function(self, button)
 		local d = self.data
-		if d and d.id then DT:ShowLink(Name(d.id), DT:ItemLink(d.id)) end
+		if not (d and d.id) or DT:ItemClick(d.id, Name(d.id), button) then return end
+		DT:ShowLink(Name(d.id), DT:ItemLink(d.id))
 	end)
 	-- over the "cooked" columns of the Fish table: the cooked food's own tooltip and link (Refresh places it)
 	row.over = CreateFrame("Frame", nil, row)
@@ -625,9 +626,10 @@ local function MakeRow(i)
 		GameTooltip:Show()
 	end)
 	row.over:SetScript("OnLeave", function() GameTooltip:Hide() end)
-	row.over:SetScript("OnMouseUp", function()
+	row.over:SetScript("OnMouseUp", function(_, button)
 		local d = row.data
-		if d and d.cooked then DT:ShowLink(Name(d.cooked), DT:ItemLink(d.cooked)) end
+		if not (d and d.cooked) or DT:ItemClick(d.cooked, Name(d.cooked), button) then return end
+		DT:ShowLink(Name(d.cooked), DT:ItemLink(d.cooked))
 	end)
 	rows[i] = row
 	return row

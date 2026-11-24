@@ -6,6 +6,27 @@
 local _, DT = ...
 
 DT.CHANGELOG = {
+	{ "0.56.3", "2026-11-23", {
+		"BiS: hit and crit on gear count for spells too, as Forever has one of each. Casters and healers now see hit and crit gear for what it is worth.",
+		"BiS: the recommended set no longer gives up everything else for a cap no gear of the phase can reach (17% spell hit, a tank's hit): such a cap counts by its weight. A cap that can be reached still comes first.",
+		"BiS: the recommended set also looks at the best pieces without the capped stats: a tank at the defense cap is offered the best stamina and armor, not only the most defense.",
+		"BiS: a weapon in the off hand counts half its damage everywhere, as in the recommended set; the set lists it in the off hand.",
+		"BiS below level 60: a quest reward shows only from five levels under its quest (the item itself often asks for no level), and no raid's gear or raid quest reward is offered.",
+		"BiS: the sets are worked out a few milliseconds a frame: the game no longer stands still for a second when they are (the tab says \"Working out the sets...\").",
+		"BiS Gear: Ring 1 and Ring 2, Trinket 1 and Trinket 2 each list upgrades against what is worn in that very slot; what the other holds is not offered.",
+		"BiS: Recalculate now works the sets out anew at once (it only did after a /reload), and sets kept by an older version are not shown for the new one.",
+		"BiS: where part of the working out fails, the tab says so in red instead of showing an empty list.",
+		"BiS: an item dropped in a dungeon and in a raid counts as the dungeon's; a raid listed as \"Barrow Deeps\" is the one ticked as \"Barrow Deeps Raid\".",
+		"BiS Weights: small weights (armor 0.01) show as they are; Enter in an unchanged box no longer rounds them to 0.",
+		"BiS: a cap typed between two steps (hit 2.45) no longer picks a worse set; an item the game reports one stat of twice is not counted double; \"spell damage\" and \"damage done by magical spells\" lines are read as spell power.",
+		"BiS: a guildmate's shared item with numbers no item has is not believed.",
+		"Guild sync: Forever's own recipes (numbers over a million) now reach members; they were left out.",
+		"Market: the Usable filter keeps checking skill and known recipes on a long list.",
+		"Quests: what you have done is read again once the quest list is in.",
+		"Shift-, Alt- and Ctrl-click on an item work on the Inventory, Food, Fish and Zones tabs as on the others.",
+		"Carrot: no more endless tries to put the old trinket back while dead or when it is gone.",
+		"/dawn opens the window too; where another addon has /dt (Details!), the login line says which command is yours.",
+	} },
 	{ "0.56.2", "2026-11-23", {
 		"Ctrl-click on an item in any DawnTools list tries it on in the dressing room.",
 	} },

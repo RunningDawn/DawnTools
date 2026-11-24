@@ -4,7 +4,7 @@
 local ADDON, DT = ...
 _G.DawnTools = DT
 
-DT.VERSION = "0.56.2" -- keep in step with the .toc
+DT.VERSION = "0.56.3" -- keep in step with the .toc
 DT.LOGO = "Interface\\AddOns\\DawnTools\\logo"
 
 local DEFAULTS = {
@@ -249,7 +249,7 @@ reader:SetScript("OnUpdate", function(self)
 	if not r.begun then
 		r.begun = true
 		ok, done = pcall(r.Start)
-		done = ok and not done
+		if ok then done = not done end -- (not ok: done is the error, reported below)
 	else
 		ok, done = pcall(r.Step, 2)
 	end
@@ -300,7 +300,9 @@ local function Init()
 	-- (nested too: a rank is compared as a number, a position or size is a finite one)
 	local function Num(n) return type(n) == "number" and n == n and n ~= math.huge and n ~= -math.huge end
 	for id, n in pairs(db.tabs.rank) do if not Num(n) then db.tabs.rank[id] = nil end end
-	if type(db.pos) ~= "table" or type(db.pos[1]) ~= "string" or type(db.pos[2]) ~= "string" or not Num(db.pos[3]) or not Num(db.pos[4]) then db.pos = nil end
+	-- (a point is one of the game's nine: any other word, as an imported profile may bring, would leave the window nowhere)
+	local POINT = { TOPLEFT = 1, TOP = 1, TOPRIGHT = 1, LEFT = 1, CENTER = 1, RIGHT = 1, BOTTOMLEFT = 1, BOTTOM = 1, BOTTOMRIGHT = 1 }
+	if type(db.pos) ~= "table" or not POINT[db.pos[1]] or not POINT[db.pos[2]] or not Num(db.pos[3]) or not Num(db.pos[4]) then db.pos = nil end
 	if type(db.size) ~= "table" or not Num(db.size[1]) or not Num(db.size[2]) then db.size = nil end
 	if type(db.lastTab) ~= "string" then db.lastTab = nil end
 	if type(db.settingsSection) ~= "string" then db.settingsSection = nil end
@@ -565,6 +567,12 @@ DT:On("MODIFIER_STATE_CHANGED", function(key)
 end)
 
 -- the game's own link of an item (as the game writes it once it knows the item; else a plain one)
+-- a click on an item's row, on any tab: true when a held key took it (Shift: its link, Alt: a favourite, Ctrl: tried on)
+function DT:ItemClick(id, name, button)
+	name = name or ("item " .. id)
+	return self:LinkClick(button, self:GameItemLink(id, name), name, self:ItemLink(id), id)
+end
+
 function DT:GameItemLink(id, name)
 	local get = (C_Item and C_Item.GetItemInfo) or GetItemInfo
 	local ok, _, link = pcall(function() return get(id) end)
@@ -722,7 +730,8 @@ DT:On("PLAYER_LOGIN", function()
 	local first, last = DT.first, nil
 	if UnitFullName then first, last = UnitFullName("player") end
 	DT.me = (first or DT.first or "?") .. (type(last) == "string" and last ~= "" and (" " .. last) or "")
-	DT:Print("version %s loaded. /dt opens the window.", DT.VERSION)
+	-- (/dt is another addon's where one has it: Details!. Then the next short one)
+	DT:Print("version %s loaded. %s opens the window.", DT.VERSION, SlashFree("/dt") and "/dt" or SlashFree("/dawn") and "/dawn" or "/dawntools")
 	C_Timer.After(5, function() DT:AskToShare() end)
 
 	for _, mod in DT:Enabled() do
@@ -736,7 +745,10 @@ DT:On("PLAYER_LOGIN", function()
 
 	SlashCmdList.DAWNTOOLS = Slash
 	SLASH_DAWNTOOLS1 = "/dawntools"
-	if SlashFree("/dt") then SLASH_DAWNTOOLS2 = "/dt" end
+	local n = 1 -- (the game reads SLASH_X1, 2, 3 up to the first that is missing: no gap)
+	for _, cmd in ipairs({ "/dt", "/dawn" }) do
+		if SlashFree(cmd) then n = n + 1 _G["SLASH_DAWNTOOLS" .. n] = cmd end
+	end
 	for _, mod in DT:Enabled() do
 		if mod.slash and mod.tab and SlashFree(mod.slash) then
 			local key = "DAWNTOOLS_" .. mod.name:upper()

@@ -480,7 +480,8 @@ function DB.Take(chunk, text)
 	if type(chunk) ~= "string" or type(text) ~= "string" then return 0 end
 	-- (a chunk name is what ChunkOf makes: letters, then a number or "s" and a sum; a peer's own names would grow the store without end)
 	local what, s, n = chunk:match("^(%a+):(s?)(%d+)$")
-	if not what or #what > 12 or tonumber(n) > (s == "" and 4000 or 63) then return 0 end
+	-- (8192 chunks: numbers up to two million, as Forever's own recipes have them)
+	if not what or #what > 12 or tonumber(n) > (s == "" and 8192 or 63) then return 0 end
 	local theirs = {}
 	for key, row in pairs(L.Parse(text)) do
 		-- (only rows that belong in this chunk: a row filed elsewhere would never be found again)

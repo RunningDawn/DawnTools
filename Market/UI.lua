@@ -257,11 +257,11 @@ local looks = {} -- [itemID] = times its tooltip was looked at without an answer
 local function Requirement(id, item)
 	if item.rq then return item.rq end
 	if not (C_TooltipInfo and C_TooltipInfo.GetItemByID) then return "" end
-	looks[id] = (looks[id] or 0) + 1
-	if looks[id] > 5 then return "" end -- (a tooltip that never comes whole: not asked after for ever)
+	if (looks[id] or 0) >= 5 then return "" end -- (a tooltip that never comes whole: not asked after for ever)
 	unsettled = true
 	if budget <= 0 then return nil end
 	budget = budget - 1
+	looks[id] = (looks[id] or 0) + 1 -- (a look is one that read the tooltip: a pass out of budget is none)
 	local data = C_TooltipInfo.GetItemByID(id)
 	local lines = data and data.lines
 	if not lines or #lines == 0 then return nil end
@@ -291,11 +291,11 @@ local function AlreadyKnown(id)
 	local k = known[id]
 	if k ~= nil then return k end
 	if not (C_TooltipInfo and C_TooltipInfo.GetItemByID) then return false end
-	knownLooks[id] = (knownLooks[id] or 0) + 1
-	if knownLooks[id] > 5 then return false end -- (as above)
+	if (knownLooks[id] or 0) >= 5 then return false end -- (as above)
 	unsettled = true
 	if budget <= 0 then return false end
 	budget = budget - 1
+	knownLooks[id] = (knownLooks[id] or 0) + 1
 	local data = C_TooltipInfo.GetItemByID(id)
 	local lines = data and data.lines
 	if not lines or #lines == 0 then return false end

@@ -232,6 +232,40 @@ do
 	eq(s.def, 7, "defense from its Equip line"); check(math.abs(s.exp - 1.3) < 1e-9, "expertise rating in percent")
 	eq(s.sp_shadow, 20, "the damage of one school"); eq(s.bv, 50, "a shield's block and what adds to it"); eq(s.scrit, 1, "a line that speaks of spells is the spell stat")
 	eq(s.sp, 9, "spell power"); eq(s.heal, 9, "which heals too"); eq(s.ap, 30, "attack power"); eq(s.mp5, 4, "mana per 5")
+	-- Forever: one hit and one crit for melee, ranged and spells
+	local one = BL.Stats({ ITEM_MOD_HIT_RATING_SHORT = 20, ITEM_MOD_CRIT_RATING_SHORT = 14 })
+	eq(one.shit, 2, "a plain hit counts for spells too"); eq(one.scrit, 1, "and a plain crit")
+	local spell = BL.Stats(nil, { "Equip: Improves your chance to hit with spells by 2%." })
+	eq(spell.shit, 2, "one that says spells"); eq(spell.hit, nil, "is for spells only")
+	-- the few of a slot that go into a set: the best with the caps to reach, and the best with them reached
+	local few = BL.Few({ { id = 1, s = { def = 10 } }, { id = 2, s = { def = 9 } }, { id = 3, s = { sta = 100 } }, { id = 4, s = { sta = 1 } } },
+		{ w = { def = 15, sta = 1 }, caps = { def = { cap = 440, over = 0.1, hard = true } } }, 2)
+	check(few[1] and few[2], "the most defense, for a set short of the cap"); check(few[3], "and the most stamina, for one that has it")
+	check(not few[4], "not one that is the best of neither")
+	-- two of the game's keys for one stat are one number, not two
+	local twice = BL.Stats({ ITEM_MOD_HIT_RATING_SHORT = 10, ITEM_MOD_HIT_MELEE_RATING_SHORT = 10, ITEM_MOD_SPELL_POWER_SHORT = 30, ITEM_MOD_SPELL_DAMAGE_DONE_SHORT = 30 })
+	eq(twice.hit, 1, "hit and melee hit from the game: the same hit, once"); eq(twice.sp, 30, "spell power and spell damage likewise")
+	eq(BL.Stats(nil, { "Equip: Increases damage done by magical spells and effects by up to 14." }).sp, 14, "damage of all schools is spell power, not a school called magical")
+	eq(BL.Stats(nil, { "Equip: Increases spell damage by up to 30." }).sp, 30, "spell damage, said shortly")
+	-- a cap off the steps (2.45 where the steps are tenths): reaching it is not the same as nearly reaching it
+	do
+		local list = {
+			{ id = 1, loc = "INVTYPE_FEET", n = 2, s = { hit = 1.0, shit = 0.5, str = 13 } },
+			{ id = 2, loc = "INVTYPE_FINGER", n = 2, s = { def = 1, exp = 0.4, hit = 0.5, shit = 0.7, str = 13 } },
+			{ id = 3, loc = "INVTYPE_FINGER", n = 2, s = { def = 5, exp = 1.2, hit = 0.5, shit = 1.0, str = 14 } },
+			{ id = 4, loc = "INVTYPE_FINGER", n = 1, s = { hit = 0.9, str = 16 } },
+			{ id = 5, loc = "INVTYPE_TRINKET", n = 1, s = { def = 5, hit = 0.7, shit = 0.9 } },
+			{ id = 6, loc = "INVTYPE_TRINKET", n = 2, s = { def = 1, str = 5 } },
+			{ id = 7, loc = "INVTYPE_WEAPONMAINHAND", n = 1, s = { def = 5, dps = 10.5, exp = 0.2, str = 12 } },
+			{ id = 8, loc = "INVTYPE_WEAPON", n = 2, s = { def = 3, dps = 12, hit = 1.3, shit = 1.1 } },
+		}
+		local function Best(cap)
+			local p = { w = { def = 1, dps = 1, exp = 0.4, hit = 29, shit = 0.3, str = 0.21 }, caps = { hit = { cap = cap, over = 0, hard = true } }, hands = { "2h", "dw" } }
+			return (select(3, BL.Solve(BL.Choices(list, p), { hit = 0.4 }, p)))
+		end
+		check(math.abs(Best(2.45) - 114.52) < 0.005, "a cap between two steps: the best set all the same (by trying them all: 114.52), got " .. Best(2.45))
+		check(Best(2.4) < Best(2.45) and Best(2.45) < Best(2.5), "and a higher cap on a stat worth much is never worth less")
+	end
 	eq(BL.Stats(nil, { "Use: Increases defense by 50 for 10 sec.", "Chance on hit: Increases attack power by 100." }).def, nil, "a Use line is not a stat of the item")
 
 	local prof = { w = { sta = 1, def = 15, hit = 4, str = 0.5 }, caps = { def = { cap = 440, over = 0.2, hard = true }, hit = { cap = 8, over = 0 } }, hands = { "shield" } }
@@ -297,6 +331,14 @@ do
 	local dw = BL.Choices({ { id = 1, loc = "INVTYPE_WEAPON", s = { dps = 10 }, n = 1 }, { id = 2, loc = "INVTYPE_WEAPON", s = { dps = 20 }, n = 1 } }, { w = { dps = 1 }, hands = { "dw" } })
 	local _, _, dwScore = BL.Solve(dw, {}, { w = { dps = 1 }, hands = { "dw" } })
 	eq(dwScore, 25, "two weapons: the slower in the off hand, at half")
+	eq(table.concat(BL.Solve(dw, {}, { w = { dps = 1 }, hands = { "dw" } })[13].ids, ","), "2,1", "and listed second, as the off hand")
+	-- a cap to reach first: reached where a set can, not chased where none can
+	local caphead = { { id = 1, loc = "INVTYPE_HEAD", s = { shit = 1 }, n = 1 }, { id = 2, loc = "INVTYPE_HEAD", s = { sta = 50 }, n = 1 } }
+	local far = { w = { sta = 1, shit = 1 }, caps = { shit = { cap = 17, over = 0, hard = true } } }
+	local near = { w = { sta = 1, shit = 1 }, caps = { shit = { cap = 1, over = 0, hard = true } } }
+	eq(BL.Solve(BL.Choices(caphead, near), {}, near)[1].ids[1], 1, "a cap a set can reach is reached first")
+	local farPicks, _, _, farShort = BL.Solve(BL.Choices(caphead, far), {}, far)
+	eq(farPicks[1].ids[1], 2, "a cap no set reaches is not chased: it counts by its weight"); eq(farShort.shit, 17, "and is still said to be missed")
 	-- a lock: the slot holds the locked item, though a better one is there
 	local heads = { { id = 1, loc = "INVTYPE_HEAD", s = { sta = 50 }, n = 1 }, { id = 2, loc = "INVTYPE_HEAD", s = { sta = 5 }, n = 1 } }
 	eq(BL.Solve(BL.Choices(heads, prof), {}, prof)[1].ids[1], 1, "unlocked: the better head")
@@ -1078,8 +1120,8 @@ local function ids(list)
 	return table.concat(out, " ")
 end
 local UI = C.DT.UI
-eq(C.env.SLASH_DAWNTOOLS1, "/dawntools", "the long command"); eq(C.env.SLASH_DAWNTOOLS2, nil, "/dt is left to the addon that has it")
-eq(A.env.SLASH_DAWNTOOLS2, "/dt", "and taken when free"); eq(A.env.SLASH_DAWNTOOLS_MARKET1, "/dtmarket", "the module's short command")
+eq(C.env.SLASH_DAWNTOOLS1, "/dawntools", "the long command"); eq(C.env.SLASH_DAWNTOOLS2, "/dawn", "/dt is left to the addon that has it: the next short one, with no gap in the numbers"); eq(C.env.SLASH_DAWNTOOLS3, nil, "and no third")
+eq(A.env.SLASH_DAWNTOOLS2, "/dt", "and taken when free"); eq(A.env.SLASH_DAWNTOOLS3, "/dawn", "with /dawn beside it"); eq(A.env.SLASH_DAWNTOOLS_MARKET1, "/dtmarket", "the module's short command")
 eq(ids(UI:TabList()), "home early market favs demo inventory craft world combat bis tools", "tabs in their default order")
 UI:MoveTab("demo", -1)
 eq(ids(UI:TabList()), "home early market demo favs inventory craft world combat bis tools", "a tab moved up")
@@ -2015,7 +2057,8 @@ click(section("All items"))
 		V1.DT.UI:ShowSection("sync")
 	end)()
 	click(V1.DT.UI.syncReset)
-	eq(next(V1.DT.Comms:Totals().mods), nil, "the counting can be started anew"); check(V1.DT.UI.syncText.text:find("Nothing sent or received yet", 1, true), "and the page says so")
+	V1.DT.Comms:OnComm(nil, ("nosuchmodule\tX\t%d\t-\tabc"):format(V1.DT.Comms.PROTO), "GUILD", "Some Stranger")
+	eq(next(V1.DT.Comms:Totals().mods), nil, "the counting can be started anew, and a message for a module nobody has is not counted"); check(V1.DT.UI.syncText.text:find("Nothing sent or received yet", 1, true), "and the page says so")
 	leave(V1); leave(V2)
 end)()
 ;(function() -- what quests give is a row of the store: it goes with it, where agreed to, with the level it was seen at
@@ -2166,7 +2209,9 @@ end)()
 	local tried
 	e.IsControlKeyDown, e.DressUpItemLink = function() return true end, function(link) tried = link end
 	eq(X.DT:LinkClick("LeftButton", "[x]", "Rockslicer", "url", 872), true, "a Ctrl-click on an item row is dealt with"); eq(tried, "[x]", "it is tried on in the dressing room")
+	eq(X.DT:ItemClick(872, nil, "LeftButton"), true, "the same by its number alone, as the Inventory, Food, Fish and Zones rows ask"); check(tostring(tried):find("item:872", 1, true), "its own link is tried on")
 	e.IsControlKeyDown, e.DressUpItemLink = nil, nil
+	eq(X.DT:ItemClick(872, nil, "LeftButton"), false, "no key held: the click is the row's own")
 	e.IsAltKeyDown = function() return true end
 	-- Alt-click anywhere in the game
 	X.DT.FavTab.OnModifiedClick("|cffffffff|Hitem:1475::::|h[Large Venom Sac]|h|r")
@@ -2438,6 +2483,8 @@ end)()
 	eq((Dg.Seen(dm.bosses[1])), 3, "so both of us see the same sum")
 	local at = Now() + 100
 	check(Y.DT.DB.Take("loot:2", ("loot:645:aaaaaa\t%d\tguild\t3;1:9"):format(at)) == 1, "a counter may come over the wire")
+	eq(Y.DT.DB.Take("recipe:4740", ("recipe:1213481\t%d\tguild\t1"):format(at)), 1, "a row with a number over a million too (Forever's own recipes)")
+	eq(Y.DT.DB.Take("recipe:9000", ("recipe:2304000\t%d\tguild\t1"):format(at)), 0, "but not any number at all")
 	local n645, seen645 = Y.DT.DB.Looted("npc", 645)
 	eq(n645, 3, "its count"); eq(seen645[1], 3, "an item is never seen more often than the boss was looted")
 	local bars = Y.DT.modules.dungeon.progress()
@@ -5887,9 +5934,23 @@ end
 	check(again == s and again.upg[1] and again.upg[1].id == 9003 and again.at, "the same again: nothing to work out")
 	eq(again.bis.score, s.bis.score, "the same best set")
 	check(not B.db.saved[s.skey].bis.rows and not B.db.saved[s.skey].bis.swaps, "nothing of the views goes into the file")
+	local solved = B.stats.solves
 	B.Recalc()
 	eq(B.db.saved[s.skey], nil, "Recalculate drops it")
 	s = B.State()
+	check(B.stats.solves > solved, "and the sets are worked out anew, though nothing I wear or own changed")
+	do -- (over several frames where the client has a clock: a few ms each, the state before shown meanwhile)
+		local whole, clock = B.State().bis and table.concat(B.State().bis.rows, ",", 1, 1) or "", 0
+		e.debugprofilestop = function() clock = clock + 10 return clock end -- (every look at the clock: the frame's time is up)
+		B.Recalc()
+		eq(B.State(), nil, "worked out over frames: not there after the first"); eq(B.Working(), true, "and said to be worked on")
+		local frames = 1
+		while B.Working() and frames < 10000 do frames = frames + 1 B.State() end
+		check(frames > 5 and frames < 10000, "a frame a pause, to the end: " .. frames)
+		eq(B.State().bis and table.concat(B.State().bis.rows, ",", 1, 1) or "", whole, "and the same set as in one go")
+		eq(B.err, nil, "without a fault")
+		e.debugprofilestop = nil
+	end
 	step(1)
 	s = B.State()
 	tip.lines = {}
@@ -5926,6 +5987,10 @@ end
 	local older = { factsV = 2, facts = { [1] = { loc = "INVTYPE_HEAD", s = {} } } }
 	X.DT.Bis.Upgrade(older)
 	check(next(older.facts) == nil, "from an older one, all of it")
+	local four = { factsV = 4, armorRead = true, facts = { [1] = { loc = "INVTYPE_NECK", s = { hit = 1, crit = 2 } }, [2] = { loc = "INVTYPE_NECK", s = { hit = 1, shit = 3 } }, [3] = false } }
+	X.DT.Bis.Upgrade(four)
+	check(four.facts[1].s.shit == 1 and four.facts[1].s.scrit == 2 and four.facts[2].s.shit == 3 and four.facts[3] == false and four.factsV == 5,
+		"from version 4, hit and crit count for spells too, and nothing is learned anew")
 	local noArmor = { factsV = 4, facts = { [1] = { class = 4, sub = 4, s = { sta = 5 } }, [2] = { class = 4, sub = 4, s = { armor = 400 } },
 		[3] = { class = 4, sub = 0, s = { sta = 5 } } } }
 	X.DT.Bis.Upgrade(noArmor)
@@ -6001,6 +6066,15 @@ end
 	click(Row(9010).item)
 	eq(way, 77, "a click on it: a waypoint to where the quest is picked up")
 	e.LibQuestieDB = nil; eq(Row(9010).icon.texture, 1000 + 9010, "and its picture")
+	do -- (a quest's reward is for the level the quest is: the item itself may ask for none)
+		local relTo, q = X.DT.DB.RelTo, X.DT.DB.Q
+		X.DT.DB.RelTo = function() return { { id = 1 }, { id = 2 } } end
+		X.DT.DB.Q = function(_, id, field) return (({ { requiredLevel = 50, questLevel = 60 }, { requiredLevel = 1, questLevel = 45 } })[id] or {})[field] end
+		eq(B.QuestLevel(424242), 40, "a quest reward: from five levels under the lowest quest that gives it, whatever the quest allows")
+		X.DT.DB.RelTo = function() return {} end
+		eq(B.QuestLevel(424243), 0, "no quest known for it: no level asked")
+		X.DT.DB.RelTo, X.DT.DB.Q = relTo, q
+	end
 	check(Row(9014).from.text:find("Dungeon", 1, true), "a dungeon drop: " .. Row(9014).from.text); check(Row(9011).from.text:find("Crafted", 1, true), "crafted"); check(Row(9012).from.text:find("World Drop", 1, true), "a world drop not seen on the auction house")
 	Row(9014).item.scripts.OnEnter(Row(9014).item)
 	eq(tip.lines[#tip.lines - 1], "item:9014", "a line shows its item's tooltip")
@@ -6242,7 +6316,8 @@ end)()
 	local rank = B.Rank(1, 14, 4)
 	eq(#rank.above, 2, "an empty slot: what is worth anything is above"); eq(rank.above[2].id, 9111, "the sold mail helm after the better one"); eq(B.Tag(9111, "vendor"), "Vendor", "and a vendor")
 	eq(#rank.below, 4, "four of the rest are shown under it"); eq(rank.worn, nil, "nothing worn to show"); eq(rank.above[1].new, true, "an empty slot: the gain is all new"); eq(rank.above[1].pct, nil, "and no percent")
-	eq(B.Rank(11, 14, 4).ref, 12, "two rings: the empty finger is the one to beat"); eq(B.Rank(11, 14, 4).above[1].id, 9131, "the better ring is above it")
+	eq(B.Rank(11, 14, 4).ref, 11, "two rings: each finger against its own ring"); check(B.Rank(12, 14, 4).above[1] and B.Rank(12, 14, 4).above[1].new, "the empty finger: all of them new");
+	for _, c in ipairs(B.Rank(12, 14, 4).above) do check(c.id ~= 9130, "the ring on the other finger is not one to get for this one") end eq(B.Rank(11, 14, 4).above[1].id, 9131, "the better ring is above it")
 	step(2) -- (the tab is shut: the set was worked out when asked for just now, its gains come a frame each after)
 	eq(s.upg[1] and s.upg[1].id, 9110, "upgrades without a list: the helm gains the most"); eq(s.rank[9110], 1, "numbered")
 	-- the tooltip: where the item goes
@@ -6255,6 +6330,14 @@ end)()
 	check(Line(9110):find("+30.0", 1, true) and Line(9110):find("Head", 1, true), "an item I can use: what it gains, and where")
 	check(Line(9131):find("Ring", 1, true) and not Line(9131):find("Rings", 1, true), "a ring takes one ring's place")
 	check(Line(9141):find("Off hand", 1, true), "an off-hand weapon says so")
+	do -- (a weapon in the off hand does half its damage, in what I wear as in the sets)
+		GEAR[9143] = { "Quick Blade", "INVTYPE_WEAPON", { ITEM_MOD_DAMAGE_PER_SECOND_SHORT = 40 }, 2, 7 }
+		ITEMS[9143] = { "Quick Blade", 2, 1, 100, false, 2, 7, slot = "INVTYPE_WEAPON" }
+		local st = { base = {}, prof = { w = { dps = 2 }, caps = {} } }
+		eq(B.Worth(st, {}, 9143, nil, 15), 80, "a weapon in the main hand: all of its damage")
+		eq(B.Worth(st, {}, 9143, nil, 16), 40, "in the off hand: half")
+		GEAR[9143], ITEMS[9143] = nil, nil
+	end
 	eq(Line(9150), nil, "an item only a mage may wear: nothing is said")
 	eq(B.Gain(9150).no, true, "though it is known not to be for me")
 	B.Pick("warrior-arms")
@@ -6402,6 +6485,10 @@ end)()
 	S2.env.StaticPopupDialogs.DAWNTOOLS_SHARE.OnAccept()
 	for id in pairs(GEAR) do S2.uncached[id] = true; S2.DT.DB.Put("istat:" .. id, S1.DT.DB.Row("istat:" .. id).v) end
 	S2.DT.DB.Put("istat:48001", "3,\"INVTYPE_HEAD\",\"Old\",3,1,4,4,\"str=500\"") -- (a row of another shape: left alone)
+	S2.DT.DB.Put("istat:48777", "5,\"INVTYPE_NECK\",\"Liar\",3,1,4,0,\"sta=99999\"")
+	S2.DT.DB.Put("istat:48778", "4,\"INVTYPE_NECK\",\"Older\",3,1,4,0,\"hit=1\"")
+	eq(S2.DT.Bis.Shared(48777), nil, "a row with a stat no item gives is not taken")
+	eq((S2.DT.Bis.Shared(48778) or { s = {} }).s.shit, 1, "a row of the version before is, its hit counted for spells too")
 	local BS2 = S2.DT.Bis
 	BS2.Pick("warrior-protection")
 	Done(BS2)

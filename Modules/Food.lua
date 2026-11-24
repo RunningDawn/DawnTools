@@ -417,9 +417,10 @@ local function MakeRow(i)
 		GameTooltip:Show()
 	end)
 	row.over:SetScript("OnLeave", function() GameTooltip:Hide() end)
-	row.over:SetScript("OnMouseUp", function()
+	row.over:SetScript("OnMouseUp", function(_, button)
 		local d = row.data
-		if d and d.scroll then DT:ShowLink(d.scrollName or ("item " .. d.scroll), DT:ItemLink(d.scroll)) end
+		if not (d and d.scroll) or DT:ItemClick(d.scroll, d.scrollName, button) then return end
+		DT:ShowLink(d.scrollName or ("item " .. d.scroll), DT:ItemLink(d.scroll))
 	end)
 	row:EnableMouse(true)
 	row:SetScript("OnEnter", function(self)
@@ -434,8 +435,9 @@ local function MakeRow(i)
 		GameTooltip:Show()
 	end)
 	row:SetScript("OnLeave", function() GameTooltip:Hide() end)
-	row:SetScript("OnMouseUp", function(self)
-		if self.data then DT:ShowLink(self.data.name, DT:ItemLink(self.data.id)) end
+	row:SetScript("OnMouseUp", function(self, button)
+		if not self.data or DT:ItemClick(self.data.id, self.data.name, button) then return end
+		DT:ShowLink(self.data.name, DT:ItemLink(self.data.id))
 	end)
 	rows[i] = row
 	return row

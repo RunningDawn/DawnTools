@@ -71,9 +71,12 @@ local TEXT = {
 	{ "%+" .. NUM .. " ranged attack power", "rap" },
 	{ "attack power by " .. NUM, "ap" },
 	{ "%+" .. NUM .. " attack power", "ap" },
+	{ "damage done by magical spells and effects by up to " .. NUM, "sp" },
 	{ "damage done by (%a+) spells and effects by up to " .. NUM, "sp_", school = true },
 	{ "damage and healing done by magical spells and effects by up to " .. NUM, "sp", also = "heal" },
 	{ "spell power by " .. NUM, "sp", also = "heal" },
+	{ "spell damage by up to " .. NUM, "sp" },
+	{ "ignore " .. NUM .. " of your opponent's armor", "arp" },
 	{ "healing done by spells and effects by up to " .. NUM, "heal" },
 	{ "healing power by " .. NUM, "heal" },
 	{ "restores " .. NUM .. " mana per 5 sec", "mp5" },
@@ -91,7 +94,8 @@ function BL.Stats(game, lines)
 		local word = GAME[key]
 		if word and type(value) == "number" then
 			if type(word) == "table" then word, value = word[1], value / (BL.RATING[word[1]] or 1) end
-			s[word], given[word] = (s[word] or 0) + value, true
+			-- (two of the game's keys for one stat, "hit" and "melee hit": the same number twice, not two to add)
+			s[word], given[word] = s[word] and math.max(s[word], value) or value, true
 		end
 	end
 	-- (the game's one "spell power" is damage and healing both: a healer counts it as healing, unless the game says the healing itself)
@@ -124,6 +128,9 @@ function BL.Stats(game, lines)
 	for word, n in pairs(text) do
 		if not given[word] then s[word] = n end
 	end
+	-- (Forever: one hit and one crit for melee, ranged and spells alike. A plain one counts for spells too; one that
+	-- says "spell" for spells only)
+	s.shit, s.scrit = s.shit or s.hit, s.scrit or s.crit
 	return s
 end
 
@@ -175,6 +182,21 @@ function BL.BestExtras(list, prof)
 		if v > 0 and (not at[e.group] or v > at[e.group]) then best[e.group], at[e.group] = e, v end
 	end
 	return best
+end
+
+-- Of the items for one place to wear, { id, s }, the few worth trying in a set: the best n as worth with every cap
+-- still to reach, and the best n as worth with every cap reached (a set short of its caps is made of the first, one
+-- that has them of the second, most of both). Returns { [id] = true }.
+function BL.Few(list, prof, n)
+	local full, taken = {}, {}
+	for word, cap in pairs(prof.caps or {}) do full[word] = cap.cap end
+	for _, base in ipairs({ full, {} }) do
+		local by = {}
+		for i, e in ipairs(list) do by[i] = { e.id, (BL.Score(e.s, base, prof)) } end
+		table.sort(by, function(a, b) if a[2] ~= b[2] then return a[2] > b[2] end return a[1] < b[1] end)
+		for i = 1, math.min(#by, n) do taken[by[i][1]] = true end
+	end
+	return taken
 end
 
 function BL.Add(into, s, times)
@@ -241,10 +263,10 @@ local function Cand(items, prof, hands)
 		c.ids[i] = item.id
 		BL.Add(c.s, item.s)
 	end
-	-- (two weapons: the off hand does half the damage; of two that could be either, the slower is in it)
+	-- (two weapons: the off hand does half the damage; of two that could be either, the weaker is in it, and second)
 	local a, b = items[1], items[2]
 	local off = b
-	if b and MAIN[a.loc] and MAIN[b.loc] and (a.s.dps or 0) < (b.s.dps or 0) then off = a end
+	if b and a.loc == "INVTYPE_WEAPON" and MAIN[b.loc] and (a.s.dps or 0) < (b.s.dps or 0) then off, c.ids[1], c.ids[2] = a, b.id, a.id end
 	if hands and off and off.s.dps then c.s.dps = c.s.dps - off.s.dps / 2 end
 	c.lin = Weigh(c.s, prof)
 	return c
@@ -343,7 +365,21 @@ local FIRST = { def = 1000 } -- (and of hard caps, defense before all else: a ta
 -- the capped stats reached so far (counted up to what is still missing to the cap, in steps), as past a cap
 -- only the amount of a stat decides, not which items gave it.
 -- Returns picks[slot index] = candidate, the gear's summed stats, its score and what hard caps still miss.
-function BL.Solve(slots, base, prof)
+-- tick: called now and then while it works (the caller may pause there: Modules/Bis.lua works it out over several frames).
+local Solve1
+function BL.Solve(slots, base, prof, tick)
+	local picks, gear, score, short = Solve1(slots, base, prof, tick)
+	-- (a cap to reach first that no set reaches: not chased at any price. It counts by its weight, and the set is
+	-- chosen anew; what is still missing to it is said all the same)
+	if next(short) then
+		local caps = {}
+		for word, cap in pairs(prof.caps) do caps[word] = short[word] and { cap = cap.cap, over = cap.over, step = cap.step } or cap end
+		picks, gear = Solve1(slots, base, { w = prof.w, caps = caps, hands = prof.hands }, tick)
+		score, short = BL.Score(gear, base, prof)
+	end
+	return picks, gear, score, short
+end
+function Solve1(slots, base, prof, tick)
 	local caps = {}
 	-- (the steps of all caps together stay under STATES: three caps of a hundred steps each are a million states a
 	-- slot, seconds of work. ponytail: coarser steps can miss a cap's last point; a set of two caps is still exact)
@@ -355,16 +391,20 @@ function BL.Solve(slots, base, prof)
 		-- (steps: a point of defense, a tenth of a percent; coarser where a cap typed in is so far off that the
 		-- steps to it would not fit their part of the key, or where many caps are counted at once)
 		local step = math.max(cap.step or (word == "def" and 1 or 0.1), need / 4000, need / steps)
-		caps[#caps + 1] = { word = word, need = need, step = step,
+		caps[#caps + 1] = { word = word, need = need, step = step, top = math.floor(need / step + 0.5) + 1,
 			gain = (prof.w[word] or 0) - (cap.over or 0) + (cap.hard and HARD * (FIRST[word] or 1) or 0) }
 	end
 	table.sort(caps, function(a, b) return a.word < b.word end)
 	local n = #caps
 	local states, trail = { [n > 4 and "" or 0] = { v = 0, g = {} } }, {}
 	local g, min, floor = {}, math.min, math.floor -- (g: worked out in place; a table is made only for a state that wins)
+	local done = 0
 	for i, slot in ipairs(slots) do
 		local nextStates, back = {}, {}
+		if tick then tick() end
 		for key, st in pairs(states) do
+			done = done + 1
+			if tick and done % 32 == 0 then tick() end
 			local sg, sv = st.g, st.v
 			for ci, cand in ipairs(slot.cands) do
 				local k, cs = n > 4 and "" or 0, cand.s -- (more caps than fit a number: the key as text)
@@ -372,7 +412,8 @@ function BL.Solve(slots, base, prof)
 					local cap = caps[c]
 					local got = min((sg[c] or 0) + (cs[cap.word] or 0), cap.need)
 					g[c] = got
-					local at = floor(got / cap.step + 0.5)
+					-- (the cap reached is a step of its own: a cap off the steps, 2.45 in tenths, is not one with "nearly")
+					local at = got >= cap.need and cap.top or min(floor(got / cap.step + 0.5), cap.top - 1)
 					if n > 4 then k = k .. at .. ":" else k = k * 4096 + at end
 				end
 				local v = sv + cand.lin
