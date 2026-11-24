@@ -6,6 +6,9 @@
 local _, DT = ...
 
 DT.CHANGELOG = {
+	{ "0.56.2", "2026-11-23", {
+		"Ctrl-click on an item in any DawnTools list tries it on in the dressing room.",
+	} },
 	{ "0.56.1", "2026-11-23", {
 		"BiS: items the game never answers for are not asked again for a week (or until a new game build); Recalculate no longer asks for them.",
 		"BiS: items the item list has no type for (some of Forever's own) are found by the type the game gives them.",
@@ -16,7 +19,6 @@ DT.CHANGELOG = {
 		"/dt bis load also counts the items the game never answered.",
 		"/dt bis <item> says why an item is not in the BiS item list.",
 		"Settings: the in-game navigation switch is gone (it did nothing on Forever).",
-		"Ctrl-click on an item in any DawnTools list tries it on in the dressing room.",
 	} },
 	{ "0.56.0", "2026-11-23", {
 		"BiS: item stats are shared with the guild (where sharing is on): a member who has them asks the game for none of those items. Where the game says otherwise of an item after a patch, the newer stats reach everyone.",
