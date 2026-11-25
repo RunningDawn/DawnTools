@@ -1150,8 +1150,9 @@ DT:On("PLAYER_LOGIN", function()
 	if UnitFullName then first, last = UnitFullName("player") end
 	DT.me = (first or DT.first or "?") .. (type(last) == "string" and last ~= "" and (" " .. last) or "")
 	-- (/dt is another addon's where one has it: Details!. Then the next short one)
-	DT:Print("version %s loaded. %s opens the window.", DT.VERSION, SlashFree("/dt") and "/dt" or SlashFree("/dawn") and "/dawn" or "/dawntools")
-	C_Timer.After(5, function() DT:AskToShare() end)
+    	DT:Print("version %s loaded. %s opens the window.", DT.VERSION, SlashFree("/dt") and "/dt" or SlashFree("/dawn") and "/dawn" or "/dawntools")
+    	DT:ApplyTheme()
+    	C_Timer.After(5, function() DT:AskToShare() end)
 
 	for _, mod in DT:Enabled() do
 		-- a module that fails must not take the others with it; the error still reaches BugSack
