@@ -804,6 +804,14 @@ local function Worn()
 	return cur, gear, whole -- (gear: of what has loaded; whole: all of it, so the sheet may be read against it)
 end
 
+-- For the Mitigation tool, on a client that does not say the defense: five a level and what is on the gear I wear
+-- now, read anew at every call (in a fight too: a shield or weapon changed there counts at once).
+-- ponytail: talents, enchants and buffs that add defense are not in it: nothing on this client says them.
+function B.WornDefense()
+	local _, gear = Worn()
+	return Level() * 5 + (gear.def or 0)
+end
+
 -- The capped stats without gear. Kept per character, as it cannot be read in a fight.
 local BASED = { "def", "hit", "shit", "exp" }
 local function Base(gear)

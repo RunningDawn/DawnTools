@@ -6,6 +6,14 @@
 local _, DT = ...
 
 DT.CHANGELOG = {
+	{ "0.57.0", "2026-11-24", {
+		"Market: a \"Bag/Bank/Alt\" column, after Qty: how many of the item you have in your bags, in your bank, and on your other characters (as the Inventory tab knows them; empty where you have none). The row's tooltip says who has how many and where. Click the header to sort by it.",
+		"Market: Ctrl-click a row to try the item on in the dressing room, Shift-click to link it in chat, Alt-click to make it a favourite, as on the other tabs. Hold Shift over a row to compare it with what you wear.",
+		"Market: under Containers the item level column shows the bag's slots instead; click its header to sort by size.",
+		"Tools: Mitigation. A small column on screen, as it changes: miss, dodge, parry and block together and each on a line; what your armor takes off a physical hit; your block value and defense; how often your own swing hits. Resistances too, if ticked. Beside it a bar of one swing: it fills from the top in the order the game decides (miss, dodge, parry, block), and past 100% the last ones are cut short. Against your target's level, or your own. In a fight the game hides your numbers from addons: they stay as they were before it. Off until ticked.",
+		"Guild sync: when a member logs off in the middle of an exchange, the chat no longer fills with \"No player named ... is currently playing\". Nothing more is whispered to them until they are back, and that line is kept out of the chat.",
+		"Carrot: a carrot left on after a fight or a loading screen is noticed and swapped for the trinket that slot held before, whenever you are on foot and out of combat.",
+	} },
 	{ "0.56.3", "2026-11-23", {
 		"BiS: hit and crit on gear count for spells too, as Forever has one of each. Casters and healers now see hit and crit gear for what it is worth.",
 		"BiS: the recommended set no longer gives up everything else for a cap no gear of the phase can reach (17% spell hit, a tank's hit): such a cap counts by its weight. A cap that can be reached still comes first.",

@@ -50,14 +50,30 @@ local function On() return S.db ~= nil and DT:Shares() end
 -- way the game wrote the name that came in
 local function Who(name) return (name:gsub(" ", "-")) end
 
+-- A member who logged off: the game answers every whisper to them with a line in the chat ("No player named ...").
+-- gone[member] = true from the first such line, or from the game saying they went offline, until their next hello:
+-- nothing more is whispered to them, and what was being fetched from them is left to others. A message's pieces
+-- are handed to the game one after the other (the next when the one before has gone out), so that nothing of it
+-- lies queued for somebody who has left. whispered[member] = when a piece last went to them: the game's line
+-- about a whisper of ours is kept out of the chat (S.Hide).
+local gone, whispered = {}, {}
+S.gone = gone
+
 local function Say(to, kind, body)
 	if DT.Comms:Why() then return false end -- (not in a fight, nor where addon messages are not wanted)
+	to = Who(to)
+	if gone[to] then return false end
 	local data = LibDeflate:EncodeForPrint(LibDeflate:CompressDeflate(body or ""))
 	local n = math.max(1, math.ceil(#data / PIECE))
 	seq = seq % 9999 + 1
-	for i = 1, n do
-		comm:SendCommMessage(PREFIX, ("%s%d:%d:%d;%s"):format(kind, seq, i, n, data:sub((i - 1) * PIECE + 1, i * PIECE)), "WHISPER", Who(to), "BULK")
+	local id, i = seq, 0
+	local function Piece()
+		i = i + 1
+		if i > n or gone[to] then return end
+		whispered[to] = GetTime()
+		comm:SendCommMessage(PREFIX, ("%s%d:%d:%d;%s"):format(kind, id, i, n, data:sub((i - 1) * PIECE + 1, i * PIECE)), "WHISPER", to, "BULK", Piece)
 	end
+	Piece()
 	S.sent, S.out[kind] = S.sent + 1, (S.out[kind] or 0) + 1
 	S.bytes[kind] = (S.bytes[kind] or 0) + #(body or "")
 	return true
@@ -100,6 +116,36 @@ local function Wake()
 	end
 end
 
+-- The game's line in the chat: is it about a member being gone? ("No player named 'X' is currently playing.",
+-- "X has gone offline.") Returns the member, as whispered to.
+local function Pattern(text) return text and "^" .. text:gsub("%p", "%%%0"):gsub("%%%%s", "(.+)") .. "$" end
+local function Gone(text)
+	if type(text) ~= "string" or (issecretvalue and issecretvalue(text)) then return end
+	local name = text:match(Pattern(ERR_CHAT_PLAYER_NOT_FOUND_S) or "^No player named '(.+)' is currently playing%.$")
+		or text:match(Pattern(ERR_FRIEND_OFFLINE_S) or "^(.+) has gone offline%.$")
+	-- (the name may come as a link to the player)
+	name = name and name:gsub("|H.-|h", ""):gsub("|h", ""):gsub("[%[%]]", "")
+	return name and Who(name)
+end
+
+function S.Left(text)
+	local who = Gone(text)
+	if not who or not (peers[who] or whispered[who]) then return end
+	gone[who] = true
+	local p = peers[who]
+	peers[who] = nil
+	if p and p.out then flying[p.out] = nil end
+	Wake()
+end
+
+-- (a chat filter: true keeps the line out of the chat. Only "no player named", and only within seconds of a
+-- whisper of ours to that name: a whisper the player typed themselves still gets its answer shown)
+function S.Hide(_, _, text)
+	local who = Gone(text)
+	if who and whispered[who] and GetTime() - whispered[who] < 30 and not text:find("offline", 1, true) then return true end
+	return false
+end
+
 -- my hashes, to a member who asked for them
 local function Answer(to)
 	local lines = {}
@@ -113,6 +159,7 @@ local early = {}
 function S.Heard(sender, root)
 	if not On() then return end
 	sender = Who(sender)
+	gone[sender] = nil -- (here again)
 	-- (they asked before their hello reached me: answered now, if that was not long ago)
 	if early[sender] then
 		if GetTime() - early[sender] < 120 then Answer(sender) end
@@ -280,6 +327,8 @@ DT:RegisterModule("gamedb", { -- (not "db": that key of the saved file is the st
 		local raw = comm.OnComm -- (timed, for /dt perf)
 		comm.OnComm = function(self, ...) DT.Timed("guild: game database whisper in", raw, self, ...) end
 		comm:RegisterComm(PREFIX, "OnComm")
+		DT:On("CHAT_MSG_SYSTEM", S.Left)
+		if ChatFrame_AddMessageEventFilter then ChatFrame_AddMessageEventFilter("CHAT_MSG_SYSTEM", S.Hide) end
 	end,
 })
 

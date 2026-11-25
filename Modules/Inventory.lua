@@ -95,6 +95,22 @@ local function Guids()
 	return guids
 end
 
+-- For the other tabs (Market): units of an item over all my characters, and who holds them:
+-- total, { "Name: 3 in bags, 5 in bank", ... } (this character first)
+function DawnInventory.API.Held(itemID)
+	local total, who = 0, {}
+	for _, guid in ipairs(I.db and Guids() or {}) do
+		local c = I.db.chars[guid]
+		local bags, bank = c.bags[itemID] or 0, c.bank[itemID] or 0
+		if bags + bank > 0 then
+			total = total + bags + bank
+			who[#who + 1] = Label(guid) .. ": " .. (bags > 0 and (bags .. " in bags") or "") .. (bags > 0 and bank > 0 and ", " or "")
+				.. (bank > 0 and (bank .. " in bank") or "")
+		end
+	end
+	return total, who
+end
+
 -- Whose things are listed: one character (this one, until another is picked) or "all".
 local function Shown()
 	local show = I.show or I.me

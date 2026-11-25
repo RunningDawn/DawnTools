@@ -431,7 +431,7 @@ local LibDeflate = {
 	end,
 }
 -- ("../DawnTools_Seed/": the data files, kept out of the addon: see Core/DBSeed.lua)
-local FILES = { "Core/Logic.lua", "Core/BisLogic.lua", "Core/Core.lua", "Core/Comms.lua", "Core/UI.lua", "Core/Builtins.lua", "Core/Profiles.lua", "Core/DBLogic.lua", "Core/DB.lua", "Core/DBImport.lua", "Core/DBSeed.lua", "Market/Capture.lua", "Market/Sync.lua", "Market/UI.lua", "../DawnTools_Seed/CraftSkill.lua", "../DawnTools_Seed/Dungeons.lua", "Data/BisProfiles.lua", "Data/BisExtras.lua", "Data/BisLists.lua", "Modules/Inventory.lua", "Modules/Fish.lua", "Modules/Food.lua", "Modules/Craft.lua", "Modules/Npc.lua", "Modules/Quest.lua", "Modules/Item.lua", "Modules/Zone.lua", "Modules/Dungeon.lua", "Modules/Favs.lua", "Modules/Finds.lua", "Modules/Combat.lua", "Modules/Bis.lua", "Tools/Tools.lua", "Tools/Range.lua", "Tools/Mp5.lua", "Tools/Fps.lua", "Tools/Tracker.lua", "Tools/Enemies.lua", "Tools/Carrot.lua", "Tools/ChatHistory.lua", "Tools/ChatSaver.lua", "Core/DBSync.lua", "Core/Changelog.lua", "Core/Home.lua" }
+local FILES = { "Core/Logic.lua", "Core/BisLogic.lua", "Core/Core.lua", "Core/Comms.lua", "Core/UI.lua", "Core/Builtins.lua", "Core/Profiles.lua", "Core/DBLogic.lua", "Core/DB.lua", "Core/DBImport.lua", "Core/DBSeed.lua", "Market/Capture.lua", "Market/Sync.lua", "Market/UI.lua", "../DawnTools_Seed/CraftSkill.lua", "../DawnTools_Seed/Dungeons.lua", "Data/BisProfiles.lua", "Data/BisExtras.lua", "Data/BisLists.lua", "Modules/Inventory.lua", "Modules/Fish.lua", "Modules/Food.lua", "Modules/Craft.lua", "Modules/Npc.lua", "Modules/Quest.lua", "Modules/Item.lua", "Modules/Zone.lua", "Modules/Dungeon.lua", "Modules/Favs.lua", "Modules/Finds.lua", "Modules/Combat.lua", "Modules/Bis.lua", "Tools/Tools.lua", "Tools/Range.lua", "Tools/Mp5.lua", "Tools/Fps.lua", "Tools/Mitigation.lua", "Tools/Tracker.lua", "Tools/Enemies.lua", "Tools/Carrot.lua", "Tools/ChatHistory.lua", "Tools/ChatSaver.lua", "Core/DBSync.lua", "Core/Changelog.lua", "Core/Home.lua" }
 
 local function after(delay, fn, owner) timers[#timers + 1] = { at = now + delay, fn = fn, owner = owner } end
 local function Now() return BASE + math.floor(now) end
@@ -1233,6 +1233,7 @@ leave(C)
 local off = C.env.DawnToolsDB.modules
 off.market, off.inventory, off.fish, off.food, off.combat, off.npc, off.quest, off.tools, off.range, off.mp5, off.tracker, off.home, off.item, off.zone = false, false, false, false, false, false, false, false, false, false, false, false, false, false
 off.crafts, off.dungeon, off.dungeonlist, off.favs, off.chathistory, off.carrot, off.enemies, off.bis, off.finds = false, false, false, false, false, false, false, false, false
+off.mitigation = false
 local D = NewClient("Carol", { db = C.env.DawnToolsDB })
 eq(ids(D.DT.UI:TabList(true)), "", "no tab for a module switched off")
 D.fire("COMMODITY_SEARCH_RESULTS_UPDATED", 100)
@@ -1755,6 +1756,14 @@ eq(Count(110), 2, "the bags follow"); eq(select(2, Count(100)), 8, "the bank sta
 eq(Count(110, "Player-Nobody"), 0, "an unknown character has nothing")
 Inv.db.chars["Player-Alt"] = { name = "Alice Alt", class = "DRUID", bags = { [110] = 5 }, bank = {} }
 eq(Count(110, "Player-Alt"), 5, "another character's bags")
+do -- (for the Market tab: how many over all of them, and who)
+	local total, who = A.env.DawnInventory.API.Held(110)
+	eq(total, 7, "held over all my characters"); eq(#who, 2, "by two of them")
+	check(who[1]:find("Alice Smith|r: 2 in bags", 1, true) and who[2]:find("Alice Alt|r: 5 in bags", 1, true), "this one first, and where: " .. who[1] .. " / " .. who[2])
+	total, who = A.env.DawnInventory.API.Held(100)
+	eq(total, 8, "the bank counts"); check(who[1]:find(": 8 in bank", 1, true), "and is said: " .. who[1])
+	eq((A.env.DawnInventory.API.Held(424242)), 0, "none of what nobody has")
+end
 A.slash("inventory")
 local function text(part)
 	for _, w in ipairs(A.widgets) do
@@ -2726,8 +2735,39 @@ V:Refresh()
 local sellers = {}
 for _, w in ipairs(A.widgets) do
 	if w.cells and w.shown then sellers[w.id] = w.cells.vbuy.text end
+	if w.cells and w.shown and w.id == 110 then check(w.cells.have.text:find("2|r / |cff555555-|r / |cff40ff405|r", 1, true), "Market says how many of it I have, in the bags / in the bank / on my other characters: " .. tostring(w.cells.have.text)) end
 end
 check(sellers[100] and sellers[110] and not sellers[821], "the vendor filter lists what a vendor sells")
+do -- Ctrl-click on a row: the dressing room, not the row picked
+	local e, tried, was = A.env, nil, V.selected
+	e.IsControlKeyDown, e.DressUpItemLink = function() return true end, function(link) tried = link end
+	for _, w in ipairs(A.widgets) do
+		if w.cells and w.shown and w.id == 110 then w.scripts.OnClick(w, "LeftButton") end
+	end
+	check(tostring(tried):find("Copper Ore", 1, true), "Ctrl-click on a Market row tries the item on: " .. tostring(tried)); eq(V.selected, was, "and picks no row")
+	e.IsControlKeyDown, e.DressUpItemLink = nil, nil
+	-- Shift held over a row: the game's comparison with what I wear, beside the tooltip
+	local shown, wasOwned = 0, e.GameTooltip.IsOwned
+	e.IsShiftKeyDown, e.GameTooltip_ShowCompareItem = function() return true end, function() shown = shown + 1 end
+	for _, w in ipairs(A.widgets) do
+		if w.cells and w.shown and w.id == 110 then
+			e.GameTooltip.IsOwned = function(_, owner) return owner == w end
+			w.scripts.OnEnter(w)
+		end
+	end
+	eq(shown, 1, "Shift held over a Market row: compared with what I wear")
+	e.IsShiftKeyDown, e.GameTooltip_ShowCompareItem, e.GameTooltip.IsOwned = nil, nil, wasOwned
+	-- the Containers category: the item level column is the bag's slots
+	local function head(title)
+		for _, w in ipairs(A.widgets) do
+			if w.kind == "Button" and type(w.text) == "table" and w.text.text and w.text.text:find("^" .. title) and w.shown ~= false then return true end
+		end
+	end
+	check(head("iLvl") and not head("Slots"), "an item level column, as a rule")
+	V.class = 1; V:Refresh()
+	check(head("Slots") and not head("iLvl"), "under Containers it is the slots")
+	V.class = nil; V:Refresh()
+end
 check(sellers[100]:find("30c", 1, true), "with the vendor's price"); check(sellers[110]:find("*", 1, true), "and a star for limited stock")
 V.vendorOnly = nil
 V:Refresh()
@@ -4859,6 +4899,25 @@ do
 		click(Car.boxes.on)
 		mount(false)
 		eq(worn[13], 501, "switched off on the mount: my trinket still comes back")
+		-- a carrot left behind (the note of what it replaced lost over a loading screen): found on foot, swapped out
+		Car.boxes.on.checked = true
+		click(Car.boxes.on)
+		e.GetItemCount = function(id) return (id == Car.ITEM or id == 501) and 1 or 0 end
+		mount(true)
+		eq(worn[13], Car.ITEM, "mounted again")
+		Car.db.back = nil
+		A.combat = true
+		mount(false)
+		eq(worn[13], Car.ITEM, "left behind in a fight, nothing known of what it replaced")
+		A.combat = false
+		A.fire("PLAYER_REGEN_ENABLED"); step(1.1)
+		eq(worn[13], 501, "the fight over: the trinket that slot held before is back"); eq(Car.db.back, nil, "and nothing is owed")
+		worn[13] = Car.ITEM; Car.db.last[13] = 777 -- (a trinket I no longer have)
+		A.fire("UNIT_AURA", "player"); step(1.1)
+		eq(worn[13], Car.ITEM, "what the slot held is gone: the carrot stays"); eq(Car.db.back, nil, "and nothing is tried")
+		worn[13] = 501
+		Car.boxes.on.checked = false
+		click(Car.boxes.on)
 		e.GetInventoryItemID, e.IsMounted, e.UnitOnTaxi, e.GetItemCount, e.EquipItemByName = nil, nil, nil, nil, nil
 	end)()
 end
@@ -4953,6 +5012,108 @@ do
 	eq(f.shown, false, "off: gone")
 	Fps.Reset()
 	A.env.GetFramerate = nil
+end
+
+-- Mitigation: armor's share and how often I am not hit, on screen
+do
+	local G, e = A.DT.Mitigation, A.env
+	local wasLevel, wasExists = e.UnitLevel, e.UnitExists
+	eq(G.f.shown, false, "Mitigation is off to begin with")
+	eq(G.Armor(5500, 60), 50, "the old game's armor share: 5500 armor against level 60 is half")
+	eq(G.Armor(999999, 60), 75, "never more than 75%")
+	e.UnitLevel = function(u) return u == "player" and 60 or -1 end
+	e.UnitExists = function() return false end
+	e.UnitArmor = function() return 3000, 5500, 5500, 0, 0 end
+	e.UnitDefense = function() return 300, 0 end
+	e.GetDodgeChance, e.GetParryChance, e.GetBlockChance = function() return 10 end, function() return 5 end, function() return 0 end
+	local r = G.Read()
+	eq(r.vs, 60, "no target: against my own level"); eq(r.miss, 5, "miss 5"); eq(r.dodge, 10, "dodge 10"); eq(r.parry, 5, "parry 5, each on its own")
+	eq(r.all, 20, "and all of them together"); eq(r.res, nil, "no resistances unless asked for")
+	-- the one roll, in its order: what does not fit under 100 is cut off the last
+	local shares, all = G.Table({ miss = 5, dodge = 40, parry = 30, block = 60 })
+	eq(table.concat(shares, ","), "5,40,30,25", "miss, dodge, parry in full; of the block only what is left"); eq(all, 100, "and no more than 100 in all")
+	shares = G.Table({ miss = 10, dodge = 70, parry = 50, block = 30 })
+	eq(table.concat(shares, ","), "10,70,20,0", "past 100 before the block: parry cut short, no block at all")
+	e.UnitExists = function(u) return u == "target" end
+	e.UnitCanAttack = function() return true end
+	r = G.Read()
+	eq(r.vs, 63, "a skull targeted: three above me"); check(math.abs(r.miss - 4.4) < 0.001, "and it misses less: " .. r.miss)
+	e.PaperDollFrame_GetArmorReduction = function(armor, level) return armor == 5500 and level == 63 and 33 or 0 end
+	eq(G.Read().armor, 33, "the game's own armor share where it has the function")
+	e.PaperDollFrame_GetArmorReduction = nil
+	e.UnitArmor = nil
+	eq(G.Read().armor, nil, "no armor told: left out")
+	e.UnitArmor = function() return 3000, 5500, 5500, 0, 0 end
+	G.Set("on", true)
+	eq(G.f.shown, true, "switched on: shown"); local function col(k) local t = {} for _, g in ipairs(G.f.groups) do if g[k].shown ~= false and g[k].text ~= "" then t[#t + 1] = g[k].text end end return table.concat(t, "\n\n") end
+	local function lines(s) local n = 1 for _ in s:gmatch("\n") do n = n + 1 end return n end
+	check(col(1):find("Dodge", 1, true) and col(1):find("Parry", 1, true) and col(1):find("All\n", 1, true) == 1, "a line each, one under the other: " .. col(1))
+	eq(col(2):find("19.4%\n4.4%\n10.0%\n5.0%\n0.0%\n\n", 1, true), 1, "all four on top, then miss, dodge, parry, block, then a gap: " .. col(2))
+	check(col(1):find("\n\nArmor\nDefense\n\nHit", 1, true) and col(2):find("\n92%.0%%$"), "under the gap armor and defense, then how often I hit it (8% missed three levels up): " .. col(2))
+	eq(G.f.vs.text, "vs level 63", "the level it is against, on a line of its own at the bottom")
+	eq(G.Miss(0), 5, "my swing at my own level: 5% missed"); eq(G.Miss(2), 6, "two up: 6%"); eq(G.Miss(-3), 3.5, "below me: less")
+	e.GetHitModifier = function() return 3 end
+	eq(G.Read().hit, 95, "my hit comes off it")
+	e.GetHitModifier = function() return 30 end
+	eq(G.Read().hit, 100, "and no more than all of them land")
+	e.GetHitModifier = nil
+	eq(G.f.blue, true, "to be dragged: blue")
+	G.Set("locked", true)
+	eq(G.f.blue, false, "locked: dark")
+	eq(lines(col(1)), lines(col(2)), "a number to every line"); eq(lines(col(1)), 10, "all, the four; armor, defense; hit: a gap between each")
+	check(not col(1):find("Block value", 1, true), "no block value without a shield")
+	eq(G.f.segs[2].share, 10, "the bar: dodge's part"); eq(G.f.segs[4].shown, false, "no block: no part of the bar")
+	e.GetDodgeChance = function() return 20 end
+	e.GetBlockChance, e.GetShieldBlock = function() return 90 end, function() return 48 end
+	G.f.scripts.OnUpdate(G.f, 1)
+	eq(col(2):find("100.0%\n4.4%\n20.0%\n5.0%\n90.0%\n\n", 1, true), 1, "read again as it runs; 100 in all, the block as the sheet says: " .. col(2))
+	check(col(2):find("\n48\n300\n\n92%.0%%$"), "the block value under armor's, and the hit under a gap of its own: " .. col(2))
+	check(math.abs(G.f.segs[4].share - 70.6) < 0.001, "on the bar the block is what is left under 100: " .. G.f.segs[4].share)
+	e.UnitResistance = function(_, i) return 0, i == 2 and 157.5 or i == 4 and 9999 or 0, 0, 0 end
+	G.Set("resist", true)
+	eq(lines(col(1)), 17, "resistances ticked: a gap and five lines more")
+	check(col(2):find("-37.5%\n-0.0%\n-75.0%", 1, true), "fire by half of what there is to have, frost at the most: " .. col(2))
+	G.Set("resist", false)
+	eq(lines(col(1)), 11, "unticked: gone")
+	e.UnitDefense = function() return 300, 12 end
+	eq(G.Read().def, 312, "defense: the skill and what gear adds")
+	do -- (a client that does not say it: as the BiS tab has it)
+		local was = A.DT.Bis.WornDefense
+		e.UnitDefense = nil
+		check(type(was()) == "number" and was() % 5 == 0, "BiS reads it off the level and the gear worn now: " .. tostring(was()))
+		A.DT.Bis.WornDefense = function() return 314 end
+		eq(G.Read().def, 314, "defense the client does not say: the level's and the gear's")
+		A.combat = true
+		eq(G.Read().def, 314, "in a fight too")
+		A.combat = false
+		e.GetNumSkillLines = function() return 3 end
+		e.GetSkillLineInfo = function(i) if i == 1 then return "Weapon Skills", true end if i == 2 then return "Swords", false, false, 300, 0, 0 end return "Defense", false, false, 300, 0, 25 end
+		eq(G.Read().def, 325, "the Skills pane lists it: that, talents and gear and all, before any guess")
+		e.GetNumSkillLines, e.GetSkillLineInfo = nil, nil
+		A.DT.Bis.WornDefense = function() error("off") end
+		eq(G.Read().def, nil, "BiS cannot say: no line")
+		A.DT.Bis.WornDefense = was
+	end
+	do -- in a fight the client says none of it: what was read before stays
+		local before = G.Read()
+		eq(before.held, false, "out of a fight: all of it read now")
+		local dodge, armor = e.GetDodgeChance, e.UnitArmor
+		e.GetDodgeChance, e.UnitArmor = function() return nil end, function() return nil end
+		A.combat = true
+		local r = G.Read()
+		eq(r.dodge, before.dodge, "hidden in a fight: the dodge from before it"); eq(r.armor, before.armor, "and the armor"); eq(r.held, true, "and it is said")
+		G.Set("on", true)
+		check(G.f.vs.text:find("as before the fight", 1, true), "on screen too: " .. G.f.vs.text)
+		A.combat = false
+		eq(G.Read().dodge, 0, "out of the fight a number not told is not made up"); eq(G.Read().held, false, "nor said to be kept")
+		e.GetDodgeChance, e.UnitArmor = dodge, armor
+		G.Set("on", false)
+	end
+	G.Set("locked", false)
+	e.UnitResistance, e.GetShieldBlock = nil, nil
+	G.Set("on", false)
+	eq(G.f.shown, false, "off: gone")
+	e.UnitLevel, e.UnitExists, e.UnitCanAttack, e.UnitArmor, e.UnitDefense, e.GetDodgeChance, e.GetParryChance, e.GetBlockChance = wasLevel, wasExists, nil, nil, nil, nil, nil, nil
 end
 
 -- MP5: the five-second rule, counted from my own casts of spells that cost mana
@@ -7250,6 +7411,26 @@ end)()
 		check(said:find("Fay Smith: the same as mine", 1, true), "and the member is now the same: " .. said)
 		local gave = table.concat(F1.DT.DBSync.Report(), " | ")
 		check(gave:find("Sent back: [1-9]%d* lists, [1-9]%d* chunks"), "the other side says what it answered: " .. gave)
+		do -- a member who logged off: no more whispers to them, and the game's line about ours is not in the chat
+			local Sy, name = F1.DT.DBSync, next(F1.DT.Comms.peers)
+			local who, line = name:gsub(" ", "-"), ("No player named '%s' is currently playing."):format(name)
+			eq(Sy.Hide(nil, nil, line), false, "long after my last whisper to them: the game's line is shown (it may be about one typed)")
+			check(Sy.Now() >= 1, "asked now")
+			eq(Sy.Hide(nil, nil, line), true, "right after a whisper of the addon's: kept out of the chat")
+			eq(Sy.Hide(nil, nil, name .. " has gone offline."), false, "that they went offline is the game's to say")
+			eq(Sy.Hide(nil, nil, "You have unlearned Cooking."), false, "and any other line")
+			Sy.Left("No player named 'Nobody Here' is currently playing.")
+			eq(Sy.gone["Nobody-Here"], nil, "a name the addon never whispered to: none of its business")
+			Sy.Left(line)
+			eq(Sy.gone[who], true, "no player of that name: gone"); eq(Sy.Now(), 0, "and not whispered to again")
+			Sy.Heard(name, F1.DT.DB.Root())
+			eq(Sy.gone[who], nil, "their hello: here again")
+			F1.env.ERR_FRIEND_OFFLINE_S = "%s is offline now (really)."
+			Sy.Left(("|Hplayer:%s|h[%s]|h is offline now (really)."):format(name, name))
+			eq(Sy.gone[who], true, "the game's own wording, the name as a link: gone as well")
+			Sy.Heard(name, F1.DT.DB.Root())
+			F1.env.ERR_FRIEND_OFFLINE_S = nil
+		end
 		-- something new on her side: no ask for ten minutes, unless Sync now
 		eq(F1.DT.DB.Take("loot:2", ("loot:645:aaaaaa	%d	guild	3;1:9"):format(F1.DT.Now())), 1, "she learns something new")
 		step(120)

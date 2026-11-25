@@ -20,11 +20,13 @@ local COLS = {
 	{ key = "p", title = "Last price", width = 98, right = true }, -- (money columns: room for 99g 99s 99c with coin pictures)
 	{ key = "t", title = "Age", width = 56, right = true },
 	{ key = "q", title = "Qty", width = 44, right = true },
+	-- (what I hold of it, as the Inventory tab counts: this character's bags / its bank / my other characters)
+	{ key = "have", title = "Bag/Bank/Alt", width = 78, right = true },
 	{ key = "med", title = "7d median", width = 98, right = true },
 	{ key = "trend", title = "Trend", width = 44, right = true },
 	{ key = "vendor", title = "Vendor pays", width = 98, right = true },
 	{ key = "vbuy", title = "Vendor sells", width = 98, right = true }, -- (known once someone here has opened that vendor)
-	{ key = "o", title = "Seen by", width = 80 },
+	{ key = "o", title = "Seen by", width = 62 },
 }
 -- item classes in the auction house's order; any other class found in the data follows
 local CLASS_ORDER = { 2, 4, 1, 3, 8, 0, 16, 7, 9, 19, 17, 12, 15 }
@@ -109,7 +111,22 @@ local function Vendor(id)
 	return sell or 0
 end
 
+-- how many of it my characters hold, and who (nothing where the Inventory module is off)
+local function Held(id)
+	local api = DawnInventory and DawnInventory.API
+	if not (api and api.Held) then return 0, {} end
+	return api.Held(id)
+end
+
+-- The Containers category: the item level column says how many slots the bag has instead (and sorts by it), as
+-- the Items tab reads it from the bag's tooltip. nil elsewhere, and for a bag whose size is not known (yet).
+local CONTAINER = 1
+local function Slots(id)
+	return V.class == CONTAINER and DT.Item and DT.Item.BagSlots and DT.Item.BagSlots(id) or nil
+end
+
 local SORT = {
+	have = function(id) return (Held(id)) end,
 	name = function(_, item) return (item.n or ""):lower() end,
 	p = function(_, item) return item.p end,
 	t = function(_, item) return item.t end,
@@ -119,7 +136,7 @@ local SORT = {
 	vendor = Vendor,
 	vbuy = function(id) return DT.DB.Vendors()[id] and DT.DB.Vendors()[id].p or 0 end,
 	lvl = function(id) return select(5, C_Item.GetItemInfo(id)) or 0 end,
-	ilvl = function(id) return select(4, C_Item.GetItemInfo(id)) or 0 end,
+	ilvl = function(id) return V.class == CONTAINER and (Slots(id) or 0) or select(4, C_Item.GetItemInfo(id)) or 0 end,
 	o = function(_, item) return item.o or "" end,
 }
 
@@ -517,7 +534,9 @@ local function Row(i)
 		fs:SetWordWrap(false)
 		row.cells[col.key] = fs
 	end
-	row:SetScript("OnClick", function(self)
+	row:SetScript("OnClick", function(self, button)
+		-- (Ctrl: tried on in the dressing room; Shift: linked in chat; Alt: a favourite. As on the other tabs)
+		if self.id and DT:ItemClick(self.id, M.items[self.id] and M.items[self.id].n, button) then return end
 		V.selected = V.selected ~= self.id and self.id or nil
 		V:Refresh(true)
 	end)
@@ -527,7 +546,13 @@ local function Row(i)
 		GameTooltip:SetHyperlink("item:" .. self.id)
 		-- (the item tooltip's own Vendor line says it, when on)
 		if not M.db.settings.tooltip and VendorText(self.id) then GameTooltip:AddLine(VendorText(self.id), 1, 0.82, 0, true) end
+		local total, who = Held(self.id)
+		if total > 0 then
+			GameTooltip:AddLine("You have " .. total .. ":", 0.25, 1, 0.25)
+			for _, line in ipairs(who) do GameTooltip:AddLine(line, 1, 1, 1) end
+		end
 		GameTooltip:Show()
+		DT:CompareTip(self) -- (Shift held: beside it, what I wear in that slot)
 	end)
 	row:SetScript("OnLeave", function() GameTooltip:Hide() end)
 	return row
@@ -595,11 +620,20 @@ function V:Refresh(same)
 			local cells = row.cells
 			local _, _, _, ilvl, minLevel = C_Item.GetItemInfo(id)
 			cells.lvl:SetText(minLevel and minLevel > 1 and tostring(minLevel) or "")
+			if V.class == CONTAINER then ilvl = Slots(id) end
 			cells.ilvl:SetText(ilvl and ilvl > 1 and tostring(ilvl) or "")
 			cells.name:SetText(ItemText(id, item))
 			cells.p:SetText(DT.Money(item.p))
 			cells.t:SetText(AgeText(now - item.t))
 			cells.q:SetText(item.q > 0 and tostring(item.q) or "")
+			local have = Held(id)
+			if have > 0 then
+				local bags, bank = DawnInventory.API.Count(id)
+				local function N(n) return n > 0 and ("|cff40ff40" .. n .. "|r") or "|cff555555-|r" end
+				cells.have:SetText(N(bags) .. " / " .. N(bank) .. " / " .. N(have - bags - bank))
+			else
+				cells.have:SetText("")
+			end
 			cells.med:SetText(median and DT.Money(median) or "")
 			cells.trend:SetText(TrendText(L.Trend(item, now)))
 			cells.vendor:SetText(sell > 0 and DT.Money(sell) or "")
@@ -612,7 +646,7 @@ function V:Refresh(same)
 		end
 	end
 	for _, h in ipairs(headers) do
-		h.text:SetText(h.col.title .. (h.col.key == V.sort and (V.desc and " v" or " ^") or ""))
+		h.text:SetText((h.col.key == "ilvl" and V.class == CONTAINER and "Slots" or h.col.title) .. (h.col.key == V.sort and (V.desc and " v" or " ^") or ""))
 	end
 	-- the categories scroll when they do not fit: mouse wheel, or drag the bar on their right
 	local fit = math.max(1, math.floor((panel:GetHeight() - 6) / SIDE_H))

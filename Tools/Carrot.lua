@@ -18,10 +18,10 @@ local function Worn(slot)
 	return GetInventoryItemID and GetInventoryItemID("player", slot) or nil
 end
 
--- do I own one (worn or in the bags)?
-function C.Have()
+-- do I own one (worn or in the bags)? The carrot, or the item named.
+function C.Have(item)
 	local count = (C_Item and C_Item.GetItemCount) or GetItemCount
-	local ok, n = pcall(function() return count(C.ITEM) end)
+	local ok, n = pcall(function() return count(item or C.ITEM) end)
 	return ok and (tonumber(n) or 0) > 0
 end
 
@@ -48,6 +48,24 @@ end
 function C.Check(again)
 	if busy or not C.db or (InCombatLockdown and InCombatLockdown()) then return end
 	local s, back = C.db.settings, C.db.back
+	-- (what each slot held last that was no carrot: what goes back where the note of it was lost)
+	local last = C.db.last or {}
+	C.db.last = last
+	for _, slot in ipairs(C.SLOTS) do
+		local id = Worn(slot[1])
+		if id and id ~= C.ITEM then last[slot[1]] = id end
+	end
+	-- A carrot on, on foot, and no note of what it replaced (lost over a loading screen, say): left behind. The
+	-- trinket that slot held last goes back, if I still have it and it is not in the other slot now.
+	if not back and s.on and not Riding() then
+		for _, slot in ipairs(C.SLOTS) do
+			local at = slot[1]
+			if not back and Worn(at) == C.ITEM and last[at] and Worn(27 - at) ~= last[at] and C.Have(last[at]) then
+				back = { last[at], at }
+				C.db.back = back
+			end
+		end
+	end
 	if Riding() then
 		local slot = s.slot == 13 and 13 or 14
 		-- (a carrot I put in either slot by hand is left where it is)
@@ -127,7 +145,7 @@ local function Build(panel)
 	end
 	Line("GameFontNormal", "Carrot", 20)
 	Line("GameFontHighlightSmall", "Puts your Carrot on a Stick on when you mount, and the trinket it replaced back on when you dismount. "
-		.. "Not on a flight path.", 30)
+		.. "Not on a flight path. A carrot found on you on foot is taken for left behind, and swapped for the trinket that slot held before.", 30)
 	Box("on", "Swap the carrot in while mounted", function(self) C.Set("on", self:GetChecked() and true or false) end)
 	y = y - 6
 	Line("GameFontNormalSmall", "The trinket that makes room for it:", 16)
@@ -148,7 +166,7 @@ DT:RegisterModule("carrot", {
 		C.db = mod.db
 		DT:RegisterTool({ id = "carrot", title = "Carrot", order = 38, create = Build, onShow = C.Refresh,
 			active = function() return C.db.settings.on end })
-		for _, event in ipairs({ "PLAYER_MOUNT_DISPLAY_CHANGED", "PLAYER_REGEN_ENABLED", "PLAYER_ENTERING_WORLD", "PLAYER_UNGHOST" }) do
+		for _, event in ipairs({ "PLAYER_MOUNT_DISPLAY_CHANGED", "PLAYER_REGEN_ENABLED", "PLAYER_ENTERING_WORLD", "PLAYER_UNGHOST", "PLAYER_ALIVE" }) do
 			DT:On(event, function() C.Check() end)
 		end
 		-- (the trinkets changed by hand: the page names them anew; and a client without the mount event still
