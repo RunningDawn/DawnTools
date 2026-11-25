@@ -37,7 +37,7 @@ A new file goes in the `.toc` **and** in `FILES` near the top of `tests/run.lua`
 ## Tests
 
 ```
-cd tests && npm install && npm test      # or: node run.js   (about 35 seconds)
+cd tests && npm install && npm test      # or: node run.js   (about 3½ minutes)
 ```
 
 Passing ends with `ok: N checks passed`. A change in behaviour gets a check in `tests/run.lua`. Green tests do not mean it works in game: say plainly what nobody has seen on Forever yet.

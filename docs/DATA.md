@@ -162,6 +162,7 @@ and the same hash. A chunk is taken apart only when a row of it is looked at.
 | `bloot:<dungeon/boss>:<origin>` | the same, for a boss the list gives no NPC number | `guild` | `Modules/Dungeon.lua` |
 | `qreward:<quest>` | money, xp, level seen at, items given, items to choose from; the newer sighting stands | `guild` | `Modules/Quest.lua` |
 | `vendor:<item>` | price for one, limited or not, vendor's name, place: the cheapest seller this machine saw; between members the newer sighting stands | `guild` | `Market/Capture.lua` |
+| `istat:<item>` | what the game says of a wearable item, for the BiS tab: the shape (`FACTS`), slot, name, quality, level, class and subclass, its stats, the Classes / Races / reputation lines, unique, binds when equipped, icon; or "not gear". Written where my game answered; the newer row stands (a patch: the first member whose game says otherwise writes it). Only where sharing was agreed to | `guild` | `Modules/Bis.lua` |
 | `fcatch:<n>:<origin>` | casts, items caught and how many, lowest skill, the spot's name (`n`: a number made of that name) | `guild` | `Modules/Fish.lua` |
 
 - **Base rows** (every source but `guild`) carry, for a time, the number of the source's version and the shape

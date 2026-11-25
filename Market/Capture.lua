@@ -487,7 +487,9 @@ end
 -- player agreed to share it (settings.share), and is otherwise kept on this computer. Items paid for in anything
 -- but money are left out.
 
-local function Plain(text) -- (what is kept of a name: no colour code, link or line break)
+local function Secret(v) return issecretvalue and issecretvalue(v) or false end
+local function Plain(text) -- (what is kept of a name: no colour code, link or line break; nothing of a secret one)
+	if Secret(text) then return "" end
 	return (tostring(text or ""):gsub("[|%c]", ""):sub(1, 60))
 end
 
@@ -510,6 +512,7 @@ local function Merchant()
 	local npc = UnitName("npc")
 	if not (npc and GetMerchantNumItems and GetMerchantItemID) then return end
 	npc = Plain(npc)
+	if npc == "" then return end -- (a name the game keeps secret: nothing to file the prices under)
 	local zone, sub = GetRealZoneText and GetRealZoneText() or "?", GetSubZoneText and GetSubZoneText() or ""
 	local where = sub ~= "" and sub ~= zone and (sub .. ", " .. zone) or zone
 	for i = 1, GetMerchantNumItems() do
@@ -521,7 +524,7 @@ local function Merchant()
 			local _
 			_, _, price, stack, left, _, _, extended = GetMerchantItemInfo(i)
 		end
-		if id and price and price > 0 and not extended then
+		if id and price and not Secret(id) and not Secret(price) and not Secret(stack) and not Secret(left) and price > 0 and not extended then
 			local unit, old = math.ceil(price / math.max(1, stack or 1)), DT.DB.Vendor(id)
 			-- the cheapest seller is kept; a seller's own price is brought up to date (a price only seen again writes nothing)
 			if not old or unit <= old.p or old.v == npc then

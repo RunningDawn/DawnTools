@@ -202,7 +202,6 @@ function Comms:OnComm(_, text, distribution, sender)
 	end
 	local hello = module == "core" and kind == "HELLO"
 	if sender == self.self and not hello then return end
-	if sender ~= self.self and #module <= 20 then Tally(module, false, #text) end -- (my own HELLO coming back is not something received)
 
 	local now = GetTime()
 	local r = rate[sender]
@@ -212,6 +211,9 @@ function Comms:OnComm(_, text, distribution, sender)
 	end
 	r.n = r.n + 1
 	if r.n > RATE_N then return end
+	-- (counted: what a module of mine was sent, within the rate. My own HELLO coming back is not something received;
+	-- a name no module has would only grow the saved counters)
+	if sender ~= self.self and (module == "core" or DT.modules[module]) then Tally(module, false, #text) end
 
 	if flag == "z" then
 		local packed = LibDeflate:DecodeForWoWAddonChannel(payload)

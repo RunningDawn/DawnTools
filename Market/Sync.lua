@@ -123,12 +123,24 @@ local function Merge(payload, sender)
 	Sync.last = now
 	-- (the 14 days and the cap hold within a session too, not only at login)
 	-- ponytail: a pass over the house every 5 minutes at most; a flood still grows it for that long
+	-- (a big house takes too long for one message: a hundred items a frame, after it)
 	if not Sync.pruned or GetTime() - Sync.pruned > 300 then
 		Sync.pruned = GetTime()
-		L.Prune(items, now)
+		Sync.pruning = coroutine.create(function() L.Prune(items, now, coroutine.yield) end)
+		Sync.pruner:Show()
 	end
 	DT:Debug("market", "merged %d observations from %s (%d doubted as outliers)", taken, sender, doubted)
 end
+
+Sync.pruner = CreateFrame("Frame")
+Sync.pruner:Hide()
+DT.OnUpdate(Sync.pruner, "market: pruned", function(self)
+	local co = Sync.pruning
+	if not co then self:Hide() return end
+	local ok, err = coroutine.resume(co)
+	if not ok then DT:Debug("market", "prune: %s", tostring(err)) end
+	if coroutine.status(co) == "dead" then Sync.pruning = nil self:Hide() end
+end)
 
 function Sync:OnMessage(kind, payload, sender)
 	if not self:On() then return end

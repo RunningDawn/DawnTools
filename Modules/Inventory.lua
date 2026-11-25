@@ -186,6 +186,7 @@ local function MakeRow(i)
 		GameTooltip:Show()
 	end)
 	row:SetScript("OnLeave", function() GameTooltip:Hide() end)
+	row:SetScript("OnMouseUp", function(self, button) if self.id then DT:ItemClick(self.id, nil, button) end end)
 	rows[i] = row
 	return row
 end

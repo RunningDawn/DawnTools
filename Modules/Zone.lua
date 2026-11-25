@@ -798,8 +798,10 @@ local function Build(parent)
 		row.text:SetPoint("RIGHT", -4, 0)
 		row.text:SetJustifyH("LEFT")
 		row.text:SetWordWrap(false)
-		row:SetScript("OnClick", function(self)
-			if self.data and self.data.click then self.data.click() end
+		row:SetScript("OnClick", function(self, button)
+			local d = self.data
+			if d and d.item and DT:ItemClick(d.item, nil, button) then return end
+			if d and d.click then d.click() end
 		end)
 		-- over an item (a fish, a drop): the game's own tooltip of it
 		row:SetScript("OnEnter", function(self)

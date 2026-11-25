@@ -31,7 +31,7 @@ end
 
 -- One swap at a time: the game takes a moment over it, and asking again meanwhile only gets "item is locked".
 -- A second later it is looked at again, which is also the second try where the first did nothing.
-local busy = false
+local busy, tries = false, 0 -- (tries: how often in a row the old trinket did not go back on)
 local function Equip(item, slot)
 	local equip = (C_Item and C_Item.EquipItemByName) or EquipItemByName
 	if not equip then return end
@@ -39,13 +39,13 @@ local function Equip(item, slot)
 	pcall(equip, item, slot)
 	C_Timer.After(1, function()
 		busy = false
-		C.Check()
+		C.Check(true)
 	end)
 end
 
 -- Called whenever mounting, combat or what I wear may have changed. db.back = { item, slot }: the trinket the
 -- carrot replaced and where (saved: a /reload on the mount does not lose it).
-function C.Check()
+function C.Check(again)
 	if busy or not C.db or (InCombatLockdown and InCombatLockdown()) then return end
 	local s, back = C.db.settings, C.db.back
 	if Riding() then
@@ -58,7 +58,9 @@ function C.Check()
 		end
 	elseif back then
 		-- (also when the tool was switched off meanwhile: what it took off, it puts back)
-		if Worn(back[2]) == C.ITEM then Equip(back[1], back[2]) else C.db.back = nil end
+		-- (it will not go on: dead, or the trinket is gone. Five tries a second apart, then not until something changes)
+		tries = again and tries + 1 or 0
+		if Worn(back[2]) ~= C.ITEM then C.db.back = nil elseif tries < 5 then Equip(back[1], back[2]) end
 	end
 	if C.Refresh then C.Refresh() end
 end

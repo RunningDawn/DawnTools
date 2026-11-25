@@ -328,6 +328,23 @@ function DB.Put(key, value, src, t)
 	return true
 end
 
+-- Many rows learned at once ({ [key] = value }), as DB.Put each: a chunk is written once, not once a row.
+-- Returns how many changed.
+function DB.PutMany(values)
+	local chunks, n, now = {}, 0, DT.Now()
+	for key, value in pairs(values) do
+		key, value = L.Clean(key), L.Clean(value)
+		local chunk = L.ChunkOf(key)
+		local rows = chunks[chunk] or Rows(chunk) -- (the one being changed: the open ones may be closed meanwhile)
+		local at = rows[key]
+		if not (at and at.v == value and at.src == "guild") then
+			rows[key], chunks[chunk], n = { t = now, src = "guild", v = value }, rows, n + 1
+		end
+	end
+	for chunk, rows in pairs(chunks) do Write(chunk, rows) end
+	return n
+end
+
 -- A row from a store of before (a module's own saved table), kept where none is held under its key or the one
 -- held is older: so that moving a file twice, or a half-moved one, loses nothing and writes nothing twice.
 function DB.Keep(key, value, t)
@@ -463,7 +480,8 @@ function DB.Take(chunk, text)
 	if type(chunk) ~= "string" or type(text) ~= "string" then return 0 end
 	-- (a chunk name is what ChunkOf makes: letters, then a number or "s" and a sum; a peer's own names would grow the store without end)
 	local what, s, n = chunk:match("^(%a+):(s?)(%d+)$")
-	if not what or #what > 12 or tonumber(n) > (s == "" and 4000 or 63) then return 0 end
+	-- (8192 chunks: numbers up to two million, as Forever's own recipes have them)
+	if not what or #what > 12 or tonumber(n) > (s == "" and 8192 or 63) then return 0 end
 	local theirs = {}
 	for key, row in pairs(L.Parse(text)) do
 		-- (only rows that belong in this chunk: a row filed elsewhere would never be found again)

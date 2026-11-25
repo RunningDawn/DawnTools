@@ -259,6 +259,7 @@ local function Link()
 	end
 end
 
+local me -- { level, race, class (their bits), done = fn(id), on = fn(id), skills = { [name] = rank } or nil }; nil = read anew
 local function ReadAll(lib)
 	ofa = nil -- (OneForAll's lists are asked for anew: it may not have been loaded the last time)
 	local ids = lib.Quest.GetAllIds()
@@ -295,7 +296,6 @@ end
 -- This character: what is done, what is in the log, what it may take
 ---------------------------------------------------------------------------
 
-local me -- { level, race, class (their bits), done = fn(id), on = fn(id), skills = { [name] = rank } or nil }; nil = read anew
 local function Me()
 	if me then return me end
 	me = { level = UnitLevel and UnitLevel("player") or 0 }
