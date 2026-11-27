@@ -368,8 +368,28 @@ local function Spot()
 	return sub ~= "" and sub ~= zone and (zone .. ", " .. sub) or zone
 end
 
--- my fishing skill; withBonus: as it stands with pole, gear and lure
-local function FishingSkill(withBonus)
+-- What my own pole, hat, boots and lure add: the best of each that I have, worn or in the bags (a pole in the
+-- bag is one click from the hand), and the lure on the pole now.
+-- ponytail: only the items of GEAR are known, and the lure on the pole by the old world's enchant numbers; a
+-- Forever pole not in the list counts only through what the game itself reports.
+local LURE_ON = { [263] = 25, [264] = 50, [265] = 75, [266] = 100 }
+local function OwnBonus()
+	local best = {}
+	for _, g in ipairs(GEAR) do
+		if (GetItemCount and GetItemCount(g[1]) or 0) > 0 and g[2] > (best[g[3]] or 0) then best[g[3]] = g[2] end
+	end
+	local on = GetWeaponEnchantInfo and LURE_ON[select(4, GetWeaponEnchantInfo()) or 0] or 0
+	return (best.Pole or 0) + (best.Hat or 0) + (best.Boots or 0) + math.max(best.Lure or 0, on)
+end
+
+-- my fishing skill; withBonus: with pole, gear and lure: what the game reports as worn, or what I own (the larger)
+local FishingSkill
+function FishingSkill(withBonus)
+	if withBonus == true then
+		local plain = FishingSkill()
+		return plain and plain + math.max(FishingSkill(1) - plain, OwnBonus())
+	end
+	withBonus = withBonus == 1
 	if not (GetProfessions and GetProfessionInfo) then
 		-- (the older skill list: name, header, expanded, rank, temporary points, modifier)
 		if not (GetNumSkillLines and GetSkillLineInfo) then return nil end
@@ -561,7 +581,7 @@ local function SpotRows(history)
 			tips[#tips + 1] = { "Fishing skill", SkillText(s.skill, mine) .. GREY .. ("  (cast from %d)|r"):format(math.max(1, s.skill - 95)) }
 			local chance = Chance(s.skill, mine)
 			if chance then
-				tips[#tips + 1] = { "At your " .. mine, chance >= 100 and (GREEN .. "nothing gets away|r")
+				tips[#tips + 1] = { "At your " .. mine .. " (pole, gear and lure counted)", chance >= 100 and (GREEN .. "nothing gets away|r")
 					or chance > 0 and ("|cffffd100about %d%% of casts land|r"):format(chance) or "|cffff4040cannot cast here yet|r" }
 			end
 		end
@@ -870,6 +890,9 @@ DT:RegisterModule("fish", {
 		DT:On("LOOT_READY", Catch)
 		DT:On("LOOT_OPENED", Catch)
 		DT:On("LOOT_CLOSED", function() looting = false end)
+		-- (a pole taken in hand, a lure put on, a lure bought: the skill colours follow)
+		DT:On("UNIT_INVENTORY_CHANGED", function() dirty = true end)
+		DT:On("BAG_UPDATE_DELAYED", function() dirty = true end)
 		DT:On("TRADE_SKILL_SHOW", function() C_Timer.After(1, ReadCooking) end)
 		DT:On("DT_MARKET_UPDATE", function() dirty = true end)
 		DT:On("GET_ITEM_INFO_RECEIVED", function(id)

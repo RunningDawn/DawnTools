@@ -6,6 +6,11 @@
 local _, DT = ...
 
 DT.CHANGELOG = {
+	{ "0.57.2", "2026-11-27", {
+		"Chat Saver: General, Trade and the other numbered channels are no longer unticked when a layout is put back at login. If yours were unticked, tick them again and save once more.",
+		"Chat Saver: Save with no name typed writes over the layout picked.",
+		"Fishing: whether you can cast in a water counts your fishing pole and your best lure even while they are in the bags, and follows at once when you equip one.",
+	} },
 	{ "0.57.1", "2026-11-26", {
 		"Cooking: foods that give crit, hit or another bonus are grouped by it, no longer under Health only.",
 		"Fishing: waters that ask for more skill than the zone around them have a row of their own on Spots: Bay of Storms, Hetaera's Clutch and Scalebeard's Cave in Azshara and Jademir Lake in Feralas (425), Jaguero Isle off Stranglethorn (300). A spot you fished there shows that skill, not the zone's.",

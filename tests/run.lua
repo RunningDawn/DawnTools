@@ -3039,6 +3039,13 @@ eq(skillOf("Elwynn Forest"), "|cff40ff401-25|r", "green: nothing gets away"); eq
 A.env.GetProfessionInfo = function() return "Fishing", nil, 140, 300, 0, 0, 356, 100 end
 eq(skillOf("Stranglethorn Vale"), "|cff40ff40130-225|r", "a lure and gear count")
 eq(skillOf("Eastern Plaguelands"), "|cffff4040330-425|r", "red: out of reach")
+A.env.GetProfessionInfo = function() return "Fishing", nil, 140, 300, 0, 0, 356, 0 end
+A.env.GetItemCount = function(id) return (id == 6367 or id == 6530 or id == 6529) and 1 or 0 end -- (a +20 pole and two lures in the bags)
+eq(skillOf("Stranglethorn Vale"), "|cffffd100130-225|r", "a pole and the best lure in the bags count though not in hand: 140 + 20 + 50")
+A.env.GetWeaponEnchantInfo = function() return true, 600000, 0, 266 end
+eq(skillOf("Stranglethorn Vale"), "|cff40ff40130-225|r", "and a better lure already on the pole: 140 + 20 + 100")
+A.env.GetItemCount, A.env.GetWeaponEnchantInfo = nil, nil
+A.env.GetProfessionInfo = function() return "Fishing", nil, 140, 300, 0, 0, 356, 100 end
 eq(skillOf("Azshara"), "|cffffd100205-300|r", "Azshara asks for 300"); eq(skillOf("Azshara, Bay of Storms"), "|cffff4040330-425|r", "but the Bay of Storms in it for 425: a row of its own")
 eq(Fish.Need("Azshara, Bay of Storms"), 425, "a spot fished in such a subzone is measured by it"); eq(Fish.Need("Azshara, Ruins of Eldarath"), 300, "any other by its zone"); eq(Fish.Need("Nowhere"), nil, "a water not in the list has no number")
 ;(function() -- how many casts land, and the zone's levels
@@ -4980,7 +4987,7 @@ do
 		env.GetChannelList = function() return 1, "General", false, 2, "Trade - City", false end
 		env.ChatTypeInfo = { SAY = { r = 1, g = 1, b = 1 }, GUILD = { r = 0.2, g = 1, b = 0.2 } }
 		for _, name in ipairs({ "JoinPermanentChannel", "FCF_SetWindowName", "FCF_SetChatWindowFontSize", "FCF_SetWindowColor", "FCF_SetWindowAlpha",
-			"ChatFrame_RemoveAllMessageGroups", "ChatFrame_AddMessageGroup", "ChatFrame_RemoveAllChannels", "ChatFrame_AddChannel", "FCF_Close",
+			"ChatFrame_RemoveAllMessageGroups", "ChatFrame_AddMessageGroup", "ChatFrame_RemoveAllChannels", "ChatFrame_RemoveChannel", "ChatFrame_AddChannel", "FCF_Close",
 			"SetChatWindowShown", "FCF_DockFrame", "FCF_UnDockFrame", "FCF_SavePositionAndDimensions", "FCF_SetLocked", "FCF_SetUninteractable",
 			"ChangeChatColor", "FCF_DockUpdate" }) do env[name] = Rec(name) end
 	end })
@@ -4996,13 +5003,17 @@ do
 	eq(L.colors.GUILD[2], 1, "the colours"); eq(L.channels[2], "Trade - City", "the channels joined")
 	eq(C.Save("  "), false, "a layout needs a name")
 	eq(C.Save("Main"), true, "saved by name"); eq(C.db.layouts.Main.windows[1].name, "General", "and kept")
+	C.db.layouts.Main.at = -1
+	eq(C.Save(""), true, "no name typed: saved over the one picked"); check(C.db.layouts.Main.at ~= -1, "written anew")
+	Z.env.GetChatWindowChannels = function(i) if i == 3 then return "Trade - City", 0, "Old", 0 end end
 	-- put back: on another character, where it is not so
 	C.db.layouts.Main.channels[3] = "LookingForGroup"
 	calls = {}
 	eq(C.Load("Main"), 3, "put back: three windows")
 	eq(Count("JoinPermanentChannel", nil), 1, "only a channel not joined is joined"); eq(calls[1][2], "LookingForGroup", "the missing one, first")
 	eq(Count("ChatFrame_AddMessageGroup"), 3, "what each window shows (not the combat log's filters)")
-	eq(Count("ChatFrame_AddChannel"), 2, "and its channels")
+	eq(Count("ChatFrame_AddChannel"), 1, "a channel the window lacks is added"); eq(Count("ChatFrame_RemoveChannel"), 1, "one too many taken off")
+	eq(Count("ChatFrame_RemoveAllChannels"), 0, "the ones that are right are not touched")
 	eq(Count("FCF_DockFrame"), 1, "the docked one docked again"); eq(Count("FCF_UnDockFrame"), 1, "the one placed apart, undocked"); eq(Count("SetSize"), 2, "and sized, as the first")
 	eq(Count("ChangeChatColor"), 2, "the colours")
 	eq(Count("FCF_Close"), 0, "a docked tab the game calls not shown (the combat log, not the one picked) is docked, not closed")
@@ -5021,7 +5032,9 @@ do
 	eq(Count("FCF_SetWindowName"), 0, "not on a zone change")
 	Z.fire("PLAYER_ENTERING_WORLD", false, true)
 	step(2)
-	eq(Count("FCF_SetWindowName"), 3, "at a /reload, by itself")
+	eq(Count("FCF_SetWindowName"), 3, "at a /reload, by itself"); eq(Count("ChatFrame_AddChannel"), 0, "the channels not yet: the game has not joined its own")
+	step(10)
+	eq(Count("ChatFrame_AddChannel"), 1, "but a while after")
 	C.Delete("Main")
 	eq(C.db.layouts.Main, nil, "deleted"); eq(C.db.auto, nil, "and no longer put back")
 	leave(Z)

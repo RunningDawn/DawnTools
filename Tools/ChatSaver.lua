@@ -53,16 +53,34 @@ end
 
 local function Call(fn, ...) if fn then pcall(fn, ...) end end
 
--- a layout put back. Says how many windows it set.
-function C.Apply(L)
-	if type(L) ~= "table" or type(L.windows) ~= "table" then return 0 end
-	-- the channels joined first, so that the windows can show them
+-- The channels of a layout: those not joined are joined, and each window is made to show its own. Only what
+-- differs is touched: a window that shows the right channels already is left alone (taking all off and adding
+-- them again loses every channel the game has not joined yet, as at login: General, Trade and the rest).
+function C.Channels(L)
+	if type(L) ~= "table" or type(L.windows) ~= "table" then return end
 	local joined = {}
 	local list = GetChannelList and { GetChannelList() } or {}
 	for k = 1, #list, 3 do if type(list[k + 1]) == "string" then joined[list[k + 1]:lower()] = true end end
 	for _, name in ipairs(L.channels or {}) do
 		if not joined[name:lower()] then Call(JoinPermanentChannel, name, nil, 1) end
 	end
+	for i = 1, Windows() do
+		local f, w = Frame(i), L.windows[i]
+		if f and w and not Combat(f) then
+			local have, want = {}, {}
+			local now = GetChatWindowChannels and { GetChatWindowChannels(i) } or {}
+			for k = 1, #now, 2 do have[now[k]] = true end
+			for _, chan in ipairs(w.chans or {}) do want[chan] = true end
+			for chan in pairs(have) do if not want[chan] then Call(ChatFrame_RemoveChannel, f, chan) end end
+			for _, chan in ipairs(w.chans or {}) do if not have[chan] then Call(ChatFrame_AddChannel, f, chan) end end
+		end
+	end
+end
+
+-- a layout put back. Says how many windows it set. later: without the channels (C.Channels, called apart)
+function C.Apply(L, later)
+	if type(L) ~= "table" or type(L.windows) ~= "table" then return 0 end
+	if not later then C.Channels(L) end
 	local n = 0
 	for i = 1, Windows() do
 		local f, w = Frame(i), L.windows[i]
@@ -78,8 +96,6 @@ function C.Apply(L)
 			if not Combat(f) then
 				Call(ChatFrame_RemoveAllMessageGroups, f)
 				for _, group in ipairs(w.groups or {}) do Call(ChatFrame_AddMessageGroup, f, group) end
-				Call(ChatFrame_RemoveAllChannels, f)
-				for _, chan in ipairs(w.chans or {}) do Call(ChatFrame_AddChannel, f, chan) end
 			end
 			-- (docked comes first, as the game itself reads it: a docked tab that is not the one picked says
 			-- "not shown", and is a tab all the same. Only a window neither docked nor shown is closed.)
@@ -109,9 +125,11 @@ end
 
 function C.Save(name)
 	name = (name or ""):gsub("^%s+", ""):gsub("%s+$", "")
+	if name == "" then name = C.picked or "" end -- (no name typed: saved over the one picked)
 	if name == "" then return false end
 	C.db.layouts[name] = C.Capture()
 	C.picked = name
+	DT:Print("Chat Saver: saved as \"%s\".", name)
 	if C.Refresh then C.Refresh() end
 	return true
 end
@@ -227,7 +245,7 @@ local function Build(panel)
 	y = y - 26
 	info = Line("GameFontHighlightSmall", "", 30)
 	C.info = info
-	Line("GameFontDisableSmall", "Kept in the saved file of this computer, for all your characters. The combat log keeps its own filters.", 20)
+	Line("GameFontDisableSmall", "No name typed: Save writes over the layout picked below. Kept in the saved file of this computer, for all your characters. The combat log keeps its own filters.", 20)
 	C.Refresh()
 end
 
@@ -242,8 +260,11 @@ DT:RegisterModule("chatsaver", {
 		-- the layout ticked: put back a moment after the chat windows are made (the game sets them up itself first)
 		DT:On("PLAYER_ENTERING_WORLD", function(login, reload)
 			if not (login or reload) or not (C.db.auto and C.db.layouts[C.db.auto]) then return end
-			local function Put() if not (InCombatLockdown and InCombatLockdown()) then C.Apply(C.db.layouts[C.db.auto]) end end
-			if C_Timer and C_Timer.After then C_Timer.After(1, Put) else Put() end
+			local function Put() if not (InCombatLockdown and InCombatLockdown()) then C.Apply(C.db.layouts[C.db.auto], true) end end
+			-- ponytail: the channels 10 seconds in, when the game has joined its own (General, Trade); a slower
+			-- login leaves a channel new to this character unticked: Load puts it right
+			local function Chans() if C.db.auto then C.Channels(C.db.layouts[C.db.auto]) end end
+			if C_Timer and C_Timer.After then C_Timer.After(1, Put) C_Timer.After(10, Chans) else Put() Chans() end
 		end)
 	end,
 	selfTest = function(_, Try)
