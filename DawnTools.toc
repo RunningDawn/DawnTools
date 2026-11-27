@@ -1,7 +1,7 @@
 ## Interface: 16001
-## Title: |cffc6ad5eDawnTools|r|cFF00FF00 v0.57.0|r
+## Title: |cffc6ad5eDawnTools|r|cFF00FF00 v0.57.1|r
 ## Notes: Guild tools for Running Dawn: market, inventory, professions, world database, combat, BiS.
-## Version: 0.57.0
+## Version: 0.57.1
 ## X-License: GPL-3.0-or-later
 ## X-Curse-Project-ID: 1804432
 ## OptionalDeps: Auctionator, QuestieDB, Questie, TomTom, GatherMate2, AtlasLootClassic, OneForAll

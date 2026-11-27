@@ -6,6 +6,14 @@
 local _, DT = ...
 
 DT.CHANGELOG = {
+	{ "0.57.1", "2026-11-26", {
+		"Cooking: foods that give crit, hit or another bonus are grouped by it, no longer under Health only.",
+		"Fishing: waters that ask for more skill than the zone around them have a row of their own on Spots: Bay of Storms, Hetaera's Clutch and Scalebeard's Cave in Azshara and Jademir Lake in Feralas (425), Jaguero Isle off Stranglethorn (300). A spot you fished there shows that skill, not the zone's.",
+		"Craft: a \"Profit (DE)\" column after Profit (vendor) on the profession tabs: what an armour piece or weapon earns made and disenchanted, the dust, essences and shards sold on the auction house. Hover the row for what it gives. By the old world's disenchanting rates.",
+		"Fishing: a History table beside Spots, Fish and Gear: where you fished, how many casts, what bit and what it was worth. Spots is the list of waters only now, the same for everybody.",
+		"Fishing: Spots shows the fishing skill of a water as a range: from the skill you can first cast there to the skill at which nothing gets away (330-425). The column of the zone's mob levels is headed Mob lvl.",
+		"Fishing: Moonglade, Burning Steppes, Deadwind Pass, Zephras Isle, Riverglades and Hyjal are listed.",
+	} },
 	{ "0.57.0", "2026-11-24", {
 		"Market: a \"Bag/Bank/Alt\" column, after Qty: how many of the item you have in your bags, in your bank, and on your other characters (as the Inventory tab knows them; empty where you have none). The row's tooltip says who has how many and where. Click the header to sort by it.",
 		"Market: Ctrl-click a row to try the item on in the dressing room, Shift-click to link it in chat, Alt-click to make it a favourite, as on the other tabs. Hold Shift over a row to compare it with what you wear.",

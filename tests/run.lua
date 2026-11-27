@@ -2619,7 +2619,7 @@ end)()
 	local row
 	for _, d in ipairs(view.list) do if d.spell == 7934 then row = d end end
 	check(row and row[3] == P1.DT.Money(30) and row[4]:find("+", 1, true), "a row has its materials and its profit: " .. tostring(row and row[4]))
-	check(row[2]:find("|cffffff0080|r", 1, true), "its skill band"); eq(row[6], "|cff888888?|r", "and, the profession's window never opened, a question for whether I know it")
+	check(row[2]:find("|cffffff0080|r", 1, true), "its skill band"); eq(row[7], "|cff888888?|r", "and, the profession's window never opened, a question for whether I know it")
 	check(view.countText.text:find("Open your First Aid window", 1, true), "the tab says how to find out")
 	for _, d in ipairs(view.list) do check(d.kind ~= nil and d.sort[2] ~= nil, "(every row is whole)") break end
 	-- sorted by profit: the best first
@@ -2639,11 +2639,11 @@ end)()
 	view.Refresh()
 	local known, missing
 	for _, d in ipairs(view.list) do
-		if d.spell == 7934 then known = d[6] elseif d.spell == 3275 then missing = d[6] end
+		if d.spell == 7934 then known = d[7] elseif d.spell == 3275 then missing = d[7] end
 	end
 	eq(known, "|cff40ff40known|r", "known on its tab"); eq(missing, "|cffff4040missing|r", "what I lack, missing")
 	P1.DT.UI:Show("craft171")
-	eq(Craft.views[171].list[1][6], "|cff888888?|r", "another profession, never opened, still asks")
+	eq(Craft.views[171].list[1][7], "|cff888888?|r", "another profession, never opened, still asks")
 	check(Craft.views[129].list[1] and Craft.Makers(7934)[1] == "|cff40ff40You|r", "I am named among who can make it")
 	-- the boxes beside the search box: what to list
 	local function tick(key, on) view.ticks[key].checked = on; click(view.ticks[key]) end
@@ -2673,6 +2673,23 @@ end)()
 	pv = Craft.Profit(7934)
 	eq(pv.vendorSells, 150, "what a vendor pays for all that is made"); eq(pv.vendorProfit, 120, "less the materials: the profit at a vendor")
 	check(Craft.ProfitText(pv, true):find("|cff40ff40+", 1, true), "shown in its own column's colours")
+	-- disenchanted instead
+	eq(pv.de, nil, "a potion is not disenchanted"); check(Craft.ProfitText(pv, "de"):find("-|r", 1, true), "a dash in that column")
+	P1.env.C_Item.GetItemInfo = function(id) if id == 6452 then return "Anti-Venom", "[Anti-Venom]", 2, 18, 1, "", "", 20, "", 1, 50, 4, 0 end return wasInfo(id) end
+	pv = Craft.Profit(7934)
+	eq(pv.de.mats[1][1], 10940, "uncommon armour of item level 18: mostly strange dust"); eq(pv.de.mats[1][2], 1.875, "so much of it on average"); eq(pv.de.worth, nil, "no worth while its prices are not known")
+	check(Craft.ProfitText(pv, "de"):find("?|r", 1, true), "a question mark meanwhile")
+	local wasLatest = P1.env.DawnMarket.API.GetLatest
+	P1.env.DawnMarket.API.GetLatest = function(id) return ({ [10940] = 100, [10939] = 1000, [10978] = 2000 })[id] or wasLatest(id) end
+	pv = Craft.Profit(7934)
+	eq(pv.deSells, 1674, "what the dust, essence and shard of all that is made sell for, less the cut"); eq(pv.deProfit, pv.deSells - pv.mats, "less the materials: the profit disenchanted")
+	check(Craft.ProfitText(pv, "de"):find("|cff40ff40+", 1, true), "shown as the other profits are")
+	eq(Craft.Disenchant(6452).mats[1][1], 10940, "(asked for by itself)")
+	P1.env.C_Item.GetItemInfo = function(id) if id == 6452 then return "x", "[x]", 3, 60, 1, "", "", 1, "", 1, 50, 2, 0 end return wasInfo(id) end
+	eq(Craft.Disenchant(6452).mats[1][1], 14344, "a rare weapon of item level 60: a large brilliant shard")
+	P1.env.C_Item.GetItemInfo = function(id) if id == 6452 then return "x", "[x]", 4, 63, 1, "", "", 1, "", 1, 50, 4, 0 end return wasInfo(id) end
+	eq(Craft.Disenchant(6452).mats[1][2], 1.5, "an epic of 63: a nexus crystal or two")
+	P1.env.DawnMarket.API.GetLatest = wasLatest
 	P1.env.C_Item.GetItemInfo = wasInfo
 	-- the Campsite: what every profession makes for the camp, together, each with its profession
 	check(Craft.IsCamp(1229432) and Craft.IsCamp(1229737) and not Craft.IsCamp(7934), "a recipe for the camp is told from the rest (the tent, the campfire; not a potion)")
@@ -2713,7 +2730,7 @@ end)()
 	eq(P2.DT.Craft.Makers(7934)[1], "Pat Smith", "and names it among who can make it")
 	P2.DT.UI:Show("craft129")
 	local theirs
-	for _, d in ipairs(P2.DT.Craft.views[129].list) do if d.spell == 7934 then theirs = d[7] end end
+	for _, d in ipairs(P2.DT.Craft.views[129].list) do if d.spell == 7934 then theirs = d[8] end end
 	eq(theirs, "Pat Smith", "on the tab too")
 	inject(P2, "Pat-Smith", (packed("KNOWN", "Pat Smith;rubbish", nil):gsub("^market", "crafts")))
 	step(1)
@@ -2919,12 +2936,14 @@ A.fire("LOOT_OPENED")
 eq(pier().casts, 2, "loot that is not fished is not a cast")
 A.fire("LOOT_CLOSED")
 Fish.Refresh()
-check(text("Testwater, Pier"), "my own spot is listed")
+check(not text("Testwater, Pier"), "Spots is the built-in list only")
+click(find("Button", "History"))
+check(text("Testwater, Pier"), "my own spot is listed under History")
 local perCast = L.Money((4 * 500 + 2 * (Latest(600) or 100)) / 2) -- 4 snappers at 5s and 2 fangs at their price, over 2 casts
-check(text("|cff888888~|r" .. perCast), "per cast: what was caught at today's prices over the casts, still marked a guess")
+check(text(perCast) and not text("|cff888888~|r" .. perCast), "per cast: what was caught at today's prices over the casts, no guess")
 A.DT.DB.Put(Fish.Key("Testwater, Pier"), A.DT.DBLogic.Pack({ 20, { 600, 20, 6359, 40 }, 140, "Testwater, Pier" }, 4)) -- (twenty casts of mine, as the store holds them)
 Fish.Refresh()
-check(text("Firefin Snapper 200%"), "what bites, per cast"); check(not text("|cff888888~|r" .. perCast) and text(perCast), "believed from 20 casts on")
+check(text("Firefin Snapper 200%"), "what bites, per cast"); check(text(perCast), "and what a cast pays")
 -- the Fish table
 for _, w in ipairs(A.widgets) do
 	if w.kind == "Button" and w.text == "Fish" and w.shown ~= false and w.scripts.OnClick and not w.id then click(w) end
@@ -2963,20 +2982,22 @@ end
 click(find("Button", "Spots"))
 sortDesc("Per cast")
 local rowsNow = fishRows()
-check(rowsNow[1].sort[5] >= rowsNow[2].sort[5], "spots start with the best per cast"); check(head("Per cast").text.text:find(" v", 1, true), "and the header says so")
+check(rowsNow[1].sort[4] >= rowsNow[2].sort[4], "spots start with the best per cast"); check(head("Per cast").text.text:find(" v", 1, true), "and the header says so")
 click(head("Per cast"))
 rowsNow = fishRows()
-check(rowsNow[1].sort[5] <= rowsNow[2].sort[5], "a click on the header turns it round")
+check(rowsNow[1].sort[4] <= rowsNow[2].sort[4], "a click on the header turns it round")
 click(head("Spot"))
 rowsNow = fishRows()
 check(rowsNow[1].sort[1] < rowsNow[2].sort[1], "another header sorts by that column, names from A")
 click(head("Skill"))
 check(fishRows()[1].sort[3] >= fishRows()[2].sort[3], "numbers from the biggest")
 local fishSearch = Fish.search
+click(find("Button", "History"))
 fishSearch:SetText("testwater")
 step(1)
 rowsNow = fishRows()
 check(#rowsNow == 1 and rowsNow[1][1] == "Testwater, Pier", "the search box finds a spot by name")
+eq(rowsNow[1][3], "20", "History: the casts"); eq(rowsNow[1].sort[4], math.floor(rowsNow[1].sort[5] * 20 + 0.5), "and what all of it was worth")
 eq(rowsNow[1].sort[6] * 170, rowsNow[1].sort[5] * 170, "per hour goes by per cast"); check(rowsNow[1][6]:find(A.DT.Money(math.floor(rowsNow[1].sort[5] * 170 + 0.5)), 1, true), "170 casts of it")
 check(rowsNow[1].sort[7] > 0 and rowsNow[1][7]:find("|cff40ff40", 1, true), "and the dearest single catch of the spot is named with its price: " .. rowsNow[1][7])
 ;(function() -- the hover of a spot: lines of what | value, with shares
@@ -3001,6 +3022,7 @@ step(1)
 check(#fishRows() >= 1 and fishRows()[1].sort[8]:find("Firefin", 1, true), "or by what bites there")
 fishSearch:SetText("")
 step(1)
+click(find("Button", "Spots"))
 -- the skill column against my own skill (140 here)
 local foundRow
 local function skillOf(name)
@@ -3013,10 +3035,12 @@ local function skillOf(name)
 	fishSearch:SetText("")
 	return found
 end
-eq(skillOf("Elwynn Forest"), "|cff40ff4025|r", "green: nothing gets away"); eq(skillOf("Stranglethorn Vale"), "|cffffd100225|r", "yellow: I can cast, some get away")
+eq(skillOf("Elwynn Forest"), "|cff40ff401-25|r", "green: nothing gets away"); eq(skillOf("Stranglethorn Vale"), "|cffffd100130-225|r", "yellow: I can cast, some get away")
 A.env.GetProfessionInfo = function() return "Fishing", nil, 140, 300, 0, 0, 356, 100 end
-eq(skillOf("Stranglethorn Vale"), "|cff40ff40225|r", "a lure and gear count")
-eq(skillOf("Eastern Plaguelands"), "|cffff4040425|r", "red: out of reach")
+eq(skillOf("Stranglethorn Vale"), "|cff40ff40130-225|r", "a lure and gear count")
+eq(skillOf("Eastern Plaguelands"), "|cffff4040330-425|r", "red: out of reach")
+eq(skillOf("Azshara"), "|cffffd100205-300|r", "Azshara asks for 300"); eq(skillOf("Azshara, Bay of Storms"), "|cffff4040330-425|r", "but the Bay of Storms in it for 425: a row of its own")
+eq(Fish.Need("Azshara, Bay of Storms"), 425, "a spot fished in such a subzone is measured by it"); eq(Fish.Need("Azshara, Ruins of Eldarath"), 300, "any other by its zone"); eq(Fish.Need("Nowhere"), nil, "a water not in the list has no number")
 ;(function() -- how many casts land, and the zone's levels
 	eq(Fish.Chance(225, 225), 100, "at the zone's skill every cast lands"); eq(Fish.Chance(225, 130), 5, "at the least skill to cast: 5 in a hundred")
 	eq(Fish.Chance(225, 129), 0, "below it: none"); eq(Fish.Chance(225, 180), 55, "between: a point a point"); eq(Fish.Chance(nil, 100), nil, "no skill known: nothing said")
@@ -3094,6 +3118,20 @@ end
 eq(#foodRows(Fay), 3, "all the food is listed"); eq(foodRows(Fay)[1].id, 5003, "lowest level first")
 check(foodText(Fay, "3 foods, 2 of them known to this character"), "with a count")
 check(foodText(Fay, "Stamina (1)") and foodText(Fay, "Spirit (1)") and foodText(Fay, "Health only (1)"), "grouped by what it gives, the first thing named")
+do -- what a food gives beyond the old list
+	local was = TIPS[5003]
+	local function gives(tip) TIPS[5003] = tip; FF.db.types[5003] = nil; return FF.Type(5003) end
+	eq(gives("Use: Restores 874 health over 30 sec. If you spend at least 10 seconds eating you will become well fed and gain 2% Critical Strike for 15 min."), "Crit", "a food that gives crit is grouped by it")
+	eq(gives("Use: Restores 874 health over 30 sec. You will become well fed and gain 5 Swiftness for 10 min."), "Swiftness", "a bonus nobody listed: as the tooltip words it")
+	eq(gives("Use: Occasionally belch flame at enemies struck in melee for the next 10 min."), "Special", "a use that is not about health")
+	eq(gives("Use: Restores 1,338 health over 30 sec.  If you eat for 10 seconds will also increase your Healing done by 22 for 10 min."), "Healing Power", "healing, as Forever words it")
+	eq(gives("Use: Restores 5 health. You will gain 10% Movement speed while outdoors for 10 min."), "Movement speed", "a condition is not part of the name")
+	eq(gives("Use: Restores 5 health. It will increase your Luck by 3 for 10 min."), "Luck", "the other wording of a bonus nobody listed")
+	eq(gives("Use: Builds a basic campfire that allows cooking and the placement of up to 3 additional camp features."), "Camp", "a campfire is no food")
+	eq(gives("Use: Heals 282 damage over 21 sec, assuming you don't bite down on a poison sac."), "Health only", "healing is health")
+	eq(gives("Use: Instantly restores 100 energy."), "Energy", "energy, small as it is written")
+	eq(gives(was), "Health only", "and plain food is health only still")
+end
 eq(foodRows(Fay)[1][5], "|cff40ff40known|r", "a recipe I have"); eq(foodRows(Fay)[3][5], "|cffff4040missing|r", "one I lack")
 eq(foodRows(Fay)[1][6], "|cff40ff40You|r", "I can cook it"); eq(foodRows(Fay)[3][6], "|cff888888nobody known|r", "nobody can cook the other")
 FF.ticks.known.checked = true

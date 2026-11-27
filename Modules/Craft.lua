@@ -113,6 +113,48 @@ function Craft.ByItem(item)
 	return byItem[item]
 end
 
+-- Disenchanting: what one armour piece or weapon gives on average, by its quality and item level.
+-- [table] = { material, how many of it an item gives on average, ... }. Tables 1-11: uncommon armour, in steps of
+-- five item levels (to 15, 16-20, ... 61-65); 21-31: uncommon weapons, likewise; 41-50: rare; 61-65: epic.
+-- From CMaNGOS classic-db (GPL-3.0): disenchant_loot_template, and which table an item of item_template uses.
+-- ponytail: the old world's rules. Forever may disenchant otherwise: nobody has compared yet.
+local DE = {
+	[1] = { 10940, 1.2, 10938, 0.3 }, [2] = { 10940, 1.875, 10939, 0.3, 10978, 0.05 }, [3] = { 10940, 3.75, 10998, 0.225, 10978, 0.1 },
+	[4] = { 11083, 1.125, 11082, 0.3, 11084, 0.05 }, [5] = { 11083, 2.625, 11134, 0.3, 11138, 0.05 }, [6] = { 11137, 1.125, 11135, 0.3, 11139, 0.05 },
+	[7] = { 11137, 2.625, 11174, 0.3, 11177, 0.05 }, [8] = { 11176, 1.125, 11175, 0.3, 11178, 0.05 }, [9] = { 11176, 2.625, 16202, 0.3, 14343, 0.05 },
+	[10] = { 16204, 1.125, 16203, 0.3, 14344, 0.05 }, [11] = { 16204, 2.625, 16203, 0.4, 14344, 0.05 },
+	[21] = { 10938, 1.2, 10940, 0.3 }, [22] = { 10939, 1.125, 10940, 0.5, 10978, 0.05 }, [23] = { 10998, 1.125, 10940, 0.75, 10978, 0.1 },
+	[24] = { 11082, 1.125, 11083, 0.3, 11084, 0.05 }, [25] = { 11134, 1.125, 11083, 0.7, 11138, 0.05 }, [26] = { 11135, 1.125, 11137, 0.3, 11139, 0.05 },
+	[27] = { 11174, 1.125, 11137, 0.7, 11177, 0.05 }, [28] = { 11175, 1.125, 11176, 0.3, 11178, 0.05 }, [29] = { 16202, 1.125, 11176, 0.77, 14343, 0.03 },
+	[30] = { 16203, 1.125, 16204, 0.33, 14344, 0.03 }, [31] = { 16203, 1.5, 16204, 0.77, 14344, 0.03 },
+	[41] = { 10978, 1 }, [42] = { 11084, 1 }, [43] = { 11138, 1 }, [44] = { 11139, 1 }, [45] = { 11177, 1 }, [46] = { 11178, 1 }, [47] = { 14343, 1 },
+	[48] = { 14344, 1 }, [49] = { 14344, 0.995, 20725, 0.005 }, [50] = { 20725, 0.005 },
+	[61] = { 11177, 3 }, [62] = { 11178, 3 }, [63] = { 14343, 3 }, [64] = { 20725, 1 }, [65] = { 20725, 1.5 },
+}
+local function Step(ilvl, from, most) -- (which step of five item levels, the first ending at from + 5)
+	return math.max(1, math.min(most, math.ceil((ilvl - from) / 5)))
+end
+-- What disenchanting one of an item gives: { mats = { { item, how many, auction price each or nil } }, worth = their
+-- sum at auction (nil while a price is missing) }; nil for what cannot be disenchanted (not armour or a weapon,
+-- or below uncommon) and for an item the game has not loaded.
+function Craft.Disenchant(item)
+	if not (item and C_Item and C_Item.GetItemInfo) then return nil end
+	local _, _, quality, ilvl, _, _, _, _, _, _, _, class = C_Item.GetItemInfo(item)
+	if not (quality and ilvl and (class == 2 or class == 4)) then return nil end
+	local t = quality == 2 and (class == 2 and 20 or 0) + Step(ilvl, 10, 11)
+		or quality == 3 and (ilvl <= 55 and 40 + Step(ilvl, 20, 7) or ilvl <= 65 and 48 or ilvl <= 70 and 49 or 50)
+		or quality == 4 and 60 + Step(ilvl, 40, 5) or nil
+	local list = t and DE[t]
+	if not list then return nil end
+	local de = { mats = {}, worth = 0 }
+	for i = 1, #list, 2 do
+		local each = Auction(list[i])
+		de.mats[#de.mats + 1] = { list[i], list[i + 1], each }
+		de.worth = de.worth and each and de.worth + each * list[i + 1] or nil
+	end
+	return de
+end
+
 -- What one making of a recipe costs and earns at today's prices:
 --   { parts = { { item, n, each, from } }, mats = their sum where known, missing = { item, ... } (no price),
 --     made, yield, price (auction, each), sells (all of them, less the house's 5%), profit (sells - mats) }
@@ -137,6 +179,12 @@ function Craft.Profit(spell)
 		if type(pays) == "number" and pays > 0 then
 			p.vendorSells = math.floor(pays * p.yield)
 			if not p.missing[1] then p.vendorProfit = p.vendorSells - p.mats end
+		end
+		-- disenchanted instead, and what that gives sold on the auction house (less its 5%)
+		p.de = Craft.Disenchant(p.made)
+		if p.de and p.de.worth then
+			p.deSells = math.floor(p.de.worth * p.yield * 0.95)
+			if not p.missing[1] then p.deProfit = p.deSells - p.mats end
 		end
 	end
 	return p
@@ -165,7 +213,7 @@ Craft.FILTERS = {
 function Craft.Passes(filter, known, p, have)
 	if filter.known and not known then return false end
 	if filter.missing and known then return false end
-	if filter.profit and not (p and ((p.profit or 0) > 0 or (p.vendorProfit or 0) > 0)) then return false end
+	if filter.profit and not (p and ((p.profit or 0) > 0 or (p.vendorProfit or 0) > 0 or (p.deProfit or 0) > 0)) then return false end
 	if filter.mats and not have then return false end
 	return true
 end
@@ -213,12 +261,13 @@ function Craft.MatsText(p)
 	return (p.mats > 0 and (DT.Money(p.mats) .. " ") or "") .. GREY .. "+?|r"
 end
 
--- the profit as text: sold on the auction house, or (vendor = true) sold to a vendor
+-- the profit as text: sold on the auction house, or (vendor = true) sold to a vendor, or (vendor = "de") disenchanted
 function Craft.ProfitText(p, vendor)
-	local profit = vendor and p.vendorProfit or (not vendor and p.profit) or nil
+	local profit
+	if vendor == "de" then profit = p.deProfit elseif vendor then profit = p.vendorProfit else profit = p.profit end
 	if profit then return (profit >= 0 and GREEN .. "+" or RED .. "-") .. DT.Money(math.abs(profit)) .. "|r" end
-	-- (nothing made, or nothing a vendor will pay for: a dash; a price missing: a question)
-	if not p.made or (vendor and not p.vendorSells) then return GREY .. "-|r" end
+	-- (nothing made, nothing a vendor will pay for, nothing to disenchant: a dash; a price missing: a question)
+	if not p.made or (vendor == "de" and not p.de) or (vendor == true and not p.vendorSells) then return GREY .. "-|r" end
 	return GREY .. "?|r"
 end
 
@@ -238,6 +287,14 @@ function Craft.ProfitTip(tip, p)
 		tip:AddDoubleLine("Profit on the auction house", Craft.ProfitText(p), 0.75, 0.75, 0.75, 1, 1, 1)
 		tip:AddDoubleLine("Sold to a vendor instead", p.vendorSells and DT.Money(p.vendorSells) or (GREY .. "a vendor pays nothing for it|r"), 0.75, 0.75, 0.75, 1, 1, 1)
 		tip:AddDoubleLine("Profit at a vendor", Craft.ProfitText(p, true), 0.75, 0.75, 0.75, 1, 1, 1)
+		if p.de then
+			tip:AddLine("Disenchanted instead (on average, old-world rates):", 1, 0.82, 0)
+			for _, m in ipairs(p.de.mats) do
+				tip:AddDoubleLine(("  %gx %s"):format(math.floor(m[2] * p.yield * 100 + 0.5) / 100, ItemName(m[1])),
+					m[3] and DT.Money(math.floor(m[3] * m[2] * p.yield + 0.5)) or (RED .. "no auction price known|r"), 1, 1, 1, 1, 1, 1)
+			end
+			tip:AddDoubleLine("Profit disenchanted (less the 5% cut)", Craft.ProfitText(p, "de"), 0.75, 0.75, 0.75, 1, 1, 1)
+		end
 	else
 		tip:AddLine("Makes no item to sell: no profit to work out.", 0.6, 0.6, 0.6)
 	end
@@ -358,8 +415,8 @@ local WHERE_W = 250
 local CAMP_COLS = { { "Item", 180 }, { "Profession", 100 }, { "Skill", 116 }, { "Mats", 80, true }, { "Profit (AH)", 92, true }, { "Profit (vendor)", 104, true },
 	{ "This character", 90 }, { "Who can make it", 0 }, { "Where to get it", -WHERE_W } }
 -- (these begin with the most when first clicked; the others with the least)
-local DESC_FIRST = { ["Profit (AH)"] = true, ["Profit (vendor)"] = true, ["This character"] = true, ["Who can make it"] = true }
-local COLS = { { "Item", 196 }, { "Skill", 116 }, { "Mats", 80, true }, { "Profit (AH)", 92, true }, { "Profit (vendor)", 104, true }, { "This character", 90 }, { "Who can make it", 0 },
+local DESC_FIRST = { ["Profit (AH)"] = true, ["Profit (vendor)"] = true, ["Profit (DE)"] = true, ["This character"] = true, ["Who can make it"] = true }
+local COLS = { { "Item", 196 }, { "Skill", 116 }, { "Mats", 80, true }, { "Profit (AH)", 92, true }, { "Profit (vendor)", 104, true }, { "Profit (DE)", 84, true }, { "This character", 90 }, { "Who can make it", 0 },
 	{ "Where to get it", -WHERE_W } }
 
 -- what the game calls a recipe that makes no item
@@ -444,15 +501,17 @@ local function NewView(prof)
 				makers = makers, profit = p, have = Craft.Have(p), scroll = scroll, src = src, scrollName = scroll and ItemName(scroll) or nil,
 				(icon and ("|T%s:14|t "):format(icon) or "") .. color .. shown .. "|r" .. (r[8] > 1 and (GREY .. " x%g|r"):format(r[8]) or ""),
 				("|cffff8040%s|r |cffffff00%d|r |cff40c040%d|r |cff808080%d|r"):format(r[2] > 0 and r[2] or "?", r[3], r[4], r[5]),
-				Craft.MatsText(p), Craft.ProfitText(p), Craft.ProfitText(p, true),
+				Craft.MatsText(p), Craft.ProfitText(p), Craft.ProfitText(p, true), Craft.ProfitText(p, "de"),
 				not read and (GREY .. "?|r") or known and (GREEN .. "known|r") or (RED .. "missing|r"),
 				makers[1] and table.concat(makers, ", ") or (GREY .. "nobody known|r"), where,
 				-- what each column sorts by (profit and mats not known: last)
-				sort = { shown, r[2] > 0 and r[2] or r[3], p.missing[1] and math.huge or p.mats, p.profit or -math.huge, p.vendorProfit or -math.huge,
+				sort = { shown, r[2] > 0 and r[2] or r[3], p.missing[1] and math.huge or p.mats, p.profit or -math.huge, p.vendorProfit or -math.huge, p.deProfit or -math.huge,
 					not read and 1 or known and 2 or 0, #makers, src and (src.kind .. " " .. (src.name or "")) or not scroll and "trainer" or "~~" } }
 			-- (the Campsite tab: the profession, as a column of its own after the item)
 			if prof.camp then
 				local row = all[#all]
+				table.remove(row, 6) -- (nothing made for the camp is disenchanted: no such column there)
+				table.remove(row.sort, 6)
 				table.insert(row, 2, LINE_NAMES[r[1]] or "?")
 				table.insert(row.sort, 2, LINE_NAMES[r[1]] or "?")
 			end

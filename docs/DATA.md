@@ -96,7 +96,7 @@ slightly high.
 | Auctionator | (not to be read as a reference) | its price history, as a local fill-in | live only; never sent |
 | GatherMate2, Questie, TomTom | various | node counts, zone lookups, waypoints | live only |
 | (defaults) | owner's decision | stat weights for the BiS tab | `Data/BisProfiles.lua`, in the download as editable defaults. Not in the store, not sent |
-| CMaNGOS classic-db | said to be GPL-3 with carve-outs; **its licence files are not read yet** | **planned:** drop chances of old-world mobs | nothing taken yet |
+| CMaNGOS classic-db | GPL-3.0 (`LICENSE.md`, `README.md`, `AUTHORS`); Blizzard's own content in it is not under the GPL (`COPYRIGHT.md`) | the fishing skill of each water, subzones with a skill of their own, and the fish of those subzones, as numbers (`Modules/Fish.lua`, `WATERS`); what disenchanting gives by quality and item level (`Modules/Craft.lua`, `DE`). **Planned:** drop chances of old-world mobs | typed into the file; nothing generated |
 
 Never taken, in any way but a live read on the player's own machine: ForeverLevelingBiS, RareScanner,
 ForeverFishing, ForeverDungeonJournal, Attune, AllTheThings, DBM (all rights reserved, or no licence).

@@ -39,8 +39,13 @@ local OTHER = { 6358, 6359, 13422, 13757 }
 -- what a vendor asks for the mats he sells (copper)
 local VENDOR_COST = { [MILD] = 10, [HOT] = 40, [SOOTHING] = 160, [WATER] = 25 }
 -- { fishing skill at which nothing gets away, { zones }, { fish } }
--- ponytail: from memory of the old world, with every fish of a water counted as equally likely. Good enough to
--- say where to try; "per cast" is only real once you have fished there (then your own catches replace this).
+-- A name "Zone, Subzone" is a water inside a zone that asks for another skill than the zone around it (Bay of
+-- Storms: 425 in a zone of 300); it is listed beside its zone, and a spot fished there is measured by it.
+-- The skills, the subzones and the fish of the subzones (and of Moonglade, Burning Steppes, Deadwind Pass) are
+-- those of CMaNGOS classic-db (GPL-3.0: skill_fishing_base_level + 95, fishing_loot_template), which the Forever
+-- guides agree with. The last row is Forever's own zones, as the guides give them: no fish known.
+-- ponytail: the other fish lists are from memory of the old world, and every fish of a water counts as equally
+-- likely. Good enough to say where to try; what was really caught is the History table.
 local WATERS = {
 	{ 25, { "Elwynn Forest", "Dun Morogh", "Teldrassil", "Durotar", "Mulgore", "Tirisfal Glades" }, { 6291, 6303, 6289 } },
 	{ 75, { "Stormwind City", "Ironforge", "Darnassus", "Orgrimmar", "Thunder Bluff", "Undercity" }, { 6291, 6289 } },
@@ -57,7 +62,13 @@ local WATERS = {
 	{ 300, { "Felwood", "Un'Goro Crater" }, { 13758, 13759, 13760, 13757 } },
 	{ 300, { "Western Plaguelands" }, { 13758, 13759, 13760 } },
 	{ 300, { "Azshara" }, { 13422, 13754, 13755, 13756 } },
+	{ 300, { "Moonglade" }, { 6358, 8365, 13757, 13758, 13759, 13760 } },
+	{ 300, { "Stranglethorn Vale, Jaguero Isle" }, { 13755, 13756, 4603 } },
 	{ 425, { "Eastern Plaguelands", "Winterspring", "Silithus" }, { 13889, 13757 } },
+	{ 425, { "Burning Steppes", "Feralas, Jademir Lake" }, { 13757, 13758, 13759, 13760, 13889, 13890 } },
+	{ 425, { "Deadwind Pass" }, { 13757 } },
+	{ 425, { "Azshara, Bay of Storms", "Azshara, Hetaera's Clutch", "Azshara, Scalebeard's Cave" }, { 13422, 13755, 13756, 13893, 13888, 4603 } },
+	{ 25, { "Zephras Isle" }, {} }, { 225, { "Riverglades" }, {} }, { 425, { "Hyjal" }, {} },
 }
 -- What raises fishing skill: { item, bonus, kind, where it comes from in the old world }
 -- ponytail: sources from memory of the old world; Forever may hand them out elsewhere. The link on each row
@@ -80,7 +91,6 @@ local GEAR = {
 	{ 19969, 5, "Boots", "Rare catch turned in at the Stranglethorn Fishing Extravaganza" },
 }
 
-local OWN_CASTS = 20 -- from this many casts on, a spot's own catches are believed over the list above
 -- ponytail: a cast, the wait for the bite and the looting take some 20 seconds; no lure breaks, no walking counted
 local CASTS_PER_HOUR = 170
 
@@ -190,14 +200,19 @@ local function IsFish(id)
 	return false
 end
 
--- the fishing skill a zone asks for, by the list (nil: not in it)
-local function Need(zone)
+-- the fishing skill a spot ("Zone" or "Zone, Subzone") asks for, by the list: the subzone's where it has one of
+-- its own, else the zone's (nil: not in it)
+local function Need(spot)
+	local zone, inZone = spot:match("^(.-), ") or spot, nil
 	for _, w in ipairs(WATERS) do
 		for _, name in ipairs(w[2]) do
-			if name == zone then return w[1] end
+			if name == spot then return w[1] end
+			if name == zone then inZone = w[1] end
 		end
 	end
+	return inZone
 end
+F.Need = Need
 
 -- what the best thing to do with one fish brings: sold raw, or cooked first where that adds something
 local function Best(id)
@@ -300,8 +315,9 @@ end
 
 -- Spots, best per cast first: { name, skill (needed), caught (lowest skill I caught at), casts (nil = from the
 -- list), mine (of them mine), per = copper per cast, fish = { { id, share } }, best = { id, copper }: the dearest single catch }
+-- Both kinds are in it: every water of the list (the Spots table), and every spot fished (the History table).
 local function Spots()
-	local spots, fished = {}, {}
+	local spots = {}
 	local function Dearest(ids)
 		local best
 		for _, id in ipairs(ids) do
@@ -312,7 +328,6 @@ local function Spots()
 	end
 	for name, c in pairs(F.Catches()) do
 		local zone = name:match("^(.-), ") or name
-		if c.casts >= OWN_CASTS then fished[zone] = true end
 		local per, fish = 0, {}
 		for id, qty in pairs(c.items) do
 			per = per + qty * Worth(id)
@@ -321,18 +336,18 @@ local function Spots()
 		table.sort(fish, function(a, b) return a[3] > b[3] end)
 		local ids = {}
 		for id in pairs(c.items) do ids[#ids + 1] = id end
-		spots[#spots + 1] = { name = name, zone = zone, skill = Need(zone), caught = c.skill, casts = c.casts, mine = c.mine, per = per / c.casts, fish = fish, best = Dearest(ids) }
+		spots[#spots + 1] = { name = name, zone = zone, skill = Need(name), caught = c.skill, casts = c.casts, mine = c.mine, per = per / c.casts, fish = fish, best = Dearest(ids) }
 	end
 	for _, w in ipairs(WATERS) do
 		for _, zone in ipairs(w[2]) do
-			if not fished[zone] then
+			do
 				local per, fish = 0, {}
 				for _, id in ipairs(w[3]) do
 					per = per + Worth(id) / #w[3]
 					fish[#fish + 1] = { id, 1 / #w[3], Worth(id) }
 				end
 				table.sort(fish, function(a, b) return a[3] > b[3] end)
-				spots[#spots + 1] = { name = zone, zone = zone, skill = w[1], per = per, fish = fish, best = Dearest(w[3]) }
+				spots[#spots + 1] = { name = zone, zone = zone:match("^(.-), ") or zone, skill = w[1], per = per, fish = fish, best = Dearest(w[3]) }
 			end
 		end
 	end
@@ -430,9 +445,16 @@ local VIEWS = {
 		{ title = "Where (fishing skill)", width = 0 },
 	},
 	spots = {
-		{ title = "Spot", width = 190 }, { title = "Levels", width = 54, right = true }, { title = "Skill", width = 50, right = true }, { title = "Casts", width = 70, right = true },
+		{ title = "Spot", width = 190 }, { title = "Mob lvl", width = 54, right = true }, { title = "Fishing skill", width = 84, right = true },
 		{ title = "Per cast", width = 104, right = true }, { title = "Per hour", width = 104, right = true }, { title = "Best catch", width = 200 },
 		{ title = "What bites (per cast)", width = 0 },
+	},
+	-- (what was fished, by me and, where the game database is shared, the guild: counted at every catch)
+	history = {
+		{ title = "Spot", width = 190 }, { title = "Skill", width = 50, right = true }, { title = "Casts", width = 60, right = true },
+		{ title = "Caught worth", width = 104, right = true },
+		{ title = "Per cast", width = 104, right = true }, { title = "Per hour", width = 104, right = true }, { title = "Best catch", width = 200 },
+		{ title = "What bit (per cast)", width = 0 },
 	},
 	gear = {
 		{ title = "Item", width = 230 }, { title = "Fishing", width = 60, right = true }, { title = "Kind", width = 60 },
@@ -442,7 +464,7 @@ local VIEWS = {
 }
 local view = "spots"
 -- per table: the column it is sorted by, and which way
-local sortBy = { spots = { col = 5, desc = true }, fish = { col = 2, desc = true }, gear = { col = 2, desc = true } }
+local sortBy = { spots = { col = 4, desc = true }, history = { col = 4, desc = true }, fish = { col = 2, desc = true }, gear = { col = 2, desc = true } }
 local panel, bar, note, search
 local rows, heads, viewButtons, list, offset = {}, {}, {}, {}, 0
 
@@ -489,10 +511,12 @@ end
 
 -- Green: nothing gets away at my skill as it stands (pole, gear and lure counted). Yellow: I can cast there
 -- but fish get away (from 95 below). Red: I cannot fish there yet.
-local function SkillText(need, mine)
+-- range: "330-425", from the least skill to cast there to the skill at which nothing gets away
+local function SkillText(need, mine, range)
 	if not need then return "" end
-	if not mine then return tostring(need) end
-	return "|c" .. (mine >= need and "ff40ff40" or mine >= need - 95 and "ffffd100" or "ffff4040") .. need .. "|r"
+	local text = range and math.max(1, need - 95) .. "-" .. need or tostring(need)
+	if not mine then return text end
+	return "|c" .. (mine >= need and "ff40ff40" or mine >= need - 95 and "ffffd100" or "ffff4040") .. text .. "|r"
 end
 
 -- How many casts in a hundred land a fish: 5 at the least skill to cast (95 below the zone's), all of them at
@@ -516,15 +540,17 @@ end
 
 local GOLD, GREY, GREEN = "|cffffd100", "|cff888888", "|cff40ff40"
 
-local function SpotRows()
+-- history: the spots fished (what was caught there), else the waters of the list
+local function SpotRows(history)
 	local out, mine = {}, FishingSkill(true)
 	for _, s in ipairs(Spots()) do
+	if (s.casts ~= nil) == history then
 		local fish = {}
 		for i = 1, math.min(4, #s.fish) do
 			fish[i] = ("%s %d%%"):format(Name(s.fish[i][1]), math.floor(s.fish[i][2] * 100 + 0.5))
 		end
 		local levels, lowest = ZoneLevels(s.zone)
-		local own = s.casts and s.casts >= OWN_CASTS
+		local own = history
 		local perCast = (own and "" or GREY .. "~|r") .. DT.Money(math.floor(s.per + 0.5))
 		local perHour = GOLD .. DT.Money(math.floor(s.per * CASTS_PER_HOUR + 0.5)) .. "|r"
 		local best = s.best and (Name(s.best[1]) .. " " .. GREEN .. DT.Money(math.floor(s.best[2] + 0.5)) .. "|r")
@@ -541,6 +567,8 @@ local function SpotRows()
 		end
 		tips[#tips + 1] = { "Per cast", perCast }
 		tips[#tips + 1] = { "Per hour", perHour .. GREY .. ("  (%d casts)|r"):format(CASTS_PER_HOUR) }
+		local total = history and math.floor(s.per * s.casts + 0.5) or 0
+		if history then tips[#tips + 1] = { "Caught in all", GOLD .. DT.Money(total) .. "|r" .. GREY .. ("  (%d casts)|r"):format(s.casts) } end
 		if best then tips[#tips + 1] = { "Best catch", best } end
 		if s.fish[1] then
 			tips[#tips + 1] = " "
@@ -556,13 +584,17 @@ local function SpotRows()
 		local first = s.caught and (", the first at skill " .. s.caught) or ""
 		tips[#tips + 1] = GREY .. (s.casts and (s.mine == s.casts and ("From your own %d cast%s here%s."):format(s.casts, s.casts == 1 and "" or "s", first)
 			or ("From %d cast%s here: %d yours, the rest the guild's%s."):format(s.casts, s.casts == 1 and "" or "s", s.mine or 0, first))
-			or "~ A guess from the built-in list, until you or the guild have fished here.") .. "|r"
-		out[#out + 1] = {
+			or "~ A guess from the built-in list. What was really caught is under History.") .. "|r"
+		local bites = table.concat(fish, ", ")
+		out[#out + 1] = history and {
 			tips = tips,
-			s.name, levels, SkillText(s.skill, mine), s.casts and tostring(s.casts) or GREY .. "-|r",
-			perCast, perHour, best or GREY .. "-|r",
-			table.concat(fish, ", "),
-			sort = { s.name, lowest, s.skill or 0, s.casts or 0, s.per, s.per, s.best and s.best[2] or 0, table.concat(fish, ", ") } }
+			s.name, SkillText(s.skill, mine), tostring(s.casts), GOLD .. DT.Money(total) .. "|r", perCast, perHour, best or GREY .. "-|r", bites,
+			sort = { s.name, s.skill or 0, s.casts, total, s.per, s.per, s.best and s.best[2] or 0, bites } }
+		or {
+			tips = tips,
+			s.name, levels, SkillText(s.skill, mine, true), perCast, perHour, best or GREY .. "-|r", bites,
+			sort = { s.name, lowest, s.skill or 0, s.per, s.per, s.best and s.best[2] or 0, bites } }
+	end
 	end
 	return out
 end
@@ -637,7 +669,7 @@ end
 
 -- the rows of the table shown, searched and sorted
 local function Rebuild()
-	list = view == "fish" and FishRows() or view == "gear" and GearRows() or SpotRows()
+	list = view == "fish" and FishRows() or view == "gear" and GearRows() or SpotRows(view == "history")
 	local q = (search:GetText() or ""):lower()
 	if q ~= "" then
 		local kept = {}
@@ -717,7 +749,7 @@ local function Refresh(scrolled)
 	end
 	local casts, mine = 0, 0
 	for _, c in pairs(F.Catches()) do casts, mine = casts + c.casts, mine + c.mine end
-	note:SetText(("|cff888888Prices: %s auction house (grey v = vendor only). %d casts counted: %d yours%s. ~ = a guess from the built-in list. Skill: green = nothing gets away, yellow = some do, red = cannot cast.|r"):format(
+	note:SetText(("|cff888888Prices: %s auction house (grey v = vendor only). %d casts counted: %d yours%s (History). ~ = a guess from the built-in list. Skill: green = nothing gets away, yellow = some do, red = cannot cast.|r"):format(
 		DT.Market.HOUSE_NAMES[DT.Market.view] or "?", casts, mine, casts > mine and ", the rest the guild's" or ""))
 end
 F.Refresh = Refresh
@@ -728,7 +760,8 @@ local function Build(parent)
 	local x = 4
 	for _, v in ipairs({ { "spots", "Spots", "Where a cast is worth the most, at today's prices." },
 		{ "fish", "Fish", "Each fish: its price raw and cooked, what cooking adds, and where it bites." },
-		{ "gear", "Gear", "Lures, poles and clothes that raise fishing skill, and where they come from." } }) do
+		{ "gear", "Gear", "Lures, poles and clothes that raise fishing skill, and where they come from." },
+		{ "history", "History", "Where you (and the guild, where the game database is shared) fished: the casts, what bit, and what it was worth at today's prices." } }) do
 		local b = CreateFrame("Button", nil, panel, "UIPanelButtonTemplate")
 		b:SetSize(70, 22)
 		b:SetPoint("TOPLEFT", x, -2)
@@ -748,7 +781,7 @@ local function Build(parent)
 	end
 	search = CreateFrame("EditBox", nil, panel, "SearchBoxTemplate")
 	search:SetSize(200, 20)
-	search:SetPoint("LEFT", viewButtons.gear, "RIGHT", 16, 0)
+	search:SetPoint("LEFT", viewButtons.history, "RIGHT", 16, 0)
 	F.search = search
 	search:SetAutoFocus(false)
 	search:HookScript("OnTextChanged", function() -- (hooked: the template's own handler shows the "Search" hint)
