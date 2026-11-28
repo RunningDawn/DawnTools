@@ -1,6 +1,8 @@
 -- DawnTools :: Gather
 -- High-DPI 3D soft-target visual highlights for herbs, veins, treasure, barrels, fishing pools, and quest objects (~15 yd).
--- Defaulted to OFF. Guild node sharing is strictly opt-in (off = coded baseline + your own discoveries only).
+-- Off until switched on (Tools > Gather). Sharing what was found is a switch of its own, off too: then only the
+-- built-in list and your own finds are used. Shared finds go into the game database (DT.DB.Put, "gnode:<name>"),
+-- which travels to the guild only where sharing was agreed to in the popup, as all of it does.
 
 local _, DT = ...
 local G = { baseline = {}, index = {} }
@@ -171,26 +173,26 @@ local STARTER_NODES = {
 	["gold vein"] = { k = "ore", s = 155 }, ["mithril deposit"] = { k = "ore", s = 175 },
 	["truesilver deposit"] = { k = "ore", s = 230 }, ["dark iron deposit"] = { k = "ore", s = 230 },
 	["small thorium vein"] = { k = "ore", s = 245 }, ["rich thorium vein"] = { k = "ore", s = 275 },
-    	["ooze covered silver vein"] = { k = "ore", s = 75 }, ["ooze covered gold vein"] = { k = "ore", s = 155 },
-    	["ooze covered mithril deposit"] = { k = "ore", s = 175 }, ["ooze covered truesilver deposit"] = { k = "ore", s = 230 },
-    	["ooze covered thorium vein"] = { k = "ore", s = 245 }, ["ooze covered rich thorium vein"] = { k = "ore", s = 275 },
-    	["small obsidian chunk"] = { k = "ore", s = 305 }, ["large obsidian chunk"] = { k = "ore", s = 305 },
-    	["fel iron deposit"] = { k = "ore", s = 300 }, ["adamantite deposit"] = { k = "ore", s = 325 },
-    	["rich adamantite deposit"] = { k = "ore", s = 350 }, ["khorium vein"] = { k = "ore", s = 375 },
-    	["nethercite deposit"] = { k = "ore", s = 350 }, ["ancient gem vein"] = { k = "ore", s = 375 },
-    	["cobalt deposit"] = { k = "ore", s = 350 }, ["rich cobalt deposit"] = { k = "ore", s = 375 },
-    	["saronite deposit"] = { k = "ore", s = 400 }, ["rich saronite deposit"] = { k = "ore", s = 425 },
-    	["pure saronite deposit"] = { k = "ore", s = 450 }, ["titanium vein"] = { k = "ore", s = 450 },
-    	-- TBC & Wrath herbs
-    	["felweed"] = { k = "herb", s = 300 }, ["dreaming glory"] = { k = "herb", s = 315 },
-    	["ragveil"] = { k = "herb", s = 325 }, ["flame cap"] = { k = "herb", s = 335 },
-    	["terocone"] = { k = "herb", s = 325 }, ["ancient lichen"] = { k = "herb", s = 340 },
-    	["netherbloom"] = { k = "herb", s = 350 }, ["nightmare vine"] = { k = "herb", s = 365 },
-    	["mana thistle"] = { k = "herb", s = 375 }, ["goldclover"] = { k = "herb", s = 350 },
-    	["tiger lily"] = { k = "herb", s = 375 }, ["talandra's rose"] = { k = "herb", s = 385 },
-    	["adder's tongue"] = { k = "herb", s = 400 }, ["lichbloom"] = { k = "herb", s = 425 },
-    	["icethorn"] = { k = "herb", s = 435 }, ["frost lotus"] = { k = "herb", s = 450 },
-    	-- Treasure & chests
+	["ooze covered silver vein"] = { k = "ore", s = 75 }, ["ooze covered gold vein"] = { k = "ore", s = 155 },
+	["ooze covered mithril deposit"] = { k = "ore", s = 175 }, ["ooze covered truesilver deposit"] = { k = "ore", s = 230 },
+	["ooze covered thorium vein"] = { k = "ore", s = 245 }, ["ooze covered rich thorium vein"] = { k = "ore", s = 275 },
+	["small obsidian chunk"] = { k = "ore", s = 305 }, ["large obsidian chunk"] = { k = "ore", s = 305 },
+	["fel iron deposit"] = { k = "ore", s = 300 }, ["adamantite deposit"] = { k = "ore", s = 325 },
+	["rich adamantite deposit"] = { k = "ore", s = 350 }, ["khorium vein"] = { k = "ore", s = 375 },
+	["nethercite deposit"] = { k = "ore", s = 350 }, ["ancient gem vein"] = { k = "ore", s = 375 },
+	["cobalt deposit"] = { k = "ore", s = 350 }, ["rich cobalt deposit"] = { k = "ore", s = 375 },
+	["saronite deposit"] = { k = "ore", s = 400 }, ["rich saronite deposit"] = { k = "ore", s = 425 },
+	["pure saronite deposit"] = { k = "ore", s = 450 }, ["titanium vein"] = { k = "ore", s = 450 },
+	-- TBC & Wrath herbs
+	["felweed"] = { k = "herb", s = 300 }, ["dreaming glory"] = { k = "herb", s = 315 },
+	["ragveil"] = { k = "herb", s = 325 }, ["flame cap"] = { k = "herb", s = 335 },
+	["terocone"] = { k = "herb", s = 325 }, ["ancient lichen"] = { k = "herb", s = 340 },
+	["netherbloom"] = { k = "herb", s = 350 }, ["nightmare vine"] = { k = "herb", s = 365 },
+	["mana thistle"] = { k = "herb", s = 375 }, ["goldclover"] = { k = "herb", s = 350 },
+	["tiger lily"] = { k = "herb", s = 375 }, ["talandra's rose"] = { k = "herb", s = 385 },
+	["adder's tongue"] = { k = "herb", s = 400 }, ["lichbloom"] = { k = "herb", s = 425 },
+	["icethorn"] = { k = "herb", s = 435 }, ["frost lotus"] = { k = "herb", s = 450 },
+	-- Treasure & chests
 	["battered chest"] = { k = "chest", s = 1 }, ["solid chest"] = { k = "chest", s = 1 },
 	["large battered chest"] = { k = "chest", s = 1 }, ["large solid chest"] = { k = "chest", s = 1 },
 	["large iron bound chest"] = { k = "chest", s = 1 }, ["large mithril bound chest"] = { k = "chest", s = 1 },
@@ -425,7 +427,6 @@ function G.LearnNode(name, kind, skill, itemID, fromGuild)
 	end
 	if changed and not fromGuild and IsSharing() then
 		WriteToUnifiedDB(low, cur)
-		if G.gossip then G.gossip:Queue(low) end
 	end
 	return changed
 end
@@ -456,6 +457,10 @@ local function InspectSoftInteract(name)
 		return { k = "corpse", s = 1, corpse = true }
 	end
 
+	if G.stale then
+		G.stale = false
+		G.RebuildIndex()
+	end
 	local low = name:lower()
 	local cached = seenThisSession[low]
 	if cached then return cached end
@@ -465,98 +470,53 @@ local function InspectSoftInteract(name)
 		learned = nil
 	end
 	local base = G.baseline[low]
-    	local kind = (base and base.k) or (learned and learned.k)
-    	local skill = (base and base.s) or (learned and learned.s)
-    	local itemID = (base and base.id) or (learned and learned.id) or G.index[low]
+	local kind = (base and base.k) or (learned and learned.k)
+	local skill = (base and base.s) or (learned and learned.s)
+	local itemID = (base and base.id) or (learned and learned.id) or G.index[low]
 	local isQuest = false
 
 	local lines = ReadSoftInteractLines()
-    	local quests = G.db and G.db.settings and G.db.settings.quests and ActiveQuestTitles() or nil
-    	for _, rawText in ipairs(lines) do
-    		local text = rawText:gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", "")
-    		local prof, req = text:match(SKILL_PAT)
-    		if prof then
-    			kind = ProfToKind(prof) or kind
-    			skill = tonumber(req) or skill
-    		else
-    			local pOnly = text:match("^Requires%s+(.+)$")
-    			if pOnly then
-    				kind = ProfToKind(pOnly) or kind
-    			else
-    				kind = ProfToKind(text) or kind
-    			end
-    		end
-    		if quests and (quests[text] or text:match("^%s*%-?%s*.+:%s*%d+/%d+%s*$")) then
-    			isQuest = true
-    		end
-    	end
-    
-    	if not kind then
-    		local probedKind, probedID = ProbeItemCache(name)
-    		if probedKind then
-    			kind, itemID = probedKind, itemID or probedID
-    		end
-    	end
-    
-    	if not kind then
-    		kind = ClassifyByKeywords(low)
-    	end
-    
-    	if kind then
-    		G.LearnNode(name, kind, skill or 1, itemID, false)
-    	end
-    
-    	local res = { k = kind or (isQuest and "quest" or nil), s = skill or 1, id = itemID, quest = isQuest }
-    	if res.k then
-    		seenThisSession[low] = res
-    	end
-    	return res
-end
-
----------------------------------------------------------------------------
--- Layer 4: Opt-In Guild Dictionary Gossip (DT.Comms:Gossip)
----------------------------------------------------------------------------
-
-local function InitGossip()
-	if not (DT.Comms and DT.Comms.Gossip) then return end
-	G.gossip = DT.Comms:Gossip("gather", {
-		on = IsSharing,
-		peers = function()
-			G.db.peers = G.db.peers or {}
-			return G.db.peers
-		end,
-		own = function()
-			if not IsSharing() then return {} end
-			local out = {}
-			for low, n in pairs(G.db.nodes) do
-				if not n.r then out[low] = n.t or 1 end
+	local quests = G.db and G.db.settings and G.db.settings.quests and ActiveQuestTitles() or nil
+	for _, rawText in ipairs(lines) do
+		local text = rawText:gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", "")
+		local prof, req = text:match(SKILL_PAT)
+		if prof then
+			kind = ProfToKind(prof) or kind
+			skill = tonumber(req) or skill
+		else
+			local pOnly = text:match("^Requires%s+(.+)$")
+			if pOnly then
+				kind = ProfToKind(pOnly) or kind
+			else
+				kind = ProfToKind(text) or kind
 			end
-			return out
-		end,
-		line = function(low)
-			if not IsSharing() then return nil end
-			local n = G.db.nodes[low]
-			return (n and not n.r) and ("%s;%s;%d;%d;%d"):format(Clean(n.n), n.k, n.s or 1, n.id or 0, n.t or 0) or nil
-		end,
-		take = function(line)
-			if not IsSharing() then return false end
-			local name, kind, skill, itemID, t = line:match("^([^;]+);(%a+);(%d+);(%d+);(%d+)$")
-			if not (name and LEARNABLE_KINDS[kind]) then return false end
-			skill, itemID, t = tonumber(skill) or 1, tonumber(itemID) or 0, tonumber(t) or DT.Now()
-			return G.LearnNode(Clean(name), kind, skill, itemID > 0 and itemID or nil, true)
-		end,
-	})
-end
+		end
+		if quests and (quests[text] or text:match("^%s*%-?%s*.+:%s*%d+/%d+%s*$")) then
+			isQuest = true
+		end
+	end
 
-DT:RegisterModule("gather_sync", {
-	title = "Gather node dictionary sync",
-	version = 1,
-	defaultOff = true,
-	hidden = true,
-	hello = function() return IsSharing() and G.gossip and G.gossip:Hello() or nil end,
-	onHello = function(_, sender, summary) if IsSharing() and G.gossip then G.gossip:OnHello(sender, summary) end end,
-	onMessage = function(_, kind, payload, sender) if IsSharing() and G.gossip then G.gossip:OnMessage(kind, payload, sender) end end,
-})
+	if not kind then
+		local probedKind, probedID = ProbeItemCache(name)
+		if probedKind then
+			kind, itemID = probedKind, itemID or probedID
+		end
+	end
+
+	if not kind then
+		kind = ClassifyByKeywords(low)
+	end
+
+	if kind then
+		G.LearnNode(name, kind, skill or 1, itemID, false)
+	end
+
+	local res = { k = kind or (isQuest and "quest" or nil), s = skill or 1, id = itemID, quest = isQuest }
+	if res.k then
+		seenThisSession[low] = res
+	end
+	return res
+end
 
 ---------------------------------------------------------------------------
 -- Profession Ranks, Difficulty Colors & Tauren Cultivation Check
@@ -723,40 +683,40 @@ local function CreateVisualRig(parent)
 	if rig.beamBase.SetRotation then rig.beamBase:SetRotation(HALF_PI) end
 
 	-- 2. Seamless Dual-Tone Arcane Rune Halo (dark contrast bed + seamless bands + compound glyphs + flame plumes)
-    	rig.ringShadow = rig:CreateTexture(nil, "BACKGROUND")
-    	rig.ringShadow:SetTexture(TEX_GLOW)
-    	rig.ringShadow:SetBlendMode("BLEND")
-    	SetSmoothFilter(rig.ringShadow, false)
-    
-    	rig.ringMist  = MakeAddTex(rig, "BACKGROUND", TEX_GLOW, false)
-    	rig.ringOuter = {}
-    	rig.ringInner = {}
-    	rig.ringLip   = {}
-    	rig.ringHair  = {}
-    	for i = 1, MAX_RING_SEGS do
-    		rig.ringOuter[i] = MakeAddTex(rig, "BACKGROUND", TEX_SPARK, false)
-    		rig.ringInner[i] = MakeAddTex(rig, "BORDER", TEX_SPARK, false)
-    		rig.ringLip[i]   = MakeAddTex(rig, "ARTWORK", TEX_SPARK, false)
-    		rig.ringHair[i]  = MakeAddTex(rig, "ARTWORK", TEX_SPARK, false)
-    	end
-    
-    	-- Compound 2-Stroke Arcane Runes inside the glowing band
-    	rig.ringRunes = {}
-    	for i = 1, MAX_RUNES do
-    		rig.ringRunes[i] = {
-    			a = MakeAddTex(rig, "OVERLAY", TEX_SPARK, false),
-    			b = MakeAddTex(rig, "OVERLAY", TEX_SPARK, false),
-    		}
-    	end
-    
-    	-- Ethereal Flame & Mist Plumes rising off the ring perimeter
-    	rig.ringWisps = {}
-    	for i = 1, MAX_WISPS do
-    		rig.ringWisps[i] = {
-    			mist  = MakeAddTex(rig, "BORDER", TEX_GLOW, false),
-    			flame = MakeAddTex(rig, "ARTWORK", TEX_SPARK, false),
-    		}
-    	end
+	rig.ringShadow = rig:CreateTexture(nil, "BACKGROUND")
+	rig.ringShadow:SetTexture(TEX_GLOW)
+	rig.ringShadow:SetBlendMode("BLEND")
+	SetSmoothFilter(rig.ringShadow, false)
+
+	rig.ringMist  = MakeAddTex(rig, "BACKGROUND", TEX_GLOW, false)
+	rig.ringOuter = {}
+	rig.ringInner = {}
+	rig.ringLip   = {}
+	rig.ringHair  = {}
+	for i = 1, MAX_RING_SEGS do
+		rig.ringOuter[i] = MakeAddTex(rig, "BACKGROUND", TEX_SPARK, false)
+		rig.ringInner[i] = MakeAddTex(rig, "BORDER", TEX_SPARK, false)
+		rig.ringLip[i]   = MakeAddTex(rig, "ARTWORK", TEX_SPARK, false)
+		rig.ringHair[i]  = MakeAddTex(rig, "ARTWORK", TEX_SPARK, false)
+	end
+
+	-- Compound 2-Stroke Arcane Runes inside the glowing band
+	rig.ringRunes = {}
+	for i = 1, MAX_RUNES do
+		rig.ringRunes[i] = {
+			a = MakeAddTex(rig, "OVERLAY", TEX_SPARK, false),
+			b = MakeAddTex(rig, "OVERLAY", TEX_SPARK, false),
+		}
+	end
+
+	-- Ethereal Flame & Mist Plumes rising off the ring perimeter
+	rig.ringWisps = {}
+	for i = 1, MAX_WISPS do
+		rig.ringWisps[i] = {
+			mist  = MakeAddTex(rig, "BORDER", TEX_GLOW, false),
+			flame = MakeAddTex(rig, "ARTWORK", TEX_SPARK, false),
+		}
+	end
 
 	-- 3. Pixel-Aligned Lock-On Reticle
 	rig.corners = {}
@@ -895,123 +855,123 @@ local function UpdateVisualRig(rig, now, info, nodeName, isPreview)
 	end
 
 	-- 2. Seamless Dual-Tone Arcane Rune Halo
-    	local showRing = s.fxRing and true or false
-    	local breathe = 1.0 + 0.025 * math.sin(t * 2.2)
-    	local aspect = 0.38
-    	local rxMain = 38 * sc * breathe
-    	local ryMain = rxMain * aspect
-    
-    	rig.ringShadow:SetShown(showRing)
-    	rig.ringMist:SetShown(showRing and q.dualBand)
-    	if showRing then
-    		-- Dark contrast bed so neon emerald & gold stay saturated over bright sand/stone
-    		rig.ringShadow:ClearAllPoints()
-    		rig.ringShadow:SetPoint("CENTER", rig, "CENTER", 0, haloY)
-    		rig.ringShadow:SetSize(rxMain * 2.15, ryMain * 2.25)
-    		rig.ringShadow:SetVertexColor(0.02, 0.04, 0.06, baseAlpha * 0.52)
-    
-    		if q.dualBand then
-    			rig.ringMist:ClearAllPoints()
-    			rig.ringMist:SetPoint("CENTER", rig, "CENTER", 0, haloY)
-    			rig.ringMist:SetSize(rxMain * 2.45, ryMain * 2.65)
-    			rig.ringMist:SetVertexColor(r1, g1, b1, baseAlpha * 0.24)
-    		end
-    
-    		-- Seamless outer shimmer/gold rim (3.8x overlap removes all segment beading)
-    		DrawFeatheredEllipse(rig.ringOuter, MAX_RING_SEGS, q.ringSegs, rig, 0, haloY,
-    			rxMain * 1.03, ryMain * 1.03, 9.0 * sc, r2, g2, b2, baseAlpha * 0.36, 3.8)
-    
-    		-- Rich primary/emerald rune band
-    		if q.dualBand then
-    			DrawFeatheredEllipse(rig.ringInner, MAX_RING_SEGS, q.ringSegs, rig, 0, haloY,
-    				rxMain * 0.92, ryMain * 0.92, 12.5 * sc, r1, g1, b1, baseAlpha * 0.44, 3.8)
-    		else
-    			for i = 1, MAX_RING_SEGS do rig.ringInner[i]:Hide() end
-    		end
-    
-    		-- Hot golden-white inner rim lip
-    		DrawFeatheredEllipse(rig.ringLip, MAX_RING_SEGS, q.ringSegs, rig, 0, haloY,
-    			rxMain * 0.81, ryMain * 0.81, 3.2 * sc,
-    			math.min(1, r2 + 0.45), math.min(1, g2 + 0.45), math.min(1, b2 + 0.45), baseAlpha * 0.46, 3.6)
-    
-    		-- Delicate inner filigree circle inside the dark center
-    		if q.innerHairline then
-    			DrawFeatheredEllipse(rig.ringHair, MAX_RING_SEGS, q.ringSegs, rig, 0, haloY,
-    				rxMain * 0.62, ryMain * 0.62, 1.8 * sc,
-    				math.min(1, r2 + 0.35), math.min(1, g2 + 0.35), math.min(1, b2 + 0.35), baseAlpha * 0.42, 3.5)
-    		else
-    			for i = 1, MAX_RING_SEGS do rig.ringHair[i]:Hide() end
-    		end
-    	else
-    		for i = 1, MAX_RING_SEGS do
-    			rig.ringOuter[i]:Hide()
-    			rig.ringInner[i]:Hide()
-    			rig.ringLip[i]:Hide()
-    			rig.ringHair[i]:Hide()
-    		end
-    	end
-    
-    	-- Compound 2-Stroke Arcane Runes inside the glowing band
-    	local rxRune, ryRune = rxMain * 0.91, ryMain * 0.91
-    	local RUNE_ANGLES = { 0.48, -0.52, 0.72, -0.68, 1.05, 0.35 }
-    	for i = 1, MAX_RUNES do
-    		local glyph = rig.ringRunes[i]
-    		if showRing and i <= q.runeCount then
-    			local ang = -t * 0.50 + (i - 1) * (TWO_PI / q.runeCount)
-    			local cosA, sinA = math.cos(ang), math.sin(ang)
-    			local gx = cosA * rxRune
-    			local gy = haloY + sinA * ryRune
-    			local front = 0.58 + 0.42 * (-sinA)
-    			local tangent = atan2(ryRune * cosA, -rxRune * sinA) - HALF_PI
-    			local branchOff = RUNE_ANGLES[(i % #RUNE_ANGLES) + 1]
-    			local colA = baseAlpha * front * 0.82
-    
-    			glyph.a:Show()
+	local showRing = s.fxRing and true or false
+	local breathe = 1.0 + 0.025 * math.sin(t * 2.2)
+	local aspect = 0.38
+	local rxMain = 38 * sc * breathe
+	local ryMain = rxMain * aspect
+
+	rig.ringShadow:SetShown(showRing)
+	rig.ringMist:SetShown(showRing and q.dualBand)
+	if showRing then
+		-- Dark contrast bed so neon emerald & gold stay saturated over bright sand/stone
+		rig.ringShadow:ClearAllPoints()
+		rig.ringShadow:SetPoint("CENTER", rig, "CENTER", 0, haloY)
+		rig.ringShadow:SetSize(rxMain * 2.15, ryMain * 2.25)
+		rig.ringShadow:SetVertexColor(0.02, 0.04, 0.06, baseAlpha * 0.52)
+
+		if q.dualBand then
+			rig.ringMist:ClearAllPoints()
+			rig.ringMist:SetPoint("CENTER", rig, "CENTER", 0, haloY)
+			rig.ringMist:SetSize(rxMain * 2.45, ryMain * 2.65)
+			rig.ringMist:SetVertexColor(r1, g1, b1, baseAlpha * 0.24)
+		end
+
+		-- Seamless outer shimmer/gold rim (3.8x overlap removes all segment beading)
+		DrawFeatheredEllipse(rig.ringOuter, MAX_RING_SEGS, q.ringSegs, rig, 0, haloY,
+			rxMain * 1.03, ryMain * 1.03, 9.0 * sc, r2, g2, b2, baseAlpha * 0.36, 3.8)
+
+		-- Rich primary/emerald rune band
+		if q.dualBand then
+			DrawFeatheredEllipse(rig.ringInner, MAX_RING_SEGS, q.ringSegs, rig, 0, haloY,
+				rxMain * 0.92, ryMain * 0.92, 12.5 * sc, r1, g1, b1, baseAlpha * 0.44, 3.8)
+		else
+			for i = 1, MAX_RING_SEGS do rig.ringInner[i]:Hide() end
+		end
+
+		-- Hot golden-white inner rim lip
+		DrawFeatheredEllipse(rig.ringLip, MAX_RING_SEGS, q.ringSegs, rig, 0, haloY,
+			rxMain * 0.81, ryMain * 0.81, 3.2 * sc,
+			math.min(1, r2 + 0.45), math.min(1, g2 + 0.45), math.min(1, b2 + 0.45), baseAlpha * 0.46, 3.6)
+
+		-- Delicate inner filigree circle inside the dark center
+		if q.innerHairline then
+			DrawFeatheredEllipse(rig.ringHair, MAX_RING_SEGS, q.ringSegs, rig, 0, haloY,
+				rxMain * 0.62, ryMain * 0.62, 1.8 * sc,
+				math.min(1, r2 + 0.35), math.min(1, g2 + 0.35), math.min(1, b2 + 0.35), baseAlpha * 0.42, 3.5)
+		else
+			for i = 1, MAX_RING_SEGS do rig.ringHair[i]:Hide() end
+		end
+	else
+		for i = 1, MAX_RING_SEGS do
+			rig.ringOuter[i]:Hide()
+			rig.ringInner[i]:Hide()
+			rig.ringLip[i]:Hide()
+			rig.ringHair[i]:Hide()
+		end
+	end
+
+	-- Compound 2-Stroke Arcane Runes inside the glowing band
+	local rxRune, ryRune = rxMain * 0.91, ryMain * 0.91
+	local RUNE_ANGLES = { 0.48, -0.52, 0.72, -0.68, 1.05, 0.35 }
+	for i = 1, MAX_RUNES do
+		local glyph = rig.ringRunes[i]
+		if showRing and i <= q.runeCount then
+			local ang = -t * 0.50 + (i - 1) * (TWO_PI / q.runeCount)
+			local cosA, sinA = math.cos(ang), math.sin(ang)
+			local gx = cosA * rxRune
+			local gy = haloY + sinA * ryRune
+			local front = 0.58 + 0.42 * (-sinA)
+			local tangent = atan2(ryRune * cosA, -rxRune * sinA) - HALF_PI
+			local branchOff = RUNE_ANGLES[(i % #RUNE_ANGLES) + 1]
+			local colA = baseAlpha * front * 0.82
+
+			glyph.a:Show()
                 glyph.a:ClearAllPoints()
                 glyph.a:SetPoint("CENTER", rig, "CENTER", gx, gy)
                 glyph.a:SetSize(2.4 * sc * front, 5.4 * sc * front)
                 if glyph.a.SetRotation then glyph.a:SetRotation(tangent) end
                 glyph.a:SetVertexColor(math.min(1, r2 + 0.60), math.min(1, g2 + 0.60), math.min(1, b2 + 0.60), colA)
-    
+
                 glyph.b:Show()
                 glyph.b:ClearAllPoints()
                 glyph.b:SetPoint("CENTER", rig, "CENTER", gx + math.cos(tangent) * 1.1 * sc, gy + math.sin(tangent) * 1.1 * sc)
                 glyph.b:SetSize(2.1 * sc * front, 4.0 * sc * front)
                 if glyph.b.SetRotation then glyph.b:SetRotation(tangent + branchOff) end
-    			glyph.b:SetVertexColor(math.min(1, r2 + 0.50), math.min(1, g2 + 0.50), math.min(1, b2 + 0.50), colA * 0.90)
-    		else
-    			glyph.a:Hide()
-    			glyph.b:Hide()
-    		end
-    	end
-    
-    	-- Ethereal Flame & Mist Plumes rising off the Halo Perimeter
-    	for i = 1, MAX_WISPS do
-    		local wisp = rig.ringWisps[i]
-    		if showRing and i <= q.wispCount then
-    			local phase = (t * 0.75 + (i - 1) * 0.317) % 1
-    			local ang = t * 0.30 + (i - 1) * (TWO_PI / q.wispCount)
-    			local sway = math.sin(t * 2.6 + i * 1.9) * 2.5 * sc
-    			local wx = math.cos(ang) * rxMain * 0.94 + sway
-    			local wy = haloY + math.sin(ang) * ryMain * 0.94 + phase * 3.5 * sc
-    			local wAlpha = math.sin(phase * math.pi) * baseAlpha
-    
-    			wisp.mist:Show()
-    			wisp.mist:ClearAllPoints()
-    			wisp.mist:SetPoint("BOTTOM", rig, "CENTER", wx, wy - 2 * sc)
-    			wisp.mist:SetSize(16 * sc, (14 + phase * 14) * sc)
-    			wisp.mist:SetVertexColor(r1, g1, b1, wAlpha * 0.34)
-    
-    			wisp.flame:Show()
-    			wisp.flame:ClearAllPoints()
-    			wisp.flame:SetPoint("BOTTOM", rig, "CENTER", wx, wy)
-    			wisp.flame:SetSize(9 * sc, (12 + phase * 14) * sc)
-    			wisp.flame:SetVertexColor(math.min(1, r1 + 0.25), math.min(1, g1 + 0.25), math.min(1, b1 + 0.25), wAlpha * 0.58)
-    		else
-    			wisp.mist:Hide()
-    			wisp.flame:Hide()
-    		end
-    	end
+			glyph.b:SetVertexColor(math.min(1, r2 + 0.50), math.min(1, g2 + 0.50), math.min(1, b2 + 0.50), colA * 0.90)
+		else
+			glyph.a:Hide()
+			glyph.b:Hide()
+		end
+	end
+
+	-- Ethereal Flame & Mist Plumes rising off the Halo Perimeter
+	for i = 1, MAX_WISPS do
+		local wisp = rig.ringWisps[i]
+		if showRing and i <= q.wispCount then
+			local phase = (t * 0.75 + (i - 1) * 0.317) % 1
+			local ang = t * 0.30 + (i - 1) * (TWO_PI / q.wispCount)
+			local sway = math.sin(t * 2.6 + i * 1.9) * 2.5 * sc
+			local wx = math.cos(ang) * rxMain * 0.94 + sway
+			local wy = haloY + math.sin(ang) * ryMain * 0.94 + phase * 3.5 * sc
+			local wAlpha = math.sin(phase * math.pi) * baseAlpha
+
+			wisp.mist:Show()
+			wisp.mist:ClearAllPoints()
+			wisp.mist:SetPoint("BOTTOM", rig, "CENTER", wx, wy - 2 * sc)
+			wisp.mist:SetSize(16 * sc, (14 + phase * 14) * sc)
+			wisp.mist:SetVertexColor(r1, g1, b1, wAlpha * 0.34)
+
+			wisp.flame:Show()
+			wisp.flame:ClearAllPoints()
+			wisp.flame:SetPoint("BOTTOM", rig, "CENTER", wx, wy)
+			wisp.flame:SetSize(9 * sc, (12 + phase * 14) * sc)
+			wisp.flame:SetVertexColor(math.min(1, r1 + 0.25), math.min(1, g1 + 0.25), math.min(1, b1 + 0.25), wAlpha * 0.58)
+		else
+			wisp.mist:Hide()
+			wisp.flame:Hide()
+		end
+	end
 
 	-- 3. Pixel-Exact Lock-On Reticle
 	local showRet = s.fxReticle and true or false
@@ -1154,27 +1114,27 @@ local function UpdateVisualRig(rig, now, info, nodeName, isPreview)
 	end
 
 	-- 6. Floating Label & Market Price / Cultivation Tag (independent toggles)
-    	local hasName = nodeName and nodeName ~= ""
-    	local showLabel = (s.fxLabel and hasName) and true or false
-    	rig.label:SetShown(showLabel)
-    	if showLabel then
-    		rig.label:ClearAllPoints()
-    		rig.label:SetPoint("BOTTOM", rig, "CENTER", 0, 24 * sc)
-    		rig.label:SetText(nodeName)
-    		rig.label:SetTextColor(r1, g1, b1, baseAlpha)
-    	end
-    
-    	local subText = hasName and FormatSubtitle(info, nodeName) or nil
-    	rig.sub:SetShown(subText ~= nil)
-    	if subText then
-    		rig.sub:ClearAllPoints()
-    		if showLabel then
-    			rig.sub:SetPoint("TOP", rig.label, "BOTTOM", 0, -1)
-    		else
-    			rig.sub:SetPoint("BOTTOM", rig, "CENTER", 0, 24 * sc)
-    		end
-    		rig.sub:SetText(subText)
-    	end
+	local hasName = nodeName and nodeName ~= ""
+	local showLabel = (s.fxLabel and hasName) and true or false
+	rig.label:SetShown(showLabel)
+	if showLabel then
+		rig.label:ClearAllPoints()
+		rig.label:SetPoint("BOTTOM", rig, "CENTER", 0, 24 * sc)
+		rig.label:SetText(nodeName)
+		rig.label:SetTextColor(r1, g1, b1, baseAlpha)
+	end
+
+	local subText = hasName and FormatSubtitle(info, nodeName) or nil
+	rig.sub:SetShown(subText ~= nil)
+	if subText then
+		rig.sub:ClearAllPoints()
+		if showLabel then
+			rig.sub:SetPoint("TOP", rig.label, "BOTTOM", 0, -1)
+		else
+			rig.sub:SetPoint("BOTTOM", rig, "CENTER", 0, 24 * sc)
+		end
+		rig.sub:SetText(subText)
+	end
 end
 
 ---------------------------------------------------------------------------
@@ -1283,10 +1243,10 @@ local function EnsureWorldOverlay()
 	worldFrame:Hide()
 	worldRig = CreateVisualRig(worldFrame)
 	worldFrame:SetScript("OnUpdate", function()
-    		if not (activePlate and activePlate:IsShown() and PassesFilters(activeInfo)) then
-    			SyncWorldTarget()
-    			return
-    		end
+		if not (activePlate and activePlate:IsShown() and PassesFilters(activeInfo)) then
+			SyncWorldTarget()
+			return
+		end
 		local now = GetTime()
 		local interval = ActiveQuality().interval
 		if interval > 0 and (now - lastAnimUpdate) < interval then return end
@@ -1394,9 +1354,9 @@ DT:On("CVAR_UPDATE", function(cvarName)
 	end
 end)
 
-DT:On("DT_MARKET_UPDATE", function()
-	if G.db then G.RebuildIndex() end
-end)
+-- (new prices: the index is made anew when a node is next looked at, not at every update: a scan sends many,
+-- and each rebuild walks every item of the market)
+DT:On("DT_MARKET_UPDATE", function() G.stale = true end)
 
 DT:On("PLAYER_LOGOUT", function()
 	if G.db and G.db.savedCVars and next(G.db.savedCVars) then
@@ -1468,10 +1428,10 @@ local function Build(panel)
 	local s = G.db.settings
 	local refreshers = {}
 	local function RefreshControls()
-    		for _, fn in ipairs(refreshers) do fn() end
-    		if s.enabled then SyncWorldTarget() end
-    		if DT.UI and DT.UI.Refresh then DT.UI:Refresh() end
-    	end
+		for _, fn in ipairs(refreshers) do fn() end
+		if s.enabled then SyncWorldTarget() end
+		if DT.UI and DT.UI.Refresh then DT.UI:Refresh() end
+	end
 
 	local function Label(parent, font, x, y, text)
 		local fs = parent:CreateFontString(nil, "OVERLAY", font)
@@ -1612,12 +1572,12 @@ local function Build(panel)
 	Check(panel, 356, y, "Lore & Shrines", "interact")
 
 	y = y - 20
-    	Check(panel, 6, y, "All Objects", "allObjects")
-    	Check(panel, 108, y, "Smart Profession Filter", "smartProf", function(on)
-    		s.smartProf = on
-    		if s.enabled then SyncWorldTarget() end
-    	end)
-    	Check(panel, 268, y, "Tauren Cultivation Prompt", "cultivation")
+	Check(panel, 6, y, "All Objects", "allObjects")
+	Check(panel, 108, y, "Smart Profession Filter", "smartProf", function(on)
+		s.smartProf = on
+		if s.enabled then SyncWorldTarget() end
+	end)
+	Check(panel, 268, y, "Tauren Cultivation Prompt", "cultivation")
 
 	y = y - 26
 	Label(panel, "GameFontNormal", 6, y, "Visual Layers & Quality")
@@ -1815,7 +1775,6 @@ DT:RegisterModule("gather", {
 	profile = { "settings" },
 	title = "Gather",
 	version = 6,
-	defaultOff = true,
 	defaults = DEFAULTS,
 	settings = {
 		{ key = "enabled", label = "Enable 3D gathering highlights (15-yard soft-target cone)" },
@@ -1830,16 +1789,12 @@ DT:RegisterModule("gather", {
 		return ("%s — %d indexed, %d mine (solo mode; not sharing)"):format(state, b, m)
 	end,
 	onEnable = function(mod)
-		if DT.modules.gather_sync then
-			DT.modules.gather_sync.enabled = true
-		end
 		mod.db.nodes = mod.db.nodes or {}
-		mod.db.peers = mod.db.peers or {}
+		mod.db.peers = nil -- (of an exchange that was never switched on)
 		G.db = mod.db
 		UpdateResolutionMetrics()
 		G.SyncUnifiedDB()
 		G.RebuildIndex()
-		InitGossip()
 		DT:On("DT_SETTINGS", function(name, key)
 			if name == "gather" then
 				if key == "enabled" then

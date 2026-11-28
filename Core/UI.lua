@@ -544,7 +544,7 @@ function UI:ShowSection(id)
 			b:SetWidth(SECTION_W - 4)
 			b.sel = DT:SkinSelection(b:CreateTexture(nil, "BACKGROUND"), 0.18)
 			b.sel:SetAllPoints()
-			local glow = DT:SkinHighlight(b:CreateTexture(nil, "HIGHLIGHT"), 0.10)
+			local glow = DT:SkinHighlight(b:CreateTexture(nil, "HIGHLIGHT"), 0.10, 0.08)
 			glow:SetAllPoints()
 			b.label = b:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
 			b.label:SetPoint("LEFT", 6, 0)
@@ -613,7 +613,7 @@ end)
 -- Themes
 UI:Section("themes", "Themes", 20, function(panel)
 	local THEME_NOTES = {
-		original  = "Default dark DawnTools frame with gold borders and standard WoW buttons.",
+		original  = "The look DawnTools always had: dark, with the game's own buttons.",
 		modern    = "Slate dark panels with crisp 1px borders and cool cyan accents.",
 		ellesmere = "Ultra-dark minimal panels matched to EllesmereUI or your class color.",
 		classic   = "Classic WoW stone and marble window chrome with gold tooltip borders.",
@@ -621,7 +621,7 @@ UI:Section("themes", "Themes", 20, function(panel)
 	local y = -2
 	Text(panel, "GameFontNormal", 4, y, "Themes")
 	y = y - 20
-	Text(panel, "GameFontDisableSmall", 4, y, "Switches live across every tab and sub-tab (or /dt theme original | modern | ellesmere | classic).")
+	Text(panel, "GameFontDisableSmall", 4, y, "Switches at once, on every tab.")
 	y = y - 28
 	for _, id in ipairs(DT.THEME_ORDER) do
 		local def = DT.THEMES[id]
@@ -662,20 +662,15 @@ UI:Section("tabs", "Tabs & Modules", 30, function(panel)
 	Text(panel, "GameFontDisableSmall", 396, y - 2, "Off = not loaded at all. After /reload.")
 	y = y - 22
 	for _, name in ipairs(DT.order) do
-    		local mod = DT.modules[name]
-    		if not mod.hidden then
-    			Toggle(panel, 330, y, mod.title or name,
-    				function()
-    					if mod.defaultOff then return DT.db.modules[name] == true end
-    					return DT.db.modules[name] ~= false
-    				end,
-    				function(on)
-    					DT.db.modules[name] = on
-    					DT:Print("%s %s after /reload.", mod.title or name, on and "is back" or "is off")
-    				end)
-    			y = y - 22
-    		end
-    	end
+		local mod = DT.modules[name]
+		Toggle(panel, 330, y, mod.title or name,
+			function() return DT.db.modules[name] ~= false end,
+			function(on)
+				DT.db.modules[name] = on
+				DT:Print("%s %s after /reload.", mod.title or name, on and "is back" or "is off")
+			end)
+		y = y - 22
+	end
 end)
 
 -- Data Sync: what has gone to the guild and come from it, counted (Comms:Totals); Data Storage: what is held
@@ -1110,7 +1105,7 @@ local DROP_H = 18
 function DT:Dropdown(parent, width, o)
 	local b = DT:SkinFrame(CreateFrame("Button", nil, parent, "BackdropTemplate"), "panel")
 	b:SetSize(width, 18)
-	local btnHover = DT:SkinHighlight(b:CreateTexture(nil, "HIGHLIGHT"), 0.12)
+	local btnHover = DT:SkinHighlight(b:CreateTexture(nil, "HIGHLIGHT"), 0.12, 0)
 	btnHover:SetAllPoints()
 	b.label = b:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
 	b.label:SetPoint("LEFT", 6, 0)
@@ -1188,7 +1183,7 @@ function DT:Dropdown(parent, width, o)
 		row:SetHeight(DROP_H)
 		row:SetPoint("TOPLEFT", 2, -top - (i - 1) * DROP_H)
 		row:SetPoint("RIGHT", -2, 0)
-		local highlight = DT:SkinHighlight(row:CreateTexture(nil, "HIGHLIGHT"), 0.14)
+		local highlight = DT:SkinHighlight(row:CreateTexture(nil, "HIGHLIGHT"), 0.14, 0.12)
 		highlight:SetAllPoints()
 		row.label = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
 		row.label:SetPoint("LEFT", 6, 0)
