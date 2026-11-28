@@ -27,6 +27,7 @@ One window (`/dt`, or the minimap button) with a tab per tool. Most of it works 
 | **Tools → Enemies** | A list on screen of enemy players in sight: level, class, distance, and who has you targeted. | No |
 | **Tools → Chat History** | Up and Down in the chat line bring back what you sent, as in a shell; remembered across sessions. | No |
 | **Tools → Carrot** | Carrot on a Stick on when you mount, your trinket back when you dismount. | No |
+| **Tools → Gather** | 3D soft-target highlights for nearby herbs, veins, chests, barrels, fishing pools and quest objects (~15 yards); off by default. | Discovered nodes, opt-in |
 | **Settings → Built-ins** | The game's own switches that are hard to find, in one place (auto loot, cooldown numbers, action bars, error speech, raid frames, combat text…). | No |
 | **Settings → Data Sync** | How complete each kind of data is, what went to and came from the guild, and which optional addons are installed. | No |
 | **Settings** | Per-module switches, tab order, profiles with export / import. | No |

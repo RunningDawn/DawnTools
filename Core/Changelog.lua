@@ -6,6 +6,11 @@
 local _, DT = ...
 
 DT.CHANGELOG = {
+	{ "0.58.0", "2026-11-27", {
+		"Themes (Settings > Themes): Original (the look as it was, and still the one you get), Modern, EllesmereUI and Classic WoW. Switches at once.",
+		"Tools > Gather: a highlight on the herb, vein, chest, barrel, fishing pool or quest object you are about to interact with, with its name, the skill it asks for and its auction price. Off until you switch it on. By Mushroompunch.",
+		"Tools: the tool buttons wrap to a second row when the window is narrow.",
+	} },
 	{ "0.57.2", "2026-11-27", {
 		"Chat Saver: General, Trade and the other numbered channels are no longer unticked when a layout is put back at login. If yours were unticked, tick them again and save once more.",
 		"Chat Saver: Save with no name typed writes over the layout picked.",

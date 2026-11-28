@@ -431,19 +431,21 @@ local LibDeflate = {
 	end,
 }
 -- ("../DawnTools_Seed/": the data files, kept out of the addon: see Core/DBSeed.lua)
-local FILES = { "Core/Logic.lua", "Core/BisLogic.lua", "Core/Core.lua", "Core/Comms.lua", "Core/UI.lua", "Core/Builtins.lua", "Core/Profiles.lua", "Core/DBLogic.lua", "Core/DB.lua", "Core/DBImport.lua", "Core/DBSeed.lua", "Market/Capture.lua", "Market/Sync.lua", "Market/UI.lua", "../DawnTools_Seed/CraftSkill.lua", "../DawnTools_Seed/Dungeons.lua", "Data/BisProfiles.lua", "Data/BisExtras.lua", "Data/BisLists.lua", "Modules/Inventory.lua", "Modules/Fish.lua", "Modules/Food.lua", "Modules/Craft.lua", "Modules/Npc.lua", "Modules/Quest.lua", "Modules/Item.lua", "Modules/Zone.lua", "Modules/Dungeon.lua", "Modules/Favs.lua", "Modules/Finds.lua", "Modules/Combat.lua", "Modules/Bis.lua", "Tools/Tools.lua", "Tools/Range.lua", "Tools/Mp5.lua", "Tools/Fps.lua", "Tools/Mitigation.lua", "Tools/Tracker.lua", "Tools/Enemies.lua", "Tools/Carrot.lua", "Tools/ChatHistory.lua", "Tools/ChatSaver.lua", "Core/DBSync.lua", "Core/Changelog.lua", "Core/Home.lua" }
+local FILES = { "Core/Logic.lua", "Core/BisLogic.lua", "Core/Core.lua", "Core/Theme.lua", "Core/Comms.lua", "Core/UI.lua", "Core/Builtins.lua", "Core/Profiles.lua", "Core/DBLogic.lua", "Core/DB.lua", "Core/DBImport.lua", "Core/DBSeed.lua", "Market/Capture.lua", "Market/Sync.lua", "Market/UI.lua", "../DawnTools_Seed/CraftSkill.lua", "../DawnTools_Seed/Dungeons.lua", "Data/BisProfiles.lua", "Data/BisExtras.lua", "Data/BisLists.lua", "Modules/Inventory.lua", "Modules/Fish.lua", "Modules/Food.lua", "Modules/Craft.lua", "Modules/Npc.lua", "Modules/Quest.lua", "Modules/Item.lua", "Modules/Zone.lua", "Modules/Dungeon.lua", "Modules/Favs.lua", "Modules/Finds.lua", "Modules/Combat.lua", "Modules/Bis.lua", "Tools/Tools.lua", "Tools/Range.lua", "Tools/Mp5.lua", "Tools/Fps.lua", "Tools/Mitigation.lua", "Tools/Tracker.lua", "Tools/Enemies.lua", "Tools/Carrot.lua", "Tools/ChatHistory.lua", "Tools/ChatSaver.lua", "Tools/Gather.lua", "Core/DBSync.lua", "Core/Changelog.lua", "Core/Home.lua" }
 
 local function after(delay, fn, owner) timers[#timers + 1] = { at = now + delay, fn = fn, owner = owner } end
 local function Now() return BASE + math.floor(now) end
 
+-- (a long wait goes in coarser ticks: nothing in it is looked at on the way, and it is most of the run's time)
 local function step(seconds)
-	for _ = 1, math.floor(seconds / 0.05 + 0.5) do
-		now = now + 0.05
+	local tick = seconds >= 100 and (tonumber(os.getenv("TICK")) or 0.25) or 0.05
+	for _ = 1, math.floor(seconds / tick + 0.5) do
+		now = now + tick
 		local due = {}
 		for i = #timers, 1, -1 do
 			if timers[i].at <= now then due[#due + 1] = table.remove(timers, i) end
 		end
-		table.sort(due, function(a, b) return a.at < b.at end)
+		if due[2] then table.sort(due, function(a, b) return a.at < b.at end) end
 		for _, t in ipairs(due) do
 			local gone = t.owner and t.owner.gone -- a member who logged out: their timers died with their client
 			if not gone then t.fn() end
@@ -454,7 +456,10 @@ local function step(seconds)
 		end
 		for _, c in ipairs(clients) do
 			for _, w in ipairs(c.updaters) do
-				if w.shown and w.scripts.OnUpdate then w.scripts.OnUpdate(w, 0.05) end
+				-- (as in the game, a frame right inside a hidden one is not updated: an animation on a tool's panel
+				-- stops when another tool is shown. Further up is not looked at: the checks work on tabs not open)
+				local p = w.parent
+				if w.shown and not (p and p.kind and not p.shown) and w.scripts.OnUpdate then w.scripts.OnUpdate(w, tick) end
 			end
 		end
 	end
@@ -481,21 +486,21 @@ local function Methods(base, names)
 	for name in names:gmatch("%S+") do set[name] = true end
 	return set
 end
-local REGION = Methods(nil, "SetPoint ClearAllPoints SetAllPoints GetPoint GetLeft GetTop GetRight GetCenter SetSize SetWidth SetHeight GetWidth GetHeight Show Hide IsShown SetShown GetParent")
+local REGION = Methods(nil, "SetPoint ClearAllPoints SetAllPoints GetPoint GetLeft GetTop GetRight GetCenter SetSize SetWidth SetHeight GetWidth GetHeight Show Hide IsShown SetShown GetParent SetAlpha")
 local FRAME = Methods(REGION, [[SetScript GetScript HookScript HasScript RegisterEvent UnregisterEvent UnregisterAllEvents
-	CreateFontString CreateTexture SetAttribute GetAttribute SetBackdrop SetBackdropColor SetBackdropBorderColor SetFrameStrata SetFrameLevel GetEffectiveScale SetClampedToScreen
+	CreateFontString CreateTexture SetAttribute GetAttribute SetBackdrop SetBackdropColor SetBackdropBorderColor SetFrameStrata SetFrameLevel GetFrameLevel GetEffectiveScale SetClampedToScreen
 	SetMovable EnableMouse EnableMouseWheel RegisterForDrag StartMoving StopMovingOrSizing SetResizable SetResizeBounds
 	StartSizing]])
 local BUTTON = Methods(FRAME, [[SetText GetText RegisterForClicks SetEnabled Enable Disable LockHighlight UnlockHighlight SetNormalTexture
-	SetHighlightTexture SetPushedTexture]])
+	SetHighlightTexture SetPushedTexture GetNormalTexture GetPushedTexture GetDisabledTexture GetHighlightTexture]])
 local METHODS = {
 	Frame = FRAME, Button = BUTTON,
-	CheckButton = Methods(BUTTON, "SetChecked GetChecked"),
+	CheckButton = Methods(BUTTON, "SetChecked GetChecked GetCheckedTexture GetDisabledCheckedTexture"),
 	EditBox = Methods(FRAME, "SetText GetText SetAutoFocus SetNumeric SetFocus ClearFocus HasFocus SetMultiLine SetFontObject"),
 	ScrollFrame = Methods(FRAME, "SetScrollChild"),
 	FontString = Methods(REGION, "SetText GetText SetJustifyH SetWordWrap SetTextColor SetSpacing SetFont SetShadowColor SetShadowOffset GetStringWidth"),
-	Texture = Methods(REGION, "SetColorTexture SetTexture SetTexCoord SetAtlas"),
-	GameTooltip = Methods(FRAME, "SetOwner AddLine AddDoubleLine GetItem SetHyperlink"),
+	Texture = Methods(REGION, "SetColorTexture SetTexture SetTexCoord SetAtlas SetSnapToPixelGrid SetTexelSnappingBias SetBlendMode SetRotation SetVertexColor"),
+	GameTooltip = Methods(FRAME, "SetOwner AddLine AddDoubleLine GetItem SetHyperlink ClearLines SetUnit NumLines"),
 	Slider = Methods(FRAME, "SetOrientation SetMinMaxValues SetValue GetValue SetValueStep SetObeyStepOnDrag SetThumbTexture"),
 }
 
@@ -513,6 +518,7 @@ local function NewClient(name, opts)
 	c.env = env
 
 	local Widget
+	local function Nothing() end
 	local BEHAVIOUR = {
 		SetScript = function(self, script, fn)
 			if script == "OnUpdate" and not self.updater then
@@ -531,6 +537,11 @@ local function NewClient(name, opts)
 			self.scripts[script] = old and function(...) old(...) fn(...) end or fn
 		end,
 		-- a panel is as big as the window's body, unless a test says otherwise
+		GetFrameLevel = function() return 1 end,
+		NumLines = function() return 0 end,
+		SetBackdrop = function(self, b) self.backdrop = b end,
+		SetBackdropColor = function(self, ...) self.backColor = { ... } end,
+		SetBackdropBorderColor = function(self, ...) self.borderColor = { ... } end,
 		GetWidth = function(self) return self.w or 764 end,
 		GetHeight = function(self) return self.h or 426 end,
 		HasScript = function() return false end,
@@ -579,7 +590,7 @@ local function NewClient(name, opts)
 		c.widgets[#c.widgets + 1] = w
 		return setmetatable(w, { __index = function(_, k)
 			if not methods[k] then return nil end
-			return BEHAVIOUR[k] or function() end
+			return BEHAVIOUR[k] or Nothing
 		end })
 	end
 
@@ -1658,9 +1669,23 @@ local function UseEverything(label)
 			end
 		end
 	end
+	A.DT.Tools.Show("chatsaver") -- (not left on Gather: its preview is drawn anew at every step, and slows all that follows)
 end
-eq(A.DT.UI:SelfTest(), 0, "the in-game self test passes")
+do -- Themes: the original one is the look of before, and the one in use until another is picked
+	local DT, f = A.DT, A.DT.UI.frame
+	eq(DT:Theme().id, "original", "the original theme, unless another is picked")
+	eq(table.concat(f.backColor, " "), "0.06 0.06 0.07 0.95", "the window as it always was"); eq(f.borderColor[1] + f.borderColor[2] + f.borderColor[3], 0, "and its black border"); eq(f.borderColor[4], 1, "solid")
+	eq(f.backdrop.edgeSize, 1, "a line of one pixel")
+	eq(DT:SetTheme("nonsense"), false, "a theme that is none is not taken")
+	eq(DT:SetTheme("modern"), true, "another picked"); eq(DT.db.settings.theme, "modern", "and kept"); eq(f.backColor[1], 0.08, "the window follows at once")
+	for _, id in ipairs(DT.THEME_ORDER) do eq(DT:SetTheme(id), true, "theme " .. id .. " paints without error") end
+	DT:SetTheme("original")
+	eq(table.concat(f.backColor, " "), "0.06 0.06 0.07 0.95", "back to the original: the window as before")
+end
+do local selfFails = A.DT.UI:SelfTest()
+eq(selfFails, 0, "the in-game self test passes: " .. table.concat(A.printed, " // ", math.max(1, #A.printed - 4))) end
 check(A.printed[#A.printed]:find("checks passed", 1, true), "and says so")
+A.DT.Tools.Show("chatsaver") -- (the self test ends on the last tool, Gather: its preview is drawn anew at every step)
 UseEverything("with prices")
 V.qualities = nil
 V.selected = next(A.items())
@@ -5868,7 +5893,7 @@ do
 	Pia.slash("settings")
 	local titles = {}
 	for i, b in ipairs(UI.sectionButtons) do titles[i] = (b.label.text:gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", "")) end
-	eq(table.concat(titles, " / "), "General / Profiles / Tabs & Modules / Built-ins / Tooltips / Market / BiS / Data Sync / Data Storage / Data Debug", "the Settings tab lists its sections: the fixed ones, then one per module with switches, Data Sync, Data Storage and Data Debug at the bottom")
+	eq(table.concat(titles, " / "), "General / Profiles / Themes / Tabs & Modules / Built-ins / Tooltips / Market / BiS / Gather / Data Sync / Data Storage / Data Debug", "the Settings tab lists its sections: the fixed ones, then one per module with switches, Data Sync, Data Storage and Data Debug at the bottom")
 	do -- Data Debug: a button puts lines to copy in the box
 		click(UI.sectionButtons[#UI.sectionButtons])
 		local mem
