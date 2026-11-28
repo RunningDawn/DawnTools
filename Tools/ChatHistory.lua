@@ -134,6 +134,7 @@ local function Build(panel)
 end
 
 DT:RegisterModule("chathistory", {
+	kind = "tool", -- (Settings > Tabs & Modules lists it under Tools)
 	title = "Chat History",
 	version = 1,
 	defaults = { on = false, keep = true },

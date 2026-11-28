@@ -6,6 +6,9 @@
 local _, DT = ...
 
 DT.CHANGELOG = {
+	{ "0.58.1", "2026-11-28", {
+		"Settings > Tabs & Modules, tidied: the pages under a tab are listed beneath its name and no longer run into the modules. The modules are sorted into Tabs and pages, Tools and Behind the scenes, in columns that end inside the window. Hover Game database to read what it is.",
+	} },
 	{ "0.58.0", "2026-11-27", {
 		"Themes (Settings > Themes): Original (the look as it was, and still the one you get), Modern, EllesmereUI and Classic WoW. Switches at once.",
 		"Tools > Gather: a highlight on the herb, vein, chest, barrel, fishing pool or quest object you are about to interact with, with its name, the skill it asks for and its auction price. Off until you switch it on. By Mushroompunch.",

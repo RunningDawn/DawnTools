@@ -313,6 +313,8 @@ end
 
 DT:RegisterModule("gamedb", { -- (not "db": that key of the saved file is the store itself)
 	title = "Game database",
+	kind = "internal", -- (nothing of its own to look at: Settings > Tabs & Modules lists it under "Behind the scenes")
+	about = "Passes what the addon knows of the game (recipes, dungeons, NPCs, items, quests) between guild members by whisper, once you have said yes to sharing. Off: nothing of it is sent or taken in; what you have stays.",
 	version = 1,
 	status = function()
 		local s = DB.Stats()

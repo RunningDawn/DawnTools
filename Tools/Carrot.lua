@@ -159,6 +159,7 @@ local function Build(panel)
 end
 
 DT:RegisterModule("carrot", {
+	kind = "tool", -- (Settings > Tabs & Modules lists it under Tools)
 	title = "Carrot",
 	version = 1,
 	defaults = { on = false, slot = 14 },

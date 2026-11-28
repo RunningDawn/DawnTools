@@ -5894,6 +5894,38 @@ do
 	local titles = {}
 	for i, b in ipairs(UI.sectionButtons) do titles[i] = (b.label.text:gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", "")) end
 	eq(table.concat(titles, " / "), "General / Profiles / Themes / Tabs & Modules / Built-ins / Tooltips / Market / BiS / Gather / Data Sync / Data Storage / Data Debug", "the Settings tab lists its sections: the fixed ones, then one per module with switches, Data Sync, Data Storage and Data Debug at the bottom")
+	do -- Tabs & Modules: nothing runs into anything, nothing below the window at its least size
+		local boxes, xs, low, at = UI.moduleBoxes, {}, 0, {}
+		eq(#boxes, #Pia.DT.order, "a box per module")
+		for _, cb in ipairs(boxes) do
+			xs[cb.x] = true
+			low = math.min(low, cb.y - 22)
+			check(not at[cb.x .. "," .. cb.y], "no two boxes at one place")
+			at[cb.x .. "," .. cb.y], at[cb.module] = true, cb
+		end
+		check(at.range.x == 580 and at.gather.x == 580 and at.market.x < 580 and at.tools.x < 580, "the tools in a column of their own, what has a tab or a page beside them")
+		check(at.gamedb.x == 310 and at.gamedb.y < at.market.y and at.gamedb.y < at.zone.y, "what works behind the scenes beneath those")
+		check(low >= -330 and at.range.x + 135 <= 720, "and all of it ends within the least window: " .. low)
+		do
+			local tip = Pia.env.GameTooltip
+			at.gamedb.scripts.OnEnter(at.gamedb)
+			check(tip.lines[#tip.lines]:find("between guild members", 1, true), "hovered, the game database says what it is")
+			at.gamedb.scripts.OnLeave(at.gamedb)
+		end
+		-- the tabs: a name each, the pages it holds beneath it, each row under the one before
+		local craft, last = nil, nil
+		for _, cb in ipairs(UI.tabBoxes) do
+			check(not cb.label.text:find("(", 1, true), "a tab's line is its name alone: " .. cb.label.text)
+			if cb.pages.text:find("Alchemy, Blacksmithing", 1, true) then craft = cb end
+			if last then
+				eq(cb.y, last.bottom, "a row begins where the one above ends")
+				check(last.y - cb.y == 22 or last.pages.text ~= "", "a tab without pages takes one line")
+			end
+			last = cb
+		end
+		check(craft and craft.y - craft.bottom > 22 + 22, "the Craft tab's pages are listed beneath it, on lines of their own")
+		check(last.bottom >= -330, "and the list ends within the least window: " .. last.bottom)
+	end
 	do -- Data Debug: a button puts lines to copy in the box
 		click(UI.sectionButtons[#UI.sectionButtons])
 		local mem

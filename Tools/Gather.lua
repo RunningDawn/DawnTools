@@ -1772,6 +1772,7 @@ end
 ---------------------------------------------------------------------------
 
 DT:RegisterModule("gather", {
+	kind = "tool", -- (Settings > Tabs & Modules lists it under Tools)
 	profile = { "settings" },
 	title = "Gather",
 	version = 6,

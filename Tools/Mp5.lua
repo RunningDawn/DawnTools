@@ -413,6 +413,7 @@ local function Build(panel)
 end
 
 DT:RegisterModule("mp5", {
+	kind = "tool", -- (Settings > Tabs & Modules lists it under Tools)
 	profile = { "look", "pos", "size" }, -- (what of its saved table is how it is set up: goes with a profile)
 	title = "MP5",
 	version = 1,

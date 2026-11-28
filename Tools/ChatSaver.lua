@@ -250,6 +250,7 @@ local function Build(panel)
 end
 
 DT:RegisterModule("chatsaver", {
+	kind = "tool", -- (Settings > Tabs & Modules lists it under Tools)
 	title = "Chat Saver",
 	version = 1,
 	onEnable = function(mod)

@@ -170,6 +170,7 @@ local function Build(panel)
 end
 
 DT:RegisterModule("fps", {
+	kind = "tool", -- (Settings > Tabs & Modules lists it under Tools)
 	profile = { "pos", "size" }, -- (what of its saved table is how it is set up: goes with a profile)
 	title = "FPS",
 	version = 1,

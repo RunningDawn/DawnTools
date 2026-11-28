@@ -635,41 +635,105 @@ UI:Section("themes", "Themes", 20, function(panel)
 	end
 end)
 
--- Tabs & Modules
+-- Tabs & Modules: the tabs on the left, each with the pages under it listed beneath its name; the modules in
+-- three columns on the right, by kind (a module's `kind`): what has a tab or a page of its own (two columns),
+-- the tools ("tool"), and under the first two what works behind the scenes ("internal": nothing to look at;
+-- its `about` is said when hovered).
+-- At the window's least size the body is some 720 wide and 330 high: everything on the left keeps left of the
+-- modules, and the lists end within the window.
+local MODULES_X, MODULE_COL_W, MODULE_ROW = 310, 135, 20
+local TAB_TEXT_W = MODULES_X - 56 - 26 - 12 -- a tab's name and its pages: this wide, then the modules begin
 UI:Section("tabs", "Tabs & Modules", 30, function(panel)
-	local y = -2
-	Text(panel, "GameFontNormal", 4, y, "On the bar")
-	Text(panel, "GameFontDisableSmall", 90, y - 2, "A hidden tab keeps working; /dt <name> still opens it. The arrows move it along the bar.")
-	y = y - 22
-	-- one row per position: its tab changes as they are moved
+	Text(panel, "GameFontNormal", 4, -2, "On the bar")
+	local note = Text(panel, "GameFontDisableSmall", 4, -20, "A hidden tab keeps working: /dt <name> still opens it. The arrows move a tab along the bar.")
+	note:SetWidth(MODULES_X - 16)
+	note:SetWordWrap(true)
+	-- one row per position: its tab changes as they are moved. Under a tab's name, the pages it holds; a row is
+	-- as tall as that list, so each row is placed under the one before when it is read.
+	UI.tabBoxes = {}
+	local y
 	for i = 1, #UI:TabList(true) do
 		local function Tab() return UI:TabList(true)[i] end
-		local cb = Toggle(panel, 56, y, "",
+		local cb
+		cb = Toggle(panel, 56, 0, "",
 			function(self)
 				local subs = {}
 				for n, sub in ipairs(Tab().subs or {}) do subs[n] = sub.title end
-				self.label:SetText(Tab().title .. (subs[1] and ("  |cff888888(" .. table.concat(subs, ", ") .. ")|r") or ""))
+				local pages = table.concat(subs, ", ")
+				self.label:SetText(Tab().title)
+				self.pages:SetText(pages)
+				if i == 1 then y = -48 end
+				self:ClearAllPoints()
+				self:SetPoint("TOPLEFT", panel, "TOPLEFT", 56, y)
+				self.y = y
+				local tall = 0
+				if pages ~= "" then
+					tall = self.pages.GetStringHeight and self.pages:GetStringHeight() or 0
+					if not tall or tall <= 0 then tall = math.ceil(#pages * 5.5 / TAB_TEXT_W) * 11 end -- (not laid out yet: by its length)
+					tall = tall + 5
+				end
+				y = y - 22 - tall
+				self.bottom = y
 				return not DT.db.tabs.hidden[Tab().id]
 			end,
 			function(on) DT.db.tabs.hidden[Tab().id] = not on or nil end)
-		cb.up = Arrow(panel, 4, y - 1, "^", function() UI:MoveTab(Tab().id, -1) end)
-		cb.down = Arrow(panel, 28, y - 1, "v", function() UI:MoveTab(Tab().id, 1) end)
-		y = y - 22
+		cb.pages = Text(cb, "GameFontDisableSmall", 26, -21, "")
+		cb.pages:SetWidth(TAB_TEXT_W)
+		cb.pages:SetWordWrap(true)
+		cb.label:SetWidth(TAB_TEXT_W)
+		cb.label:SetWordWrap(false)
+		cb.up = Arrow(panel, 0, 0, "^", function() UI:MoveTab(Tab().id, -1) end)
+		cb.down = Arrow(panel, 0, 0, "v", function() UI:MoveTab(Tab().id, 1) end)
+		cb.up:ClearAllPoints()
+		cb.up:SetPoint("TOPLEFT", cb, "TOPLEFT", -52, -1)
+		cb.down:ClearAllPoints()
+		cb.down:SetPoint("TOPLEFT", cb, "TOPLEFT", -28, -1)
+		UI.tabBoxes[i] = cb
 	end
-	-- the modules, in a second column
-	y = -2
-	Text(panel, "GameFontNormal", 330, y, "Modules")
-	Text(panel, "GameFontDisableSmall", 396, y - 2, "Off = not loaded at all. After /reload.")
-	y = y - 22
+	-- the modules, by kind
+	Text(panel, "GameFontNormal", MODULES_X, -2, "Modules")
+	Text(panel, "GameFontDisableSmall", MODULES_X + 66, -4, "Off = not loaded at all. After /reload.")
+	local kinds = { page = {}, tool = {}, internal = {} }
 	for _, name in ipairs(DT.order) do
+		local list = kinds[DT.modules[name].kind or "page"] or kinds.page
+		list[#list + 1] = name
+	end
+	UI.moduleBoxes = {}
+	local half = math.ceil(#kinds.page / 2)
+	local function Head(x, top, text) Text(panel, "GameFontNormalSmall", x + 2, top - 4, text) end
+	local function Box(name, x, top)
 		local mod = DT.modules[name]
-		Toggle(panel, 330, y, mod.title or name,
+		local cb = Toggle(panel, x, top, mod.title or name,
 			function() return DT.db.modules[name] ~= false end,
 			function(on)
 				DT.db.modules[name] = on
 				DT:Print("%s %s after /reload.", mod.title or name, on and "is back" or "is off")
 			end)
-		y = y - 22
+		cb.label:SetWidth(MODULE_COL_W - 30)
+		cb.label:SetWordWrap(false)
+		if mod.about then
+			cb:SetScript("OnEnter", function(self)
+				GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+				GameTooltip:AddLine(mod.title or name)
+				GameTooltip:AddLine(mod.about, 1, 1, 1, true)
+				GameTooltip:Show()
+			end)
+			cb:SetScript("OnLeave", function() GameTooltip:Hide() end)
+		end
+		cb.x, cb.y, cb.module = x, top, name
+		UI.moduleBoxes[#UI.moduleBoxes + 1] = cb
+	end
+	local top = -24
+	Head(MODULES_X, top, "Tabs and pages")
+	for n, name in ipairs(kinds.page) do
+		Box(name, MODULES_X + (n > half and MODULE_COL_W or 0), top - MODULE_ROW - ((n - 1) % half) * MODULE_ROW)
+	end
+	Head(MODULES_X + 2 * MODULE_COL_W, top, "Tools")
+	for n, name in ipairs(kinds.tool) do Box(name, MODULES_X + 2 * MODULE_COL_W, top - n * MODULE_ROW) end
+	if kinds.internal[1] then
+		top = top - (half + 1) * MODULE_ROW - 8
+		Head(MODULES_X, top, "Behind the scenes  |cff888888(hover for what it does)|r")
+		for n, name in ipairs(kinds.internal) do Box(name, MODULES_X, top - n * MODULE_ROW) end
 	end
 end)
 
