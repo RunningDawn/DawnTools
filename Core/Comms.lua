@@ -124,10 +124,10 @@ function Comms:Report()
 		return s < 90 and (s .. "s ago") or (math.floor(s / 60) .. "m ago")
 	end
 	local members = {}
-	for name, peer in pairs(self.peers) do members[#members + 1] = ("%s %s (%s)"):format(name, peer.version, Ago(peer.t)) end
+	for name, peer in pairs(self.peers) do members[#members + 1] = ("  - %s %s (%s)"):format(name, peer.version, Ago(peer.t)) end
 	table.sort(members)
 	if not stats.started then return { "Guild messages were never started on this client: something failed at login. /reload, and look for an error." } end
-	return {
+	local lines = {
 		("Sent: %d pieces, %d refused%s; %d sends not tried%s."):format(stats.ok, stats.refused,
 			stats.code ~= nil and (" (the game's last answer: %s)"):format(tostring(stats.code)) or "",
 			stats.blocked, stats.why and (" (last: " .. stats.why .. ")") or "")
@@ -135,8 +135,10 @@ function Comms:Report()
 		stats.helloAt and ("My HELLO: sent %s, %s."):format(Ago(stats.helloAt),
 			stats.echo and stats.echo >= stats.helloAt and "came back from the server" or "has NOT come back from the server")
 			or ("My HELLO: not sent yet" .. (self:Why() and (" (" .. self:Why() .. ")") or "") .. "."),
-		("Heard: %d messages, %d unreadable. Members: %s."):format(stats.heard, stats.bad, members[1] and table.concat(members, ", ") or "none"),
+		("Heard: %d messages, %d unreadable. Members: %s"):format(stats.heard, stats.bad, members[1] and (#members .. ":") or "none."),
 	}
+	for _, member in ipairs(members) do lines[#lines + 1] = member end -- (one to a line)
+	return lines
 end
 
 -- /dt sync: says HELLO (once a minute at most), and prints the counts now and a few seconds on

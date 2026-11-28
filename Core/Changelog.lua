@@ -6,7 +6,12 @@
 local _, DT = ...
 
 DT.CHANGELOG = {
-	{ "0.58.1", "2026-11-28", {
+	{ "0.59.0", "2026-11-28", {
+		"Tools: Mitigation is now Stats. Under the mitigation lines it also shows your attack power and crit, ranged attack, spell power, healing, spell crit and hit, mana every 5 seconds, and your attributes. It shows what your spec cares about (read from your talents): a tank gets the mitigation lines, a healer healing, spell crit and mana, and so on, with caps shown as 425 / 440. Tick \"Choose myself\" in its options to pick the groups yourself, for that character.",
+		"BiS: gear that asks for a profession (Engineering goggles and the like) is left out unless you have that profession and enough of it.",
+		"BiS: a quest's reward is not recommended below the level its quest can be taken at (no more dungeon set pieces at level 7).",
+		"Settings > Data Sync: the report is in a box that scrolls and can be copied (click in it, Ctrl+A, Ctrl+C). The members heard are listed one to a line.",
+		"Game database: a whisper from a guild member is no longer turned away just because their hello has not been heard yet (after your /reload, for one).",
 		"Settings > Tabs & Modules, tidied: the pages under a tab are listed beneath its name and no longer run into the modules. The modules are sorted into Tabs and pages, Tools and Behind the scenes, in columns that end inside the window. Hover Game database to read what it is.",
 	} },
 	{ "0.58.0", "2026-11-27", {

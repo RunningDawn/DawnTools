@@ -180,22 +180,42 @@ function S.Heard(sender, root)
 	if Say(sender, "H?", "") then p.asked = now end
 end
 
+-- Who is in the guild by its roster, whether or not their hello has been heard (after a /reload of mine a
+-- member who heard my hello whispers before I have heard theirs). Names squeezed: "First Surname", "First-Surname"
+-- and "firstsurname" are one. Read anew a minute after the last time.
+-- ponytail: not seen on Forever how its roster writes a name; one it writes otherwise is turned away as before.
+local roster, rosterAt
+local function Squeeze(name) return (name:gsub("[%- ]", "")):lower() end
+local function InRoster(sender)
+	if not (GetNumGuildMembers and GetGuildRosterInfo) then return false end
+	if not roster or GetTime() - rosterAt > 60 then
+		roster, rosterAt = {}, GetTime()
+		local ok, n = pcall(GetNumGuildMembers)
+		for i = 1, ok and tonumber(n) or 0 do
+			local got, name = pcall(GetGuildRosterInfo, i)
+			if got and type(name) == "string" then roster[Squeeze(name)] = true end
+		end
+	end
+	return roster[Squeeze(sender)] or false
+end
+
 local heard = {} -- [sender .. kind] = when a request of theirs was last answered
 -- (a chunk is asked for only once the one before has come, so "C?" needs no gap: one would stall a fast transfer)
 local GAP = { ["H?"] = 60 }
 
 function comm:OnComm(prefix, text, distribution, sender)
 	if prefix ~= PREFIX or distribution ~= "WHISPER" or not On() or type(text) ~= "string" or type(sender) ~= "string" then return end
-	-- only guildmates (who have said hello on the guild channel), and no more than is worth unpacking
+	-- only guildmates (who have said hello on the guild channel, or are on the roster), and no more than is worth unpacking
 	local kind, id, i, n, piece = text:match("^(%u[%?=])(%d+):(%d+):(%d+);([%w%(%)]*)$")
 	i, n = tonumber(i), tonumber(n)
 	-- (the guild channel may name them "First Surname", "First-Surname" or only "First")
 	local guild, first, rest = DT.Comms.peers, sender:match("^([^%- ]+)[%- ](.+)$")
-	local member = guild[sender] or first and (guild[first .. " " .. rest] or guild[first .. "-" .. rest] or guild[first])
+	local member = guild[sender] or first and (guild[first .. " " .. rest] or guild[first .. "-" .. rest] or guild[first]) or InRoster(sender)
+	local raw = sender
 	sender = Who(sender)
 	if not member then
 		if kind == "H?" then early[sender] = GetTime() end -- (their hello may be on its way)
-		S.turned, S.turnedWho = S.turned + 1, sender
+		S.turned, S.turnedWho = S.turned + 1, raw
 		return
 	end
 	-- (a request is one piece; an answer no more pieces than a chunk of the most that is believed)
@@ -289,7 +309,7 @@ function S.Report()
 	}
 	lines[#lines + 1] = ("Whispers in: %d pieces; %d messages lost part-way, %d that could not be read. Bytes sent: lists %d, chunks %d."):format(S.pieces, S.lost, S.unread, S.bytes["H="] or 0, S.bytes["C="] or 0)
 	if S.unasked > 0 then lines[#lines + 1] = ("%d answers not taken: not asked for, or another under way."):format(S.unasked) end
-	if S.turned > 0 then lines[#lines + 1] = ("%d whispers turned away: not from a member heard on the guild channel (last from %s)."):format(S.turned, tostring(S.turnedWho)) end
+	if S.turned > 0 then lines[#lines + 1] = ("%d whispers turned away: not from a member heard on the guild channel or on the guild roster (last from \"%s\", as the game wrote the name)."):format(S.turned, tostring(S.turnedWho)) end
 	if not On() then lines[#lines + 1] = "Sharing is off: nothing is asked or answered." end
 	local mine, now, names = DB.Root(), GetTime(), {}
 	for name in pairs(DT.Comms.peers) do names[#names + 1] = name end

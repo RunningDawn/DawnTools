@@ -66,23 +66,11 @@ end
 
 local partial = {} -- [id] = an item whose tooltip never came: its stats as far as the game gave them, for this session
 local items, asked, askedAt = {}, {}, {} -- [id] = { id, loc, s, name, q, lvl, class, sub, only } or false (not gear); [id] = times asked, and when last
-local FACTS = 5 --(the shape of what is kept in db.facts: raise it when BL.Stats counts something else, and every item is learned anew)
+local FACTS = 6 --(6: the profession an item asks for is kept) (the shape of what is kept in db.facts: raise it when BL.Stats counts something else, and every item is learned anew)
 local RANGED = { INVTYPE_RANGED = true, INVTYPE_RANGEDRIGHT = true, INVTYPE_THROWN = true }
--- the facts kept by an older version: from 3, only what 4 reads otherwise is learned anew (dodge, parry and block
--- rating, counted one for one before; a weapon's damage per second, not read before); from any other, all of them
-local WEAPON = { INVTYPE_WEAPON = true, INVTYPE_2HWEAPON = true, INVTYPE_WEAPONMAINHAND = true, INVTYPE_WEAPONOFFHAND = true,
-	INVTYPE_RANGED = true, INVTYPE_RANGEDRIGHT = true, INVTYPE_THROWN = true }
+-- the facts kept by an older version are all learned anew (the shape before 6 did not say what profession an item asks for)
 function B.Upgrade(db)
-	if db.factsV == FACTS then
-	elseif (db.factsV == 3 or db.factsV == 4) and type(db.facts) == "table" then
-		for id, it in pairs(db.facts) do
-			if db.factsV == 3 and it and (WEAPON[it.loc or ""] or it.s and (it.s.dodge or it.s.parry or it.s.block)) then db.facts[id] = nil
-			-- (from 4: hit and crit count for spells too, as BL.Stats reads them now; nothing is asked of the game again)
-			elseif it and it.s then it.s.shit, it.s.scrit = it.s.shit or it.s.hit, it.s.scrit or it.s.crit end
-		end
-	else
-		db.facts = {}
-	end
+	if db.factsV ~= FACTS then db.facts = {} end
 	db.factsV = FACTS
 	-- (armor kept by 0.56.0 and before: where the game gave no number, its tooltip is read now. An armor piece without
 	-- any is learned anew, once)
@@ -106,6 +94,8 @@ local UNIQUE = ITEM_UNIQUE or "Unique" -- ("Unique" and "Unique (2)": one to car
 local RACES = (ITEM_RACES_ALLOWED or "Races: %s"):match("^(.-)%%s") or "Races: "
 -- "Requires Theramore Expeditionary Force - Exalted": the game's own words, made a pattern (faction, standing)
 local REP = "^" .. (ITEM_REQ_REPUTATION or "Requires %s - %s"):gsub("[%(%)%.%+%-%*%?%[%]%^%$]", "%%%0"):gsub("%%s", "(.+)") .. "$"
+-- "Requires Engineering (150)": a profession and how much of it (goggles, and what else only its makers may wear)
+local SKILL = "^" .. (ITEM_MIN_SKILL or "Requires %s (%d)"):gsub("[%(%)%.%+%-%*%?%[%]%^%$]", "%%%0"):gsub("%%s", "(.+)"):gsub("%%d", "(%%d+)") .. "$"
 
 local function Lines(id)
 	if not (C_TooltipInfo and C_TooltipInfo.GetItemByID) then return {} end
@@ -125,7 +115,7 @@ local function Lines(id)
 	return out
 end
 
--- An item's facts, from the game's answers: { id, loc, name, icon, q, lvl, class, sub, s, only, races, unique, boe, rep, repAt }
+-- An item's facts, from the game's answers: { id, loc, name, icon, q, lvl, class, sub, s, only, races, unique, boe, rep, repAt, skill, skillAt }
 local function FactsOf(id, name, quality, minLevel, loc, icon, class, sub, lines)
 	local get = (C_Item and C_Item.GetItemStats) or GetItemStats
 	local ok, stats = pcall(function() return get and get("item:" .. id) end)
@@ -140,6 +130,8 @@ local function FactsOf(id, name, quality, minLevel, loc, icon, class, sub, lines
 		if text == (ITEM_BIND_ON_EQUIP or "Binds when equipped") then it.boe = true end
 		local faction, standing = text:match(REP)
 		if faction then it.rep, it.repAt = faction, standing end
+		local skill, at = text:match(SKILL)
+		if skill then it.skill, it.skillAt = skill, tonumber(at) or 1 end
 	end
 	return it
 end
@@ -157,12 +149,12 @@ local function RowText(it)
 	table.sort(words)
 	for i, word in ipairs(words) do words[i] = word .. "=" .. DBL.Pack({ it.s[word] }, 1) end
 	return DBL.Pack({ FACTS, it.loc, it.name, it.q, it.lvl, it.class, it.sub, table.concat(words, ";"), it.only, it.races,
-		it.rep, it.repAt, it.unique or false, it.boe or false, it.icon }, 15)
+		it.rep, it.repAt, it.unique or false, it.boe or false, it.icon, it.skill, it.skillAt }, 17)
 end
 B.RowText = RowText
 local function FromRow(id, text)
 	local v = DBL.Unpack(text or "")
-	if not v or (v[1] ~= FACTS and v[1] ~= 4) then return nil end -- (4: read as 5 but for the spells' hit and crit, filled below)
+	if not v or v[1] ~= FACTS then return nil end -- (a row of an older shape says nothing of a profession asked for: the game is asked)
 	if v[2] == false then return false end
 	if type(v[2]) ~= "string" or not WEARABLE[v[2]] or type(v[3]) ~= "string" then return nil end
 	local s = {}
@@ -175,7 +167,8 @@ local function FromRow(id, text)
 	if B.NoArmor({ class = tonumber(v[6]), sub = tonumber(v[7]), s = s }) then return nil end
 	return { id = id, loc = v[2], name = Text(v[3]) or ("item " .. id), q = tonumber(v[4]) or 1, lvl = tonumber(v[5]) or 0,
 		class = tonumber(v[6]), sub = tonumber(v[7]), s = s, only = Text(v[9]), races = Text(v[10]), rep = Text(v[11]),
-		repAt = Text(v[12]), unique = v[13] == true or nil, boe = v[14] == true or nil, icon = tonumber(v[15]) or type(v[15]) == "string" and v[15] or nil, shared = true }
+		repAt = Text(v[12]), unique = v[13] == true or nil, boe = v[14] == true or nil, icon = tonumber(v[15]) or type(v[15]) == "string" and v[15] or nil,
+		skill = Text(v[16]), skillAt = tonumber(v[17]), shared = true }
 end
 -- a guildmate's row for the item, taken for this session (nil: none, or not of this shape)
 local function Shared(id)
@@ -385,6 +378,25 @@ end
 
 -- the lightest armor a tank of the class wears (armor subclass: 2 leather, 3 mail, 4 plate): plate from level 40
 local TANK_ARMOR = { WARRIOR = 4, PALADIN = 4, DRUID = 2 }
+-- My skill in a profession, by its name as the game writes it: 0 without it. Read at most once a few seconds.
+local skills, skillsAt
+local function MySkill(name)
+	if not skills or Now() - skillsAt > 5 then
+		skills, skillsAt = {}, Now()
+		if GetNumSkillLines and GetSkillLineInfo then
+			for i = 1, Num(GetNumSkillLines) or 0 do
+				local ok, line, header, _, rank = pcall(GetSkillLineInfo, i)
+				if ok and line and not header then skills[line] = tonumber(rank) or 0 end
+			end
+		elseif GetProfessions and GetProfessionInfo then
+			for _, at in pairs({ GetProfessions() }) do
+				local ok, line, _, rank = pcall(GetProfessionInfo, at)
+				if ok and line then skills[line] = tonumber(rank) or 0 end
+			end
+		end
+	end
+	return skills[name] or 0
+end
 local function Usable(it, who, later)
 	-- (a tank wears the heaviest armor its class has, cloaks aside: a protection warrior's leather is lost armor)
 	if it.class == 4 and (it.sub or 0) >= 1 and it.sub <= 4 and it.loc ~= "INVTYPE_CLOAK" and B.db then
@@ -397,6 +409,10 @@ local function Usable(it, who, later)
 	if (it.q or 0) >= 5 then return false end -- (a legendary, Atiesh: nobody's pre-raid, nobody's plan)
 	if it.rep and Realistic() and not who.foreign and not B.RepOk(it) then return false end
 	if not later and it.lvl > who.level then return false end
+	-- (a quest's reward often asks no level of its wearer: not before its quest is to be had. B.QuestOnly, below)
+	if not later and B.QuestOnly(it.id) and B.QuestLevel(it.id) > who.level then return false end
+	-- (a profession's own gear: mine to wear with the profession, and now only with enough of it)
+	if it.skill and MySkill(it.skill) < (later and 1 or it.skillAt or 1) then return false end
 	if it.only and not it.only:find(who.className, 1, true) then return false end
 	if it.races and who.race and not it.races:find(who.race, 1, true) then return false end -- (a faction's gear: Races: lists)
 	local V = DT.Market and DT.Market.View
@@ -1775,6 +1791,12 @@ function B.QuestLevel(id)
 	end
 	return questAt[id]
 end
+-- is the item a quest's reward and to be had no other way (one also made, sold or dropped is not)
+function B.QuestOnly(id)
+	local c = Catalog()
+	local e = c and c.entry[id]
+	return e and c.kind[id] == "quest" and not (e.src.Crafted or e.src.Vendor or e.src.Drop or (DT.CraftSkill and DT.CraftSkill[id])) or false
+end
 function B.Forget() otherSide, fromRaid, questAt, B.wheres = {}, {}, {}, {} end -- (Recalculate: asked anew)
 function Pool(who)
 	local c = Catalog()
@@ -1796,9 +1818,7 @@ function Pool(who)
 				if raided[id] == nil then raided[id] = (e.ilvl or 0) >= 58 and B.FromRaid(id, phase) or false end
 				ok = not otherSide[id] and not raided[id]
 				-- (a quest's reward that is to be had no other way: not before the quest is. One also made, sold or dropped is)
-				if ok and c.kind[id] == "quest" and not (e.src.Crafted or e.src.Vendor or e.src.Drop or (DT.CraftSkill and DT.CraftSkill[id])) then
-					ok = B.QuestLevel(id) <= who.level
-				end
+				if ok and B.QuestOnly(id) then ok = B.QuestLevel(id) <= who.level end
 			end
 			if ok then out[#out + 1], ids[#ids + 1] = { id = id, kind = c.kind[id] }, id end
 		end

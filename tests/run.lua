@@ -2013,7 +2013,9 @@ click(section("All items"))
 	V1.DT.UI:ShowSection("sync")
 	local text = V1.DT.UI.syncText.text
 	check(not text:find("Vendor price sharing", 1, true), "the Data Sync page has no line of their own: " .. text)
-	check(text:find("Total|r  sent", 1, true) and text:find("Who has the addon", 1, true), "with the hellos and a total")
+	check(text:find("Total  sent", 1, true) and text:find("Who has the addon", 1, true), "with the hellos and a total")
+	check(not text:find("|c", 1, true) and V1.DT.UI.syncText.kind == "EditBox", "in a box to copy from, as plain text")
+	check(text:find("Members: %d+:\n  %- "), "the members heard are listed one to a line: " .. text)
 	check(text:find("Game database, by whisper", 1, true), "and the game database's requests each way: " .. text)
 	-- Data Storage: what is held, how complete, as bars
 	V1.DT.UI:ShowSection("storage")
@@ -5170,6 +5172,58 @@ do
 		eq(G.Read().def, nil, "BiS cannot say: no line")
 		A.DT.Bis.WornDefense = was
 	end
+	do -- what my spec cares about, or my own choice
+		local before, B = lines(col(1)), A.DT.Bis
+		local wasDefault, wasGuid = B.Default, e.UnitGUID
+		e.UnitGUID = function() return "Player-1-A" end
+		e.UnitAttackPower = function() return 500, 40, -10 end
+		e.GetCritChance = function() return 12.34 end
+		e.GetSpellBonusDamage = function(school) return school == 3 and 222 or 100 end
+		e.GetSpellBonusHealing = function() return 300 end
+		e.GetSpellCritChance = function(school) return school end
+		e.GetSpellHitModifier = function() return 3 end
+		e.GetManaRegen = function() return 4, 1 end
+		e.UnitStat = function(_, i) return i * 10, i * 11 end
+		-- the spec cannot be told: by class (a warrior: the mitigation lines and its attack)
+		B.Default = function() return nil end
+		local plan = G.Plan()
+		eq(plan.spec, nil, "no spec told"); eq(G.Shows(plan, "mit"), true, "the mitigation lines stay"); eq(G.Shows(plan, "melee"), true, "a warrior's attack is shown"); eq(G.Shows(plan, "spell"), false, "its spells are not")
+		G.f.scripts.OnUpdate(G.f, 1)
+		eq(lines(col(1)), before + 3, "a gap and two lines: attack power and crit"); check(col(1):find("\n\nAttack power\nCrit", 1, true) and col(2):find("\n\n530\n12.3%", 1, true), "what is added and taken off counted in: " .. col(2))
+		-- a tank spec: its profile's stats, and its caps
+		B.Default = function() return "warrior-protection" end
+		G.f.scripts.OnUpdate(G.f, 1)
+		check(col(1):find("Defense\n\nHit\nHit bonus\n\nAttack power\nCrit\n\nStrength\nAgility\nStamina$"), "protection: mitigation, hit against its cap, attack, the attributes it weighs: " .. col(1))
+		check(col(2):find(" / 440\n\n", 1, true) and col(2):find("\n+0.0 / 8\n", 1, true) and col(2):find("\n11\n22\n33$"), "defense and hit against their caps: " .. col(2))
+		eq(G.f.ground.shown, true, "a tank has the bar")
+		-- a healer: none of the mitigation, its spells' lines
+		B.Default = function() return "paladin-holy" end
+		G.f.scripts.OnUpdate(G.f, 1)
+		eq(col(1), "Healing\nSpell crit\nMana / 5s\n\nStamina\nIntellect\nSpirit", "holy: healing, spell crit, mana, and its attributes; no mitigation, no attack")
+		eq(col(2), "300\n7.0%\n20 (5)\n\n33\n44\n55", "their numbers: mana idle and (casting)")
+		eq(G.f.ground.shown, false, "and no bar"); eq(G.f.segs[2].shown, false, "nor its parts")
+		G.Apply()
+		check(G.specLine.text:find("recommended for |cffffffffHoly|r", 1, true), "the options say whose it is: " .. G.specLine.text)
+		eq(G.ticks.spell.checked, true, "the ticks say what is shown"); eq(G.ticks.mit.checked, false, "and what is not"); eq(G.ticks.spell.enabled, false, "not mine to change while it is the recommended")
+		-- my own choice: begins as the recommended, then as ticked; kept for this character
+		G.Set("override", true)
+		eq(G.db.chars["Player-1-A"].override, true, "kept for this character"); eq(G.ticks.spell.enabled, true, "the ticks are mine now")
+		eq(col(1):find("Spell power\nHealing\nSpell crit\nSpell hit\nMana / 5s", 1, true), 1, "my own choice begins with the groups that were shown, in full: " .. col(1))
+		G.Set("spell", false); G.Set("mit", true); G.Set("ranged", true)
+		check(col(1):find("^All\n") and not col(1):find("Spell", 1, true), "ticked and unticked as I like: " .. col(1))
+		check(not col(1):find("Ranged", 1, true), "a group the game gives no number for has no line")
+		check(G.specLine.text:find("your own choice", 1, true), "and the options say so")
+		e.UnitGUID = function() return "Player-1-B" end
+		G.Apply()
+		eq(G.Plan().override, false, "another character: the recommended again")
+		e.UnitGUID = function() return "Player-1-A" end
+		G.Set("override", false)
+		eq(col(1):find("Healing", 1, true), 1, "unticked: the recommended again"); eq(G.db.chars["Player-1-A"].show.mit, true, "my choice is kept for the next time")
+		G.db.chars = nil
+		B.Default, e.UnitGUID = wasDefault, wasGuid
+		e.UnitAttackPower, e.GetCritChance, e.GetSpellBonusDamage, e.GetSpellBonusHealing, e.GetSpellCritChance, e.GetManaRegen, e.UnitStat, e.GetSpellHitModifier = nil, nil, nil, nil, nil, nil, nil, nil
+		G.f.scripts.OnUpdate(G.f, 1)
+	end
 	do -- in a fight the client says none of it: what was read before stays
 		local before = G.Read()
 		eq(before.held, false, "out of a fight: all of it read now")
@@ -6046,6 +6100,7 @@ end
 		[9005] = { "Listed Legs", "INVTYPE_LEGS", { ITEM_MOD_STAMINA_SHORT = 12 } },
 		[9006] = { "Mage Hat", "INVTYPE_HEAD", { ITEM_MOD_STAMINA_SHORT = 99 }, "Classes: Mage" },
 		[9007] = { "Worn Legs", "INVTYPE_LEGS", { ITEM_MOD_STAMINA_SHORT = 20 } },
+		[9008] = { "Maker's Goggles", "INVTYPE_HEAD", { ITEM_MOD_STAMINA_SHORT = 99 }, "Requires Engineering (150)" },
 		[9010] = { "Quest Helm", "INVTYPE_HEAD", { ITEM_MOD_STAMINA_SHORT = 25 } },
 		[9011] = { "Crafted Helm", "INVTYPE_HEAD", { ITEM_MOD_STAMINA_SHORT = 18 } },
 		[9012] = { "World Helm", "INVTYPE_HEAD", { ITEM_MOD_STAMINA_SHORT = 22 }, "Binds when equipped" },
@@ -6114,6 +6169,11 @@ end
 	local _, vsWorn = B.VsWorn(s, 9003); eq(g.d, vsWorn, "the listed helm: what it gains over the worn one, as the slot list says it"); GAIN = ("%+.1f"):format(g.d); eq(table.concat(g.slots, ","), "Head", "and the slot it changes")
 	eq(B.Gain(9002).best, true, "an item of my best set says so"); eq(B.Gain(9001).best, false, "one that is not, too")
 	eq(B.Gain(9006).no, true, "another class's is not for me");
+	do -- a profession's own gear: with the profession only
+		eq(B.Item(9008).skill, "Engineering", "the profession an item asks for is read off its tooltip"); eq(B.Item(9008).skillAt, 150, "and how much of it")
+		eq(B.Gain(9008).no, true, "goggles are not for one who is no engineer")
+		check(B.RowText(B.Item(9008)):find("\"Engineering\",150", 1, true), "and guildmates are told with the rest: " .. B.RowText(B.Item(9008)))
+	end
 	eq(B.Item(9016).rep, "Theramore Expeditionary Force", "the reputation an item asks for is read off its tooltip"); eq(B.Item(9016).repAt, "Exalted", "and the standing")
 	eq(B.db.settings.realistic, true, "realistic by default"); eq(B.RepOk(B.Item(9016)), false, "honored is not exalted")
 	eq(B.Gain(9016).no, true, "realistic: gear behind a standing I lack is out")
@@ -6251,16 +6311,14 @@ end
 	local old = { factsV = 3, facts = { [1] = { loc = "INVTYPE_HEAD", s = { sta = 5 } }, [2] = { loc = "INVTYPE_CHEST", s = { dodge = 18 } },
 		[3] = { loc = "INVTYPE_2HWEAPON", s = { str = 9 } }, [4] = false } }
 	X.DT.Bis.Upgrade(old)
-	check(old.facts[1] and old.facts[2] == nil and old.facts[3] == nil and old.facts[4] == false and old.factsV ~= 3,
-		"from version 3, only what reads otherwise now is learned anew")
+	check(next(old.facts) == nil and old.factsV ~= 3, "from an older version, everything is learned anew (what profession an item asks for was not kept)")
 	local older = { factsV = 2, facts = { [1] = { loc = "INVTYPE_HEAD", s = {} } } }
 	X.DT.Bis.Upgrade(older)
 	check(next(older.facts) == nil, "from an older one, all of it")
 	local four = { factsV = 4, armorRead = true, facts = { [1] = { loc = "INVTYPE_NECK", s = { hit = 1, crit = 2 } }, [2] = { loc = "INVTYPE_NECK", s = { hit = 1, shit = 3 } }, [3] = false } }
 	X.DT.Bis.Upgrade(four)
-	check(four.facts[1].s.shit == 1 and four.facts[1].s.scrit == 2 and four.facts[2].s.shit == 3 and four.facts[3] == false and four.factsV == 5,
-		"from version 4, hit and crit count for spells too, and nothing is learned anew")
-	local noArmor = { factsV = 4, facts = { [1] = { class = 4, sub = 4, s = { sta = 5 } }, [2] = { class = 4, sub = 4, s = { armor = 400 } },
+	check(next(four.facts) == nil and four.factsV == 6, "from version 4 too")
+	local noArmor = { factsV = 6, facts = { [1] = { class = 4, sub = 4, s = { sta = 5 } }, [2] = { class = 4, sub = 4, s = { armor = 400 } },
 		[3] = { class = 4, sub = 0, s = { sta = 5 } } } }
 	X.DT.Bis.Upgrade(noArmor)
 	check(noArmor.facts[1] == nil and noArmor.facts[2] and noArmor.facts[3] and noArmor.armorRead, "a plate piece read with no armor is learned anew, once")
@@ -6754,10 +6812,10 @@ end)()
 	S2.env.StaticPopupDialogs.DAWNTOOLS_SHARE.OnAccept()
 	for id in pairs(GEAR) do S2.uncached[id] = true; S2.DT.DB.Put("istat:" .. id, S1.DT.DB.Row("istat:" .. id).v) end
 	S2.DT.DB.Put("istat:48001", "3,\"INVTYPE_HEAD\",\"Old\",3,1,4,4,\"str=500\"") -- (a row of another shape: left alone)
-	S2.DT.DB.Put("istat:48777", "5,\"INVTYPE_NECK\",\"Liar\",3,1,4,0,\"sta=99999\"")
+	S2.DT.DB.Put("istat:48777", "6,\"INVTYPE_NECK\",\"Liar\",3,1,4,0,\"sta=99999\"")
 	S2.DT.DB.Put("istat:48778", "4,\"INVTYPE_NECK\",\"Older\",3,1,4,0,\"hit=1\"")
 	eq(S2.DT.Bis.Shared(48777), nil, "a row with a stat no item gives is not taken")
-	eq((S2.DT.Bis.Shared(48778) or { s = {} }).s.shit, 1, "a row of the version before is, its hit counted for spells too")
+	eq(S2.DT.Bis.Shared(48778), nil, "nor a row of a version before: it does not say what profession the item asks for")
 	local BS2 = S2.DT.Bis
 	BS2.Pick("warrior-protection")
 	Done(BS2)

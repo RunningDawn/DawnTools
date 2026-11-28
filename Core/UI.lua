@@ -826,14 +826,29 @@ end
 local BAR_X, BAR_W, BAR_H = 250, 220, 14
 UI:Section("sync", "Data Sync", 900, function(panel)
 	Text(panel, "GameFontNormal", 4, -2, "Data Sync")
-	local note = Text(panel, "GameFontDisableSmall", 4, -22, "What DawnTools has sent to the guild and received from it, and the game database's requests each way. Only what you agreed to share is ever sent: see each module's section.")
+	local note = Text(panel, "GameFontDisableSmall", 4, -22, "What DawnTools has sent to the guild and received from it, and the game database's requests each way. Only what you agreed to share is ever sent. To copy: click in the box, Ctrl+A, Ctrl+C.")
 	note:SetWidth(560)
 	note:SetWordWrap(true)
-	local report = Text(panel, "GameFontHighlightSmall", 4, -52)
-	report:SetWidth(560)
-	report:SetWordWrap(true)
-	report:SetSpacing(3)
-	report.Load = function(self) self:SetText(UI:SyncReport()) end
+	-- the report in a box that scrolls and can be copied from (click in it, Ctrl+A, Ctrl+C): plain text, no colours
+	local back = panel:CreateTexture(nil, "BACKGROUND")
+	back:SetPoint("TOPLEFT", 4, -52)
+	back:SetPoint("BOTTOMRIGHT", -6, 36)
+	back:SetColorTexture(0, 0, 0, 0.35)
+	local scroll = CreateFrame("ScrollFrame", nil, panel, "UIPanelScrollFrameTemplate")
+	scroll:SetPoint("TOPLEFT", 8, -56)
+	scroll:SetPoint("BOTTOMRIGHT", -28, 40)
+	local report = CreateFrame("EditBox", nil, scroll)
+	report:SetMultiLine(true)
+	report:SetAutoFocus(false)
+	report:SetFontObject(GameFontHighlightSmall)
+	report:SetWidth(540)
+	report:SetScript("OnEscapePressed", function(self) self:ClearFocus() end)
+	scroll:SetScrollChild(report)
+	-- (not while it is being copied from: a new text would undo the selection)
+	report.Load = function(self)
+		if self:HasFocus() then return end
+		self:SetText((UI:SyncReport():gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", "")))
+	end
 	controls[#controls + 1] = report
 	UI.syncText = report
 	local reset = Button(panel, 4, -8, 150, "Start counting anew", function() DT.Comms:ResetTotals() end)
