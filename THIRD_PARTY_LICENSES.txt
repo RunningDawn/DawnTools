@@ -61,6 +61,22 @@ Licence:  QuestieDB's LICENSE.md: content imported from Questie is under Questie
           Taken on that statement, by the owner's decision of 2026-11-19; OneForAll (GPL-3.0-or-later) uses
           QuestieDB data on the same footing. To be removed if a contributor objects.
 
+Disenchanting (Modules/Craft.lua, the list DE)
+----------------------------------------------
+What:     what disenchanting gives by quality and item level (material numbers, average amounts), worked out
+          from the tables disenchant_loot_template and item_template (which item uses which table).
+From:     CMaNGOS classic-db, https://github.com/cmangos/classic-db. Licence: GPL-3.0, as below.
+
+Fishing waters (Modules/Fish.lua, the list WATERS)
+--------------------------------------------------
+What:     the fishing skill each water asks for, the subzones that ask for another skill than their zone, and
+          which fish (item numbers) are caught in those subzones and in Moonglade, Burning Steppes and Deadwind
+          Pass. Typed into the file from the tables skill_fishing_base_level, fishing_loot_template and
+          reference_loot_template.
+From:     CMaNGOS classic-db, https://github.com/cmangos/classic-db
+Licence:  GPL-3.0 (its LICENSE.md, README.md and AUTHORS). The text of the GPL version 3 is in this addon's
+          LICENSE file. Its COPYRIGHT.md: World of Warcraft content in it is Blizzard's and not under the GPL.
+
 Libs/
 -----
 Libraries, unchanged:

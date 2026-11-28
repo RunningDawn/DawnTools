@@ -431,7 +431,7 @@ local LibDeflate = {
 	end,
 }
 -- ("../DawnTools_Seed/": the data files, kept out of the addon: see Core/DBSeed.lua)
-local FILES = { "Core/Logic.lua", "Core/BisLogic.lua", "Core/Core.lua", "Core/Comms.lua", "Core/UI.lua", "Core/Builtins.lua", "Core/Profiles.lua", "Core/DBLogic.lua", "Core/DB.lua", "Core/DBImport.lua", "Core/DBSeed.lua", "Market/Capture.lua", "Market/Sync.lua", "Market/UI.lua", "../DawnTools_Seed/CraftSkill.lua", "../DawnTools_Seed/Dungeons.lua", "Data/BisProfiles.lua", "Data/BisExtras.lua", "Data/BisLists.lua", "Modules/Inventory.lua", "Modules/Fish.lua", "Modules/Food.lua", "Modules/Craft.lua", "Modules/Npc.lua", "Modules/Quest.lua", "Modules/Item.lua", "Modules/Zone.lua", "Modules/Dungeon.lua", "Modules/Favs.lua", "Modules/Finds.lua", "Modules/Combat.lua", "Modules/Bis.lua", "Tools/Tools.lua", "Tools/Range.lua", "Tools/Mp5.lua", "Tools/Fps.lua", "Tools/Tracker.lua", "Tools/Enemies.lua", "Tools/Carrot.lua", "Tools/ChatHistory.lua", "Tools/ChatSaver.lua", "Core/DBSync.lua", "Core/Changelog.lua", "Core/Home.lua" }
+local FILES = { "Core/Logic.lua", "Core/BisLogic.lua", "Core/Core.lua", "Core/Comms.lua", "Core/UI.lua", "Core/Builtins.lua", "Core/Profiles.lua", "Core/DBLogic.lua", "Core/DB.lua", "Core/DBImport.lua", "Core/DBSeed.lua", "Market/Capture.lua", "Market/Sync.lua", "Market/UI.lua", "../DawnTools_Seed/CraftSkill.lua", "../DawnTools_Seed/Dungeons.lua", "Data/BisProfiles.lua", "Data/BisExtras.lua", "Data/BisLists.lua", "Modules/Inventory.lua", "Modules/Fish.lua", "Modules/Food.lua", "Modules/Craft.lua", "Modules/Npc.lua", "Modules/Quest.lua", "Modules/Item.lua", "Modules/Zone.lua", "Modules/Dungeon.lua", "Modules/Favs.lua", "Modules/Finds.lua", "Modules/Combat.lua", "Modules/Bis.lua", "Tools/Tools.lua", "Tools/Range.lua", "Tools/Mp5.lua", "Tools/Fps.lua", "Tools/Mitigation.lua", "Tools/Tracker.lua", "Tools/Enemies.lua", "Tools/Carrot.lua", "Tools/ChatHistory.lua", "Tools/ChatSaver.lua", "Core/DBSync.lua", "Core/Changelog.lua", "Core/Home.lua" }
 
 local function after(delay, fn, owner) timers[#timers + 1] = { at = now + delay, fn = fn, owner = owner } end
 local function Now() return BASE + math.floor(now) end
@@ -1233,6 +1233,7 @@ leave(C)
 local off = C.env.DawnToolsDB.modules
 off.market, off.inventory, off.fish, off.food, off.combat, off.npc, off.quest, off.tools, off.range, off.mp5, off.tracker, off.home, off.item, off.zone = false, false, false, false, false, false, false, false, false, false, false, false, false, false
 off.crafts, off.dungeon, off.dungeonlist, off.favs, off.chathistory, off.carrot, off.enemies, off.bis, off.finds = false, false, false, false, false, false, false, false, false
+off.mitigation = false
 local D = NewClient("Carol", { db = C.env.DawnToolsDB })
 eq(ids(D.DT.UI:TabList(true)), "", "no tab for a module switched off")
 D.fire("COMMODITY_SEARCH_RESULTS_UPDATED", 100)
@@ -1755,6 +1756,14 @@ eq(Count(110), 2, "the bags follow"); eq(select(2, Count(100)), 8, "the bank sta
 eq(Count(110, "Player-Nobody"), 0, "an unknown character has nothing")
 Inv.db.chars["Player-Alt"] = { name = "Alice Alt", class = "DRUID", bags = { [110] = 5 }, bank = {} }
 eq(Count(110, "Player-Alt"), 5, "another character's bags")
+do -- (for the Market tab: how many over all of them, and who)
+	local total, who = A.env.DawnInventory.API.Held(110)
+	eq(total, 7, "held over all my characters"); eq(#who, 2, "by two of them")
+	check(who[1]:find("Alice Smith|r: 2 in bags", 1, true) and who[2]:find("Alice Alt|r: 5 in bags", 1, true), "this one first, and where: " .. who[1] .. " / " .. who[2])
+	total, who = A.env.DawnInventory.API.Held(100)
+	eq(total, 8, "the bank counts"); check(who[1]:find(": 8 in bank", 1, true), "and is said: " .. who[1])
+	eq((A.env.DawnInventory.API.Held(424242)), 0, "none of what nobody has")
+end
 A.slash("inventory")
 local function text(part)
 	for _, w in ipairs(A.widgets) do
@@ -2610,7 +2619,7 @@ end)()
 	local row
 	for _, d in ipairs(view.list) do if d.spell == 7934 then row = d end end
 	check(row and row[3] == P1.DT.Money(30) and row[4]:find("+", 1, true), "a row has its materials and its profit: " .. tostring(row and row[4]))
-	check(row[2]:find("|cffffff0080|r", 1, true), "its skill band"); eq(row[6], "|cff888888?|r", "and, the profession's window never opened, a question for whether I know it")
+	check(row[2]:find("|cffffff0080|r", 1, true), "its skill band"); eq(row[7], "|cff888888?|r", "and, the profession's window never opened, a question for whether I know it")
 	check(view.countText.text:find("Open your First Aid window", 1, true), "the tab says how to find out")
 	for _, d in ipairs(view.list) do check(d.kind ~= nil and d.sort[2] ~= nil, "(every row is whole)") break end
 	-- sorted by profit: the best first
@@ -2630,11 +2639,11 @@ end)()
 	view.Refresh()
 	local known, missing
 	for _, d in ipairs(view.list) do
-		if d.spell == 7934 then known = d[6] elseif d.spell == 3275 then missing = d[6] end
+		if d.spell == 7934 then known = d[7] elseif d.spell == 3275 then missing = d[7] end
 	end
 	eq(known, "|cff40ff40known|r", "known on its tab"); eq(missing, "|cffff4040missing|r", "what I lack, missing")
 	P1.DT.UI:Show("craft171")
-	eq(Craft.views[171].list[1][6], "|cff888888?|r", "another profession, never opened, still asks")
+	eq(Craft.views[171].list[1][7], "|cff888888?|r", "another profession, never opened, still asks")
 	check(Craft.views[129].list[1] and Craft.Makers(7934)[1] == "|cff40ff40You|r", "I am named among who can make it")
 	-- the boxes beside the search box: what to list
 	local function tick(key, on) view.ticks[key].checked = on; click(view.ticks[key]) end
@@ -2664,6 +2673,23 @@ end)()
 	pv = Craft.Profit(7934)
 	eq(pv.vendorSells, 150, "what a vendor pays for all that is made"); eq(pv.vendorProfit, 120, "less the materials: the profit at a vendor")
 	check(Craft.ProfitText(pv, true):find("|cff40ff40+", 1, true), "shown in its own column's colours")
+	-- disenchanted instead
+	eq(pv.de, nil, "a potion is not disenchanted"); check(Craft.ProfitText(pv, "de"):find("-|r", 1, true), "a dash in that column")
+	P1.env.C_Item.GetItemInfo = function(id) if id == 6452 then return "Anti-Venom", "[Anti-Venom]", 2, 18, 1, "", "", 20, "", 1, 50, 4, 0 end return wasInfo(id) end
+	pv = Craft.Profit(7934)
+	eq(pv.de.mats[1][1], 10940, "uncommon armour of item level 18: mostly strange dust"); eq(pv.de.mats[1][2], 1.875, "so much of it on average"); eq(pv.de.worth, nil, "no worth while its prices are not known")
+	check(Craft.ProfitText(pv, "de"):find("?|r", 1, true), "a question mark meanwhile")
+	local wasLatest = P1.env.DawnMarket.API.GetLatest
+	P1.env.DawnMarket.API.GetLatest = function(id) return ({ [10940] = 100, [10939] = 1000, [10978] = 2000 })[id] or wasLatest(id) end
+	pv = Craft.Profit(7934)
+	eq(pv.deSells, 1674, "what the dust, essence and shard of all that is made sell for, less the cut"); eq(pv.deProfit, pv.deSells - pv.mats, "less the materials: the profit disenchanted")
+	check(Craft.ProfitText(pv, "de"):find("|cff40ff40+", 1, true), "shown as the other profits are")
+	eq(Craft.Disenchant(6452).mats[1][1], 10940, "(asked for by itself)")
+	P1.env.C_Item.GetItemInfo = function(id) if id == 6452 then return "x", "[x]", 3, 60, 1, "", "", 1, "", 1, 50, 2, 0 end return wasInfo(id) end
+	eq(Craft.Disenchant(6452).mats[1][1], 14344, "a rare weapon of item level 60: a large brilliant shard")
+	P1.env.C_Item.GetItemInfo = function(id) if id == 6452 then return "x", "[x]", 4, 63, 1, "", "", 1, "", 1, 50, 4, 0 end return wasInfo(id) end
+	eq(Craft.Disenchant(6452).mats[1][2], 1.5, "an epic of 63: a nexus crystal or two")
+	P1.env.DawnMarket.API.GetLatest = wasLatest
 	P1.env.C_Item.GetItemInfo = wasInfo
 	-- the Campsite: what every profession makes for the camp, together, each with its profession
 	check(Craft.IsCamp(1229432) and Craft.IsCamp(1229737) and not Craft.IsCamp(7934), "a recipe for the camp is told from the rest (the tent, the campfire; not a potion)")
@@ -2704,7 +2730,7 @@ end)()
 	eq(P2.DT.Craft.Makers(7934)[1], "Pat Smith", "and names it among who can make it")
 	P2.DT.UI:Show("craft129")
 	local theirs
-	for _, d in ipairs(P2.DT.Craft.views[129].list) do if d.spell == 7934 then theirs = d[7] end end
+	for _, d in ipairs(P2.DT.Craft.views[129].list) do if d.spell == 7934 then theirs = d[8] end end
 	eq(theirs, "Pat Smith", "on the tab too")
 	inject(P2, "Pat-Smith", (packed("KNOWN", "Pat Smith;rubbish", nil):gsub("^market", "crafts")))
 	step(1)
@@ -2726,8 +2752,39 @@ V:Refresh()
 local sellers = {}
 for _, w in ipairs(A.widgets) do
 	if w.cells and w.shown then sellers[w.id] = w.cells.vbuy.text end
+	if w.cells and w.shown and w.id == 110 then check(w.cells.have.text:find("2|r / |cff555555-|r / |cff40ff405|r", 1, true), "Market says how many of it I have, in the bags / in the bank / on my other characters: " .. tostring(w.cells.have.text)) end
 end
 check(sellers[100] and sellers[110] and not sellers[821], "the vendor filter lists what a vendor sells")
+do -- Ctrl-click on a row: the dressing room, not the row picked
+	local e, tried, was = A.env, nil, V.selected
+	e.IsControlKeyDown, e.DressUpItemLink = function() return true end, function(link) tried = link end
+	for _, w in ipairs(A.widgets) do
+		if w.cells and w.shown and w.id == 110 then w.scripts.OnClick(w, "LeftButton") end
+	end
+	check(tostring(tried):find("Copper Ore", 1, true), "Ctrl-click on a Market row tries the item on: " .. tostring(tried)); eq(V.selected, was, "and picks no row")
+	e.IsControlKeyDown, e.DressUpItemLink = nil, nil
+	-- Shift held over a row: the game's comparison with what I wear, beside the tooltip
+	local shown, wasOwned = 0, e.GameTooltip.IsOwned
+	e.IsShiftKeyDown, e.GameTooltip_ShowCompareItem = function() return true end, function() shown = shown + 1 end
+	for _, w in ipairs(A.widgets) do
+		if w.cells and w.shown and w.id == 110 then
+			e.GameTooltip.IsOwned = function(_, owner) return owner == w end
+			w.scripts.OnEnter(w)
+		end
+	end
+	eq(shown, 1, "Shift held over a Market row: compared with what I wear")
+	e.IsShiftKeyDown, e.GameTooltip_ShowCompareItem, e.GameTooltip.IsOwned = nil, nil, wasOwned
+	-- the Containers category: the item level column is the bag's slots
+	local function head(title)
+		for _, w in ipairs(A.widgets) do
+			if w.kind == "Button" and type(w.text) == "table" and w.text.text and w.text.text:find("^" .. title) and w.shown ~= false then return true end
+		end
+	end
+	check(head("iLvl") and not head("Slots"), "an item level column, as a rule")
+	V.class = 1; V:Refresh()
+	check(head("Slots") and not head("iLvl"), "under Containers it is the slots")
+	V.class = nil; V:Refresh()
+end
 check(sellers[100]:find("30c", 1, true), "with the vendor's price"); check(sellers[110]:find("*", 1, true), "and a star for limited stock")
 V.vendorOnly = nil
 V:Refresh()
@@ -2879,12 +2936,14 @@ A.fire("LOOT_OPENED")
 eq(pier().casts, 2, "loot that is not fished is not a cast")
 A.fire("LOOT_CLOSED")
 Fish.Refresh()
-check(text("Testwater, Pier"), "my own spot is listed")
+check(not text("Testwater, Pier"), "Spots is the built-in list only")
+click(find("Button", "History"))
+check(text("Testwater, Pier"), "my own spot is listed under History")
 local perCast = L.Money((4 * 500 + 2 * (Latest(600) or 100)) / 2) -- 4 snappers at 5s and 2 fangs at their price, over 2 casts
-check(text("|cff888888~|r" .. perCast), "per cast: what was caught at today's prices over the casts, still marked a guess")
+check(text(perCast) and not text("|cff888888~|r" .. perCast), "per cast: what was caught at today's prices over the casts, no guess")
 A.DT.DB.Put(Fish.Key("Testwater, Pier"), A.DT.DBLogic.Pack({ 20, { 600, 20, 6359, 40 }, 140, "Testwater, Pier" }, 4)) -- (twenty casts of mine, as the store holds them)
 Fish.Refresh()
-check(text("Firefin Snapper 200%"), "what bites, per cast"); check(not text("|cff888888~|r" .. perCast) and text(perCast), "believed from 20 casts on")
+check(text("Firefin Snapper 200%"), "what bites, per cast"); check(text(perCast), "and what a cast pays")
 -- the Fish table
 for _, w in ipairs(A.widgets) do
 	if w.kind == "Button" and w.text == "Fish" and w.shown ~= false and w.scripts.OnClick and not w.id then click(w) end
@@ -2923,20 +2982,22 @@ end
 click(find("Button", "Spots"))
 sortDesc("Per cast")
 local rowsNow = fishRows()
-check(rowsNow[1].sort[5] >= rowsNow[2].sort[5], "spots start with the best per cast"); check(head("Per cast").text.text:find(" v", 1, true), "and the header says so")
+check(rowsNow[1].sort[4] >= rowsNow[2].sort[4], "spots start with the best per cast"); check(head("Per cast").text.text:find(" v", 1, true), "and the header says so")
 click(head("Per cast"))
 rowsNow = fishRows()
-check(rowsNow[1].sort[5] <= rowsNow[2].sort[5], "a click on the header turns it round")
+check(rowsNow[1].sort[4] <= rowsNow[2].sort[4], "a click on the header turns it round")
 click(head("Spot"))
 rowsNow = fishRows()
 check(rowsNow[1].sort[1] < rowsNow[2].sort[1], "another header sorts by that column, names from A")
 click(head("Skill"))
 check(fishRows()[1].sort[3] >= fishRows()[2].sort[3], "numbers from the biggest")
 local fishSearch = Fish.search
+click(find("Button", "History"))
 fishSearch:SetText("testwater")
 step(1)
 rowsNow = fishRows()
 check(#rowsNow == 1 and rowsNow[1][1] == "Testwater, Pier", "the search box finds a spot by name")
+eq(rowsNow[1][3], "20", "History: the casts"); eq(rowsNow[1].sort[4], math.floor(rowsNow[1].sort[5] * 20 + 0.5), "and what all of it was worth")
 eq(rowsNow[1].sort[6] * 170, rowsNow[1].sort[5] * 170, "per hour goes by per cast"); check(rowsNow[1][6]:find(A.DT.Money(math.floor(rowsNow[1].sort[5] * 170 + 0.5)), 1, true), "170 casts of it")
 check(rowsNow[1].sort[7] > 0 and rowsNow[1][7]:find("|cff40ff40", 1, true), "and the dearest single catch of the spot is named with its price: " .. rowsNow[1][7])
 ;(function() -- the hover of a spot: lines of what | value, with shares
@@ -2961,6 +3022,7 @@ step(1)
 check(#fishRows() >= 1 and fishRows()[1].sort[8]:find("Firefin", 1, true), "or by what bites there")
 fishSearch:SetText("")
 step(1)
+click(find("Button", "Spots"))
 -- the skill column against my own skill (140 here)
 local foundRow
 local function skillOf(name)
@@ -2973,10 +3035,19 @@ local function skillOf(name)
 	fishSearch:SetText("")
 	return found
 end
-eq(skillOf("Elwynn Forest"), "|cff40ff4025|r", "green: nothing gets away"); eq(skillOf("Stranglethorn Vale"), "|cffffd100225|r", "yellow: I can cast, some get away")
+eq(skillOf("Elwynn Forest"), "|cff40ff401-25|r", "green: nothing gets away"); eq(skillOf("Stranglethorn Vale"), "|cffffd100130-225|r", "yellow: I can cast, some get away")
 A.env.GetProfessionInfo = function() return "Fishing", nil, 140, 300, 0, 0, 356, 100 end
-eq(skillOf("Stranglethorn Vale"), "|cff40ff40225|r", "a lure and gear count")
-eq(skillOf("Eastern Plaguelands"), "|cffff4040425|r", "red: out of reach")
+eq(skillOf("Stranglethorn Vale"), "|cff40ff40130-225|r", "a lure and gear count")
+eq(skillOf("Eastern Plaguelands"), "|cffff4040330-425|r", "red: out of reach")
+A.env.GetProfessionInfo = function() return "Fishing", nil, 140, 300, 0, 0, 356, 0 end
+A.env.GetItemCount = function(id) return (id == 6367 or id == 6530 or id == 6529) and 1 or 0 end -- (a +20 pole and two lures in the bags)
+eq(skillOf("Stranglethorn Vale"), "|cffffd100130-225|r", "a pole and the best lure in the bags count though not in hand: 140 + 20 + 50")
+A.env.GetWeaponEnchantInfo = function() return true, 600000, 0, 266 end
+eq(skillOf("Stranglethorn Vale"), "|cff40ff40130-225|r", "and a better lure already on the pole: 140 + 20 + 100")
+A.env.GetItemCount, A.env.GetWeaponEnchantInfo = nil, nil
+A.env.GetProfessionInfo = function() return "Fishing", nil, 140, 300, 0, 0, 356, 100 end
+eq(skillOf("Azshara"), "|cffffd100205-300|r", "Azshara asks for 300"); eq(skillOf("Azshara, Bay of Storms"), "|cffff4040330-425|r", "but the Bay of Storms in it for 425: a row of its own")
+eq(Fish.Need("Azshara, Bay of Storms"), 425, "a spot fished in such a subzone is measured by it"); eq(Fish.Need("Azshara, Ruins of Eldarath"), 300, "any other by its zone"); eq(Fish.Need("Nowhere"), nil, "a water not in the list has no number")
 ;(function() -- how many casts land, and the zone's levels
 	eq(Fish.Chance(225, 225), 100, "at the zone's skill every cast lands"); eq(Fish.Chance(225, 130), 5, "at the least skill to cast: 5 in a hundred")
 	eq(Fish.Chance(225, 129), 0, "below it: none"); eq(Fish.Chance(225, 180), 55, "between: a point a point"); eq(Fish.Chance(nil, 100), nil, "no skill known: nothing said")
@@ -3054,6 +3125,20 @@ end
 eq(#foodRows(Fay), 3, "all the food is listed"); eq(foodRows(Fay)[1].id, 5003, "lowest level first")
 check(foodText(Fay, "3 foods, 2 of them known to this character"), "with a count")
 check(foodText(Fay, "Stamina (1)") and foodText(Fay, "Spirit (1)") and foodText(Fay, "Health only (1)"), "grouped by what it gives, the first thing named")
+do -- what a food gives beyond the old list
+	local was = TIPS[5003]
+	local function gives(tip) TIPS[5003] = tip; FF.db.types[5003] = nil; return FF.Type(5003) end
+	eq(gives("Use: Restores 874 health over 30 sec. If you spend at least 10 seconds eating you will become well fed and gain 2% Critical Strike for 15 min."), "Crit", "a food that gives crit is grouped by it")
+	eq(gives("Use: Restores 874 health over 30 sec. You will become well fed and gain 5 Swiftness for 10 min."), "Swiftness", "a bonus nobody listed: as the tooltip words it")
+	eq(gives("Use: Occasionally belch flame at enemies struck in melee for the next 10 min."), "Special", "a use that is not about health")
+	eq(gives("Use: Restores 1,338 health over 30 sec.  If you eat for 10 seconds will also increase your Healing done by 22 for 10 min."), "Healing Power", "healing, as Forever words it")
+	eq(gives("Use: Restores 5 health. You will gain 10% Movement speed while outdoors for 10 min."), "Movement speed", "a condition is not part of the name")
+	eq(gives("Use: Restores 5 health. It will increase your Luck by 3 for 10 min."), "Luck", "the other wording of a bonus nobody listed")
+	eq(gives("Use: Builds a basic campfire that allows cooking and the placement of up to 3 additional camp features."), "Camp", "a campfire is no food")
+	eq(gives("Use: Heals 282 damage over 21 sec, assuming you don't bite down on a poison sac."), "Health only", "healing is health")
+	eq(gives("Use: Instantly restores 100 energy."), "Energy", "energy, small as it is written")
+	eq(gives(was), "Health only", "and plain food is health only still")
+end
 eq(foodRows(Fay)[1][5], "|cff40ff40known|r", "a recipe I have"); eq(foodRows(Fay)[3][5], "|cffff4040missing|r", "one I lack")
 eq(foodRows(Fay)[1][6], "|cff40ff40You|r", "I can cook it"); eq(foodRows(Fay)[3][6], "|cff888888nobody known|r", "nobody can cook the other")
 FF.ticks.known.checked = true
@@ -4859,6 +4944,25 @@ do
 		click(Car.boxes.on)
 		mount(false)
 		eq(worn[13], 501, "switched off on the mount: my trinket still comes back")
+		-- a carrot left behind (the note of what it replaced lost over a loading screen): found on foot, swapped out
+		Car.boxes.on.checked = true
+		click(Car.boxes.on)
+		e.GetItemCount = function(id) return (id == Car.ITEM or id == 501) and 1 or 0 end
+		mount(true)
+		eq(worn[13], Car.ITEM, "mounted again")
+		Car.db.back = nil
+		A.combat = true
+		mount(false)
+		eq(worn[13], Car.ITEM, "left behind in a fight, nothing known of what it replaced")
+		A.combat = false
+		A.fire("PLAYER_REGEN_ENABLED"); step(1.1)
+		eq(worn[13], 501, "the fight over: the trinket that slot held before is back"); eq(Car.db.back, nil, "and nothing is owed")
+		worn[13] = Car.ITEM; Car.db.last[13] = 777 -- (a trinket I no longer have)
+		A.fire("UNIT_AURA", "player"); step(1.1)
+		eq(worn[13], Car.ITEM, "what the slot held is gone: the carrot stays"); eq(Car.db.back, nil, "and nothing is tried")
+		worn[13] = 501
+		Car.boxes.on.checked = false
+		click(Car.boxes.on)
 		e.GetInventoryItemID, e.IsMounted, e.UnitOnTaxi, e.GetItemCount, e.EquipItemByName = nil, nil, nil, nil, nil
 	end)()
 end
@@ -4883,7 +4987,7 @@ do
 		env.GetChannelList = function() return 1, "General", false, 2, "Trade - City", false end
 		env.ChatTypeInfo = { SAY = { r = 1, g = 1, b = 1 }, GUILD = { r = 0.2, g = 1, b = 0.2 } }
 		for _, name in ipairs({ "JoinPermanentChannel", "FCF_SetWindowName", "FCF_SetChatWindowFontSize", "FCF_SetWindowColor", "FCF_SetWindowAlpha",
-			"ChatFrame_RemoveAllMessageGroups", "ChatFrame_AddMessageGroup", "ChatFrame_RemoveAllChannels", "ChatFrame_AddChannel", "FCF_Close",
+			"ChatFrame_RemoveAllMessageGroups", "ChatFrame_AddMessageGroup", "ChatFrame_RemoveAllChannels", "ChatFrame_RemoveChannel", "ChatFrame_AddChannel", "FCF_Close",
 			"SetChatWindowShown", "FCF_DockFrame", "FCF_UnDockFrame", "FCF_SavePositionAndDimensions", "FCF_SetLocked", "FCF_SetUninteractable",
 			"ChangeChatColor", "FCF_DockUpdate" }) do env[name] = Rec(name) end
 	end })
@@ -4899,13 +5003,17 @@ do
 	eq(L.colors.GUILD[2], 1, "the colours"); eq(L.channels[2], "Trade - City", "the channels joined")
 	eq(C.Save("  "), false, "a layout needs a name")
 	eq(C.Save("Main"), true, "saved by name"); eq(C.db.layouts.Main.windows[1].name, "General", "and kept")
+	C.db.layouts.Main.at = -1
+	eq(C.Save(""), true, "no name typed: saved over the one picked"); check(C.db.layouts.Main.at ~= -1, "written anew")
+	Z.env.GetChatWindowChannels = function(i) if i == 3 then return "Trade - City", 0, "Old", 0 end end
 	-- put back: on another character, where it is not so
 	C.db.layouts.Main.channels[3] = "LookingForGroup"
 	calls = {}
 	eq(C.Load("Main"), 3, "put back: three windows")
 	eq(Count("JoinPermanentChannel", nil), 1, "only a channel not joined is joined"); eq(calls[1][2], "LookingForGroup", "the missing one, first")
 	eq(Count("ChatFrame_AddMessageGroup"), 3, "what each window shows (not the combat log's filters)")
-	eq(Count("ChatFrame_AddChannel"), 2, "and its channels")
+	eq(Count("ChatFrame_AddChannel"), 1, "a channel the window lacks is added"); eq(Count("ChatFrame_RemoveChannel"), 1, "one too many taken off")
+	eq(Count("ChatFrame_RemoveAllChannels"), 0, "the ones that are right are not touched")
 	eq(Count("FCF_DockFrame"), 1, "the docked one docked again"); eq(Count("FCF_UnDockFrame"), 1, "the one placed apart, undocked"); eq(Count("SetSize"), 2, "and sized, as the first")
 	eq(Count("ChangeChatColor"), 2, "the colours")
 	eq(Count("FCF_Close"), 0, "a docked tab the game calls not shown (the combat log, not the one picked) is docked, not closed")
@@ -4924,7 +5032,9 @@ do
 	eq(Count("FCF_SetWindowName"), 0, "not on a zone change")
 	Z.fire("PLAYER_ENTERING_WORLD", false, true)
 	step(2)
-	eq(Count("FCF_SetWindowName"), 3, "at a /reload, by itself")
+	eq(Count("FCF_SetWindowName"), 3, "at a /reload, by itself"); eq(Count("ChatFrame_AddChannel"), 0, "the channels not yet: the game has not joined its own")
+	step(10)
+	eq(Count("ChatFrame_AddChannel"), 1, "but a while after")
 	C.Delete("Main")
 	eq(C.db.layouts.Main, nil, "deleted"); eq(C.db.auto, nil, "and no longer put back")
 	leave(Z)
@@ -4953,6 +5063,108 @@ do
 	eq(f.shown, false, "off: gone")
 	Fps.Reset()
 	A.env.GetFramerate = nil
+end
+
+-- Mitigation: armor's share and how often I am not hit, on screen
+do
+	local G, e = A.DT.Mitigation, A.env
+	local wasLevel, wasExists = e.UnitLevel, e.UnitExists
+	eq(G.f.shown, false, "Mitigation is off to begin with")
+	eq(G.Armor(5500, 60), 50, "the old game's armor share: 5500 armor against level 60 is half")
+	eq(G.Armor(999999, 60), 75, "never more than 75%")
+	e.UnitLevel = function(u) return u == "player" and 60 or -1 end
+	e.UnitExists = function() return false end
+	e.UnitArmor = function() return 3000, 5500, 5500, 0, 0 end
+	e.UnitDefense = function() return 300, 0 end
+	e.GetDodgeChance, e.GetParryChance, e.GetBlockChance = function() return 10 end, function() return 5 end, function() return 0 end
+	local r = G.Read()
+	eq(r.vs, 60, "no target: against my own level"); eq(r.miss, 5, "miss 5"); eq(r.dodge, 10, "dodge 10"); eq(r.parry, 5, "parry 5, each on its own")
+	eq(r.all, 20, "and all of them together"); eq(r.res, nil, "no resistances unless asked for")
+	-- the one roll, in its order: what does not fit under 100 is cut off the last
+	local shares, all = G.Table({ miss = 5, dodge = 40, parry = 30, block = 60 })
+	eq(table.concat(shares, ","), "5,40,30,25", "miss, dodge, parry in full; of the block only what is left"); eq(all, 100, "and no more than 100 in all")
+	shares = G.Table({ miss = 10, dodge = 70, parry = 50, block = 30 })
+	eq(table.concat(shares, ","), "10,70,20,0", "past 100 before the block: parry cut short, no block at all")
+	e.UnitExists = function(u) return u == "target" end
+	e.UnitCanAttack = function() return true end
+	r = G.Read()
+	eq(r.vs, 63, "a skull targeted: three above me"); check(math.abs(r.miss - 4.4) < 0.001, "and it misses less: " .. r.miss)
+	e.PaperDollFrame_GetArmorReduction = function(armor, level) return armor == 5500 and level == 63 and 33 or 0 end
+	eq(G.Read().armor, 33, "the game's own armor share where it has the function")
+	e.PaperDollFrame_GetArmorReduction = nil
+	e.UnitArmor = nil
+	eq(G.Read().armor, nil, "no armor told: left out")
+	e.UnitArmor = function() return 3000, 5500, 5500, 0, 0 end
+	G.Set("on", true)
+	eq(G.f.shown, true, "switched on: shown"); local function col(k) local t = {} for _, g in ipairs(G.f.groups) do if g[k].shown ~= false and g[k].text ~= "" then t[#t + 1] = g[k].text end end return table.concat(t, "\n\n") end
+	local function lines(s) local n = 1 for _ in s:gmatch("\n") do n = n + 1 end return n end
+	check(col(1):find("Dodge", 1, true) and col(1):find("Parry", 1, true) and col(1):find("All\n", 1, true) == 1, "a line each, one under the other: " .. col(1))
+	eq(col(2):find("19.4%\n4.4%\n10.0%\n5.0%\n0.0%\n\n", 1, true), 1, "all four on top, then miss, dodge, parry, block, then a gap: " .. col(2))
+	check(col(1):find("\n\nArmor\nDefense\n\nHit", 1, true) and col(2):find("\n92%.0%%$"), "under the gap armor and defense, then how often I hit it (8% missed three levels up): " .. col(2))
+	eq(G.f.vs.text, "vs level 63", "the level it is against, on a line of its own at the bottom")
+	eq(G.Miss(0), 5, "my swing at my own level: 5% missed"); eq(G.Miss(2), 6, "two up: 6%"); eq(G.Miss(-3), 3.5, "below me: less")
+	e.GetHitModifier = function() return 3 end
+	eq(G.Read().hit, 95, "my hit comes off it")
+	e.GetHitModifier = function() return 30 end
+	eq(G.Read().hit, 100, "and no more than all of them land")
+	e.GetHitModifier = nil
+	eq(G.f.blue, true, "to be dragged: blue")
+	G.Set("locked", true)
+	eq(G.f.blue, false, "locked: dark")
+	eq(lines(col(1)), lines(col(2)), "a number to every line"); eq(lines(col(1)), 10, "all, the four; armor, defense; hit: a gap between each")
+	check(not col(1):find("Block value", 1, true), "no block value without a shield")
+	eq(G.f.segs[2].share, 10, "the bar: dodge's part"); eq(G.f.segs[4].shown, false, "no block: no part of the bar")
+	e.GetDodgeChance = function() return 20 end
+	e.GetBlockChance, e.GetShieldBlock = function() return 90 end, function() return 48 end
+	G.f.scripts.OnUpdate(G.f, 1)
+	eq(col(2):find("100.0%\n4.4%\n20.0%\n5.0%\n90.0%\n\n", 1, true), 1, "read again as it runs; 100 in all, the block as the sheet says: " .. col(2))
+	check(col(2):find("\n48\n300\n\n92%.0%%$"), "the block value under armor's, and the hit under a gap of its own: " .. col(2))
+	check(math.abs(G.f.segs[4].share - 70.6) < 0.001, "on the bar the block is what is left under 100: " .. G.f.segs[4].share)
+	e.UnitResistance = function(_, i) return 0, i == 2 and 157.5 or i == 4 and 9999 or 0, 0, 0 end
+	G.Set("resist", true)
+	eq(lines(col(1)), 17, "resistances ticked: a gap and five lines more")
+	check(col(2):find("-37.5%\n-0.0%\n-75.0%", 1, true), "fire by half of what there is to have, frost at the most: " .. col(2))
+	G.Set("resist", false)
+	eq(lines(col(1)), 11, "unticked: gone")
+	e.UnitDefense = function() return 300, 12 end
+	eq(G.Read().def, 312, "defense: the skill and what gear adds")
+	do -- (a client that does not say it: as the BiS tab has it)
+		local was = A.DT.Bis.WornDefense
+		e.UnitDefense = nil
+		check(type(was()) == "number" and was() % 5 == 0, "BiS reads it off the level and the gear worn now: " .. tostring(was()))
+		A.DT.Bis.WornDefense = function() return 314 end
+		eq(G.Read().def, 314, "defense the client does not say: the level's and the gear's")
+		A.combat = true
+		eq(G.Read().def, 314, "in a fight too")
+		A.combat = false
+		e.GetNumSkillLines = function() return 3 end
+		e.GetSkillLineInfo = function(i) if i == 1 then return "Weapon Skills", true end if i == 2 then return "Swords", false, false, 300, 0, 0 end return "Defense", false, false, 300, 0, 25 end
+		eq(G.Read().def, 325, "the Skills pane lists it: that, talents and gear and all, before any guess")
+		e.GetNumSkillLines, e.GetSkillLineInfo = nil, nil
+		A.DT.Bis.WornDefense = function() error("off") end
+		eq(G.Read().def, nil, "BiS cannot say: no line")
+		A.DT.Bis.WornDefense = was
+	end
+	do -- in a fight the client says none of it: what was read before stays
+		local before = G.Read()
+		eq(before.held, false, "out of a fight: all of it read now")
+		local dodge, armor = e.GetDodgeChance, e.UnitArmor
+		e.GetDodgeChance, e.UnitArmor = function() return nil end, function() return nil end
+		A.combat = true
+		local r = G.Read()
+		eq(r.dodge, before.dodge, "hidden in a fight: the dodge from before it"); eq(r.armor, before.armor, "and the armor"); eq(r.held, true, "and it is said")
+		G.Set("on", true)
+		check(G.f.vs.text:find("as before the fight", 1, true), "on screen too: " .. G.f.vs.text)
+		A.combat = false
+		eq(G.Read().dodge, 0, "out of the fight a number not told is not made up"); eq(G.Read().held, false, "nor said to be kept")
+		e.GetDodgeChance, e.UnitArmor = dodge, armor
+		G.Set("on", false)
+	end
+	G.Set("locked", false)
+	e.UnitResistance, e.GetShieldBlock = nil, nil
+	G.Set("on", false)
+	eq(G.f.shown, false, "off: gone")
+	e.UnitLevel, e.UnitExists, e.UnitCanAttack, e.UnitArmor, e.UnitDefense, e.GetDodgeChance, e.GetParryChance, e.GetBlockChance = wasLevel, wasExists, nil, nil, nil, nil, nil, nil
 end
 
 -- MP5: the five-second rule, counted from my own casts of spells that cost mana
@@ -7250,6 +7462,26 @@ end)()
 		check(said:find("Fay Smith: the same as mine", 1, true), "and the member is now the same: " .. said)
 		local gave = table.concat(F1.DT.DBSync.Report(), " | ")
 		check(gave:find("Sent back: [1-9]%d* lists, [1-9]%d* chunks"), "the other side says what it answered: " .. gave)
+		do -- a member who logged off: no more whispers to them, and the game's line about ours is not in the chat
+			local Sy, name = F1.DT.DBSync, next(F1.DT.Comms.peers)
+			local who, line = name:gsub(" ", "-"), ("No player named '%s' is currently playing."):format(name)
+			eq(Sy.Hide(nil, nil, line), false, "long after my last whisper to them: the game's line is shown (it may be about one typed)")
+			check(Sy.Now() >= 1, "asked now")
+			eq(Sy.Hide(nil, nil, line), true, "right after a whisper of the addon's: kept out of the chat")
+			eq(Sy.Hide(nil, nil, name .. " has gone offline."), false, "that they went offline is the game's to say")
+			eq(Sy.Hide(nil, nil, "You have unlearned Cooking."), false, "and any other line")
+			Sy.Left("No player named 'Nobody Here' is currently playing.")
+			eq(Sy.gone["Nobody-Here"], nil, "a name the addon never whispered to: none of its business")
+			Sy.Left(line)
+			eq(Sy.gone[who], true, "no player of that name: gone"); eq(Sy.Now(), 0, "and not whispered to again")
+			Sy.Heard(name, F1.DT.DB.Root())
+			eq(Sy.gone[who], nil, "their hello: here again")
+			F1.env.ERR_FRIEND_OFFLINE_S = "%s is offline now (really)."
+			Sy.Left(("|Hplayer:%s|h[%s]|h is offline now (really)."):format(name, name))
+			eq(Sy.gone[who], true, "the game's own wording, the name as a link: gone as well")
+			Sy.Heard(name, F1.DT.DB.Root())
+			F1.env.ERR_FRIEND_OFFLINE_S = nil
+		end
 		-- something new on her side: no ask for ten minutes, unless Sync now
 		eq(F1.DT.DB.Take("loot:2", ("loot:645:aaaaaa	%d	guild	3;1:9"):format(F1.DT.Now())), 1, "she learns something new")
 		step(120)

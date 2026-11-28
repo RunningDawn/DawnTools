@@ -6,6 +6,27 @@
 local _, DT = ...
 
 DT.CHANGELOG = {
+	{ "0.57.2", "2026-11-27", {
+		"Chat Saver: General, Trade and the other numbered channels are no longer unticked when a layout is put back at login. If yours were unticked, tick them again and save once more.",
+		"Chat Saver: Save with no name typed writes over the layout picked.",
+		"Fishing: whether you can cast in a water counts your fishing pole and your best lure even while they are in the bags, and follows at once when you equip one.",
+	} },
+	{ "0.57.1", "2026-11-26", {
+		"Cooking: foods that give crit, hit or another bonus are grouped by it, no longer under Health only.",
+		"Fishing: waters that ask for more skill than the zone around them have a row of their own on Spots: Bay of Storms, Hetaera's Clutch and Scalebeard's Cave in Azshara and Jademir Lake in Feralas (425), Jaguero Isle off Stranglethorn (300). A spot you fished there shows that skill, not the zone's.",
+		"Craft: a \"Profit (DE)\" column after Profit (vendor) on the profession tabs: what an armour piece or weapon earns made and disenchanted, the dust, essences and shards sold on the auction house. Hover the row for what it gives. By the old world's disenchanting rates.",
+		"Fishing: a History table beside Spots, Fish and Gear: where you fished, how many casts, what bit and what it was worth. Spots is the list of waters only now, the same for everybody.",
+		"Fishing: Spots shows the fishing skill of a water as a range: from the skill you can first cast there to the skill at which nothing gets away (330-425). The column of the zone's mob levels is headed Mob lvl.",
+		"Fishing: Moonglade, Burning Steppes, Deadwind Pass, Zephras Isle, Riverglades and Hyjal are listed.",
+	} },
+	{ "0.57.0", "2026-11-24", {
+		"Market: a \"Bag/Bank/Alt\" column, after Qty: how many of the item you have in your bags, in your bank, and on your other characters (as the Inventory tab knows them; empty where you have none). The row's tooltip says who has how many and where. Click the header to sort by it.",
+		"Market: Ctrl-click a row to try the item on in the dressing room, Shift-click to link it in chat, Alt-click to make it a favourite, as on the other tabs. Hold Shift over a row to compare it with what you wear.",
+		"Market: under Containers the item level column shows the bag's slots instead; click its header to sort by size.",
+		"Tools: Mitigation. A small column on screen, as it changes: miss, dodge, parry and block together and each on a line; what your armor takes off a physical hit; your block value and defense; how often your own swing hits. Resistances too, if ticked. Beside it a bar of one swing: it fills from the top in the order the game decides (miss, dodge, parry, block), and past 100% the last ones are cut short. Against your target's level, or your own. In a fight the game hides your numbers from addons: they stay as they were before it. Off until ticked.",
+		"Guild sync: when a member logs off in the middle of an exchange, the chat no longer fills with \"No player named ... is currently playing\". Nothing more is whispered to them until they are back, and that line is kept out of the chat.",
+		"Carrot: a carrot left on after a fight or a loading screen is noticed and swapped for the trinket that slot held before, whenever you are on foot and out of combat.",
+	} },
 	{ "0.56.3", "2026-11-23", {
 		"BiS: hit and crit on gear count for spells too, as Forever has one of each. Casters and healers now see hit and crit gear for what it is worth.",
 		"BiS: the recommended set no longer gives up everything else for a cap no gear of the phase can reach (17% spell hit, a tank's hit): such a cap counts by its weight. A cap that can be reached still comes first.",

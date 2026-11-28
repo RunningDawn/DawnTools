@@ -139,8 +139,12 @@ end
 -- the first of these its tooltip names; a food that names none only restores health
 -- ponytail: reads the English tooltip. Another language, or a client without tooltip data, falls back to the
 -- Cooking window's own heading.
-local GIVES = { "Fishing", "Stamina", "Spirit", "Strength", "Agility", "Intellect", "Attack Power", "Spell", "Mana" }
-local TYPES = 2 -- (how foods are told apart: raise it with GIVES, and every food is read anew)
+-- A food that names none of them: what its tooltip says is gained ("gain 5 Swiftness for 10 min": Swiftness), else
+-- "Special" where the use is not about health at all (a transformation, a breath of fire).
+local GIVES = { "Fishing", "Stamina", "Spirit", "Strength", "Agility", "Intellect", "Attack Power", "Spell", "Mana",
+	"Critical", "Hit", "Haste", "Defense", "Armor", "Dodge", "Resistance", "Healing", "Energy", "energy" }
+local SHOWN = { Spell = "Spell power", Fishing = "Fishing skill", Critical = "Crit", Healing = "Healing Power", energy = "Energy" }
+local TYPES = 5 -- (how foods are told apart: raise it with GIVES, and every food is read anew)
 
 local function Type(id)
 	local db = Food.db
@@ -149,19 +153,30 @@ local function Type(id)
 	local data = C_TooltipInfo and C_TooltipInfo.GetItemByID and C_TooltipInfo.GetItemByID(id)
 	if not (data and data.lines) then return fallback end
 	local parts = {}
-	for _, line in ipairs(data.lines) do parts[#parts + 1] = line.leftText or "" end
+	for i, line in ipairs(data.lines) do parts[#parts + 1] = i > 1 and line.leftText or "" end -- (not the name: "Hit..." would decide)
 	local text = table.concat(parts, " ")
 	if not text:find("Use:", 1, true) then return fallback end -- (not loaded yet, or nothing to eat)
-	local gives = "Health only"
-	for _, word in ipairs(GIVES) do
+	local gives = (text:find("camp feature", 1, true) or text:find("Use: Places", 1, true)) and "Camp" or nil -- (a campfire, an oven: cooked, not eaten)
+	for _, word in ipairs(gives and {} or GIVES) do
 		if text:find(word, 1, true) then
-			gives = word == "Spell" and "Spell power" or word == "Fishing" and "Fishing skill" or word
+			gives = SHOWN[word] or word
 			break
 		end
 	end
+	if not gives then
+		local gain = (text:match("gain (.-) for %d") or text:match("increase your (.-) by %d") or ""):gsub(" while .*", ""):gsub("[%d%%%.%+]+", ""):gsub("%s+", " "):gsub("^ ", ""):gsub(" $", "")
+		if gain ~= "" then
+			gives = (gain:sub(1, 1):upper() .. gain:sub(2)):sub(1, 20)
+		else
+			gives = text:lower():find("heal", 1, true) and "Health only" or "Special"
+		end
+	end
 	db.types[id] = gives
+	-- ponytail: the tooltip of a food that fell through is kept in the saved file, to see what Forever words differently; drop once the groups are right
+	if gives == "Health only" or gives == "Special" then db.plain[id] = text:sub(1, 400) end
 	return gives
 end
+Food.Type = Type
 
 ---------------------------------------------------------------------------
 -- The tab
@@ -617,7 +632,8 @@ DT:RegisterModule("food", {
 	onEnable = function(mod)
 		local db = mod.db
 		db.foods, db.mine, db.guild, db.types = db.foods or {}, db.mine or {}, db.guild or {}, db.types or {}
-		if db.typesV ~= TYPES then db.types, db.typesV = {}, TYPES end
+		db.plain = db.plain or {}
+		if db.typesV ~= TYPES then db.types, db.plain, db.typesV = {}, {}, TYPES end
 		Food.db, Food.me = db, UnitGUID("player")
 		local me = db.mine[Food.me] or { ids = {} }
 		db.mine[Food.me] = me
